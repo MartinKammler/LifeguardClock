@@ -1139,17 +1139,6 @@ im Browser geöffnet werden – kein Build-System, kein Node.js erforderlich.
 | `tests/test_dashboard.html` | Datenaggregation und Formatierung (`dashboard.html`) |
 | `tests/test_editor.html` | Validierung, Mutationen, Undo/Redo (`editor.html`) |
 
-### Demo-Daten
-
-Im Verzeichnis `tests/demo_data/` liegen 8 JSON-Testdateien, die das gesamte
-Stempeluhr-JSON-Format abdecken:
-
-- 4 Kalenderwochen (KW02–KW05 / Januar–Februar 2026)
-- Alle 20 Personen aus `config.js`
-- Zwei Mitternacht-Crosser (Einträge nach 00:00, `logicalDay` = Vortag)
-
-Diese Dateien können direkt in `dashboard.html` und `editor.html` geladen werden.
-
 ---
 
 ## Lokaler Proxy-Server (`admin-server.py`)
