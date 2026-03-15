@@ -1,0 +1,1139 @@
+<!--
+  dashboard.html – LifeguardClock · Auswertungs-Dashboard
+  Copyright (C) 2026  Martin Kammler, Ermlandstr. 10, 75181 Pforzheim, mkammler@gmx.de
+  Lizenz: GNU General Public License v3 – https://www.gnu.org/licenses/gpl-3.0.html
+-->
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LifeguardClock – Dashboard</title>
+  <link rel="icon" type="image/png" href="Logo.png">
+  <script src="admin_config.js" onerror="window.ADMIN_CONFIG=undefined"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg:         #09090d;
+      --bg2:        #13131a;
+      --bg3:        #1e1e2a;
+      --border:     #2a2a3a;
+      --text:       #e8e8f0;
+      --text-2:     #a0a0b8;
+      --text-3:     #606078;
+      --c-anw:      #3b82f6;
+      --c-wach:     #f59e0b;
+      --c-san:      #ef4444;
+      --c-anw-dim:  rgba(59,130,246,0.15);
+      --c-wach-dim: rgba(245,158,11,0.15);
+      --c-san-dim:  rgba(239,68,68,0.15);
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      min-height: 100%;
+    }
+
+    /* ── Header ─────────────────────────────────────────────── */
+    .app-header {
+      background: var(--bg2);
+      border-bottom: 1px solid var(--border);
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .app-title { font-size: 18px; font-weight: 800; white-space: nowrap; display:flex; align-items:center; gap:8px; }
+    .app-title img { height:28px; width:28px; object-fit:contain; border-radius:6px; }
+    .app-title-text { letter-spacing:-0.3px; }
+    .app-title-text span { color:#e03; }
+    .header-range { font-size: 13px; color: var(--text-3); }
+    .header-btns { margin-left: auto; display: flex; gap: 8px; flex-shrink: 0; }
+    .load-btn {
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 8px 18px;
+      border-radius: 8px;
+      font-family: inherit;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: border-color .2s, background .2s;
+    }
+    .load-btn:hover { border-color: var(--c-anw); background: var(--c-anw-dim); }
+    .load-btn:disabled { opacity: .5; cursor: default; }
+
+    /* ── Cloud-Zugangsdaten ──────────────────────────────── */
+    .cloud-creds-bar {
+      background: var(--bg2);
+      border-bottom: 1px solid var(--border);
+      padding: 10px 24px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .cloud-creds-bar label { font-size: 13px; color: var(--text-2); white-space: nowrap; }
+    .cloud-creds-bar input {
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-family: inherit;
+      font-size: 13px;
+      flex: 1;
+      min-width: 120px;
+      max-width: 280px;
+    }
+    .cloud-creds-bar input:focus { outline: none; border-color: var(--c-anw); }
+    .cloud-creds-bar .cc-btn {
+      background: var(--c-anw);
+      border: none;
+      color: #fff;
+      padding: 7px 16px;
+      border-radius: 6px;
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .cloud-creds-bar .cc-btn:hover { opacity: .85; }
+    .creds-hint { font-size: 12px; color: #ef4444; }
+
+    /* ── Korrelation ─────────────────────────────────────── */
+    .corr-grid { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 8px; }
+    .corr-item {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px 16px;
+      min-width: 200px;
+      flex: 1;
+    }
+    .corr-label { font-size: 12px; color: var(--text-2); margin-bottom: 8px; }
+    .corr-bar-wrap {
+      height: 6px;
+      background: var(--bg3);
+      border-radius: 3px;
+      overflow: hidden;
+      margin-bottom: 6px;
+    }
+    .corr-bar { height: 100%; border-radius: 3px; transition: width .4s; }
+    .corr-val { font-size: 20px; font-weight: 700; color: var(--type-color, #888); }
+    .file-badge {
+      font-size: 12px; color: var(--text-2);
+      background: var(--bg3);
+      padding: 4px 10px;
+      border-radius: 20px;
+      border: 1px solid var(--border);
+      white-space: nowrap;
+    }
+
+    /* ── Tabs ────────────────────────────────────────────────── */
+    .tabs {
+      background: var(--bg2);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      padding: 0 20px;
+      gap: 2px;
+      flex-shrink: 0;
+    }
+    .tab-btn {
+      background: none; border: none;
+      border-bottom: 2px solid transparent;
+      color: var(--text-3);
+      padding: 11px 16px;
+      font-family: inherit; font-size: 14px; font-weight: 600;
+      cursor: pointer;
+      transition: color .2s, border-color .2s;
+    }
+    .tab-btn:hover { color: var(--text-2); }
+    .tab-btn.active { color: var(--text); border-bottom-color: var(--c-anw); }
+
+    /* ── Tab panels ──────────────────────────────────────────── */
+    .tab-panel { display: none; flex: 1; overflow-y: auto; padding: 24px; }
+    .tab-panel.active { display: block; }
+
+    /* ── Empty state ─────────────────────────────────────────── */
+    .empty-state {
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; min-height: 320px;
+      gap: 10px; color: var(--text-3);
+    }
+    .empty-icon { font-size: 52px; }
+    .empty-title { font-size: 17px; font-weight: 700; }
+    .empty-sub { font-size: 13px; max-width: 360px; text-align: center; line-height: 1.5; }
+
+    /* ── Summary cards ───────────────────────────────────────── */
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 14px;
+      margin-bottom: 24px;
+    }
+    .card {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 18px 20px;
+    }
+    .card { border-color: var(--type-dim, var(--border)); }
+    .card-label {
+      font-size: 11px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: .6px;
+      margin-bottom: 8px;
+      color: var(--type-color, var(--text-3));
+    }
+    .card-value { font-size: 30px; font-weight: 800; line-height: 1; }
+    .card-unit  { font-size: 16px; font-weight: 500; color: var(--text-2); margin-left: 4px; }
+    .card-sub   { font-size: 12px; color: var(--text-3); margin-top: 6px; }
+
+    /* ── Top lists ───────────────────────────────────────────── */
+    .top-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 14px;
+      margin-bottom: 24px;
+    }
+    .top-list {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .top-list-hdr {
+      padding: 12px 16px;
+      font-size: 12px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: .5px;
+      border-bottom: 1px solid var(--border);
+    }
+    .top-list-hdr { color: var(--type-color, var(--text-3)); background: var(--type-dim, var(--bg3)); }
+    .top-item {
+      display: flex; align-items: center; gap: 12px;
+      padding: 11px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    .top-item:last-child { border-bottom: none; }
+    .top-rank { font-size: 17px; font-weight: 800; color: var(--text-3); width: 26px; flex-shrink: 0; }
+    .rank-1 { color: #fbbf24; }
+    .rank-2 { color: #94a3b8; }
+    .rank-3 { color: #b45309; }
+    .top-name { flex: 1; font-weight: 600; font-size: 14px; }
+    .top-val { font-weight: 700; font-size: 15px; color: var(--type-color, var(--text)); }
+
+    /* ── Calendar heatmap ────────────────────────────────────── */
+    .section-title { font-size: 15px; font-weight: 700; margin-bottom: 12px; }
+    .cal-grid { display: flex; flex-wrap: wrap; gap: 3px; }
+    .cal-month-label {
+      width: 100%; font-size: 12px; font-weight: 700;
+      color: var(--text-3); margin-top: 14px; margin-bottom: 4px;
+      text-transform: uppercase; letter-spacing: .5px;
+    }
+    .cal-month-label:first-child { margin-top: 0; }
+    .cal-spacer { width: 30px; height: 30px; }
+    .cal-day {
+      width: 30px; height: 30px; border-radius: 6px;
+      background: var(--bg3); border: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 11px; color: var(--text-3);
+      transition: transform .15s;
+    }
+    .cal-day.has-data {
+      background: var(--c-anw-dim);
+      border-color: rgba(59,130,246,.5);
+      color: var(--c-anw);
+      cursor: pointer;
+    }
+    .cal-day.has-data:hover { transform: scale(1.15); z-index: 1; }
+    .cal-day.empty { opacity: 0; pointer-events: none; }
+
+    /* ── Nav bar (day / week) ────────────────────────────────── */
+    .nav-bar {
+      display: flex; align-items: center; gap: 12px;
+      margin-bottom: 20px;
+    }
+    .nav-arrow {
+      background: var(--bg2); border: 1px solid var(--border);
+      color: var(--text); width: 40px; height: 40px;
+      border-radius: 8px; font-size: 20px;
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer; flex-shrink: 0;
+      transition: border-color .2s;
+    }
+    .nav-arrow:hover:not(:disabled) { border-color: var(--c-anw); }
+    .nav-arrow:disabled { opacity: .3; cursor: default; }
+    .nav-label { flex: 1; text-align: center; }
+    .nav-label-main { font-size: 18px; font-weight: 800; }
+    .nav-label-sub  { font-size: 12px; color: var(--text-3); margin-top: 2px; }
+
+    /* ── Data table ──────────────────────────────────────────── */
+    .table-wrap {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .data-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    .data-table th {
+      text-align: left; padding: 10px 14px;
+      font-size: 11px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: .5px;
+      color: var(--text-3);
+      border-bottom: 1px solid var(--border);
+      background: var(--bg2);
+    }
+    .data-table td { padding: 10px 14px; border-bottom: 1px solid var(--border); }
+    .data-table tbody tr:last-child td { border-bottom: none; }
+    .data-table tbody tr:hover td { background: var(--bg3); }
+    .data-table .total-row td {
+      font-weight: 700; border-top: 2px solid var(--border);
+      background: var(--bg3);
+    }
+    .data-table .total-row:hover td { background: var(--bg3) !important; }
+    .col-type { /* color set via inline style */ }
+    .col-dim  { color: var(--text-3); font-size: 12px; }
+    .no-data-row td { color: var(--text-3); text-align: center; padding: 28px !important; }
+
+    /* ── Person filter ───────────────────────────────────────── */
+    .person-filter { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 18px; }
+    .person-btn {
+      background: var(--bg2); border: 1px solid var(--border);
+      color: var(--text-2); padding: 6px 16px;
+      border-radius: 20px; font-family: inherit;
+      font-size: 13px; font-weight: 600; cursor: pointer;
+      transition: all .2s;
+    }
+    .person-btn:hover { border-color: var(--c-anw); color: var(--text); }
+    .person-btn.active { background: var(--c-anw-dim); border-color: var(--c-anw); color: var(--c-anw); }
+    .person-name-heading { font-size: 22px; font-weight: 800; margin-bottom: 16px; }
+
+    /* ── Export ──────────────────────────────────────────────── */
+    .export-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+    .export-card {
+      background: var(--bg2); border: 1px solid var(--border);
+      border-radius: 12px; padding: 20px;
+      display: flex; flex-direction: column; gap: 10px;
+    }
+    .export-card-title { font-weight: 700; font-size: 15px; }
+    .export-card-desc  { font-size: 13px; color: var(--text-3); flex: 1; line-height: 1.5; }
+    .export-btn {
+      width: 100%; background: var(--bg3);
+      border: 1px solid var(--border); color: var(--text);
+      padding: 10px; border-radius: 8px;
+      font-family: inherit; font-size: 14px; font-weight: 600;
+      cursor: pointer; transition: all .2s;
+    }
+    .export-btn:hover { border-color: var(--c-anw); background: var(--c-anw-dim); }
+  </style>
+</head>
+<body>
+
+  <!-- ── Header ─────────────────────────────────────────────── -->
+  <header class="app-header">
+    <div>
+      <span class="app-title">
+        <img src="Logo.png" alt="">
+        <span class="app-title-text">Lifeguard<span>Clock</span> <span style="font-weight:400;color:var(--text-3);font-size:14px">Dashboard</span></span>
+      </span>
+    </div>
+    <span class="header-range" id="header-range"></span>
+    <span class="file-badge" id="file-badge" style="display:none"></span>
+    <div class="header-btns">
+      <button class="load-btn" id="btn-cloud">&#x2601;&#xFE0F; Cloud laden</button>
+      <button class="load-btn" id="btn-load">&#x1F4C1; Ordner laden</button>
+    </div>
+    <input type="file" id="file-input" multiple accept=".json" webkitdirectory style="display:none">
+  </header>
+
+  <!-- ── Cloud-Zugangsdaten ──────────────────────────────────────────── -->
+  <div class="cloud-creds-bar" id="cloud-creds-bar" style="display:none">
+    <label>URL</label>
+    <input type="url" id="cc-url" placeholder="https://cloud.example.com (optional bei localhost)">
+    <label>Nutzer</label>
+    <input type="text" id="cc-user" placeholder="Benutzername" autocomplete="username">
+    <label>Passwort</label>
+    <input type="password" id="cc-pass" placeholder="App-Passwort" autocomplete="current-password">
+    <button class="cc-btn" id="cc-ok">&#x2601;&#xFE0F; Laden</button>
+    <span class="creds-hint" id="cc-hint"></span>
+  </div>
+
+  <!-- ── Tabs ───────────────────────────────────────────────── -->
+  <nav class="tabs">
+    <button class="tab-btn active" data-tab="overview">&#x1F4CA; Übersicht</button>
+    <button class="tab-btn" data-tab="days">&#x1F4C5; Tage</button>
+    <button class="tab-btn" data-tab="weeks">&#x1F4C6; Wochen</button>
+    <button class="tab-btn" data-tab="persons">&#x1F465; Personen</button>
+    <button class="tab-btn" data-tab="export">&#x1F4BE; Export</button>
+  </nav>
+
+  <!-- ── Übersicht ──────────────────────────────────────────── -->
+  <section class="tab-panel active" id="tab-overview">
+    <div class="empty-state" id="overview-empty">
+      <div class="empty-icon">&#x1F4CA;</div>
+      <div class="empty-title">Keine Daten geladen</div>
+      <div class="empty-sub">Wähle einen Ordner mit <code>stempeluhr_*.json</code> Dateien aus der Nextcloud</div>
+    </div>
+    <div id="overview-data" style="display:none">
+      <div class="cards" id="summary-cards"></div>
+      <div class="top-grid" id="top-grid"></div>
+      <div id="corr-section" style="display:none">
+        <div class="section-title">Korrelation mit Anwesenheit</div>
+        <div class="corr-grid" id="corr-grid"></div>
+      </div>
+      <div>
+        <div class="section-title">Aktivitätskalender</div>
+        <div class="cal-grid" id="cal-grid"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Tage ───────────────────────────────────────────────── -->
+  <section class="tab-panel" id="tab-days">
+    <div class="empty-state" id="days-empty">
+      <div class="empty-icon">&#x1F4C5;</div>
+      <div class="empty-title">Keine Daten geladen</div>
+    </div>
+    <div id="days-data" style="display:none">
+      <div class="nav-bar">
+        <button class="nav-arrow" id="day-prev" disabled>&#x2039;</button>
+        <div class="nav-label">
+          <div class="nav-label-main" id="day-label-main"></div>
+          <div class="nav-label-sub"  id="day-label-sub"></div>
+        </div>
+        <button class="nav-arrow" id="day-next">&#x203A;</button>
+      </div>
+      <div class="table-wrap" id="day-table"></div>
+    </div>
+  </section>
+
+  <!-- ── Wochen ─────────────────────────────────────────────── -->
+  <section class="tab-panel" id="tab-weeks">
+    <div class="empty-state" id="weeks-empty">
+      <div class="empty-icon">&#x1F4C6;</div>
+      <div class="empty-title">Keine Daten geladen</div>
+    </div>
+    <div id="weeks-data" style="display:none">
+      <div class="nav-bar">
+        <button class="nav-arrow" id="week-prev" disabled>&#x2039;</button>
+        <div class="nav-label">
+          <div class="nav-label-main" id="week-label-main"></div>
+          <div class="nav-label-sub"  id="week-label-sub"></div>
+        </div>
+        <button class="nav-arrow" id="week-next">&#x203A;</button>
+      </div>
+      <div class="table-wrap" id="week-table"></div>
+    </div>
+  </section>
+
+  <!-- ── Personen ───────────────────────────────────────────── -->
+  <section class="tab-panel" id="tab-persons">
+    <div class="empty-state" id="persons-empty">
+      <div class="empty-icon">&#x1F465;</div>
+      <div class="empty-title">Keine Daten geladen</div>
+    </div>
+    <div id="persons-data" style="display:none">
+      <div class="person-filter" id="person-filter"></div>
+      <div id="person-detail"></div>
+    </div>
+  </section>
+
+  <!-- ── Export ─────────────────────────────────────────────── -->
+  <section class="tab-panel" id="tab-export">
+    <div class="empty-state" id="export-empty">
+      <div class="empty-icon">&#x1F4BE;</div>
+      <div class="empty-title">Keine Daten geladen</div>
+    </div>
+    <div id="export-data" style="display:none">
+      <div class="export-grid">
+        <div class="export-card">
+          <div class="export-card-title">Alle Tage (CSV)</div>
+          <div class="export-card-desc">Eine Zeile pro Tag &amp; Person mit Minuten je Typ. Ideal für eigene Auswertungen.</div>
+          <button class="export-btn" id="exp-all">&#x2193; Herunterladen</button>
+        </div>
+        <div class="export-card">
+          <div class="export-card-title">Wochensummen (CSV)</div>
+          <div class="export-card-desc">Aggregiert nach Kalenderwoche und Person.</div>
+          <button class="export-btn" id="exp-weeks">&#x2193; Herunterladen</button>
+        </div>
+        <div class="export-card">
+          <div class="export-card-title">Gesamtsummen je Person (CSV)</div>
+          <div class="export-card-desc">Alle Stunden über den gesamten geladenen Zeitraum.</div>
+          <button class="export-btn" id="exp-persons">&#x2193; Herunterladen</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <script>
+    // ─── Typ-Farbpalette & bekannte Labels ───────────────────────────────────
+    const COLOR_PALETTE = [
+      { main: '#3b82f6', dim: 'rgba(59,130,246,.15)'  },   // blau
+      { main: '#f59e0b', dim: 'rgba(245,158,11,.15)'  },   // amber
+      { main: '#ef4444', dim: 'rgba(239,68,68,.15)'   },   // rot
+      { main: '#22c55e', dim: 'rgba(34,197,94,.15)'   },   // grün
+      { main: '#8b5cf6', dim: 'rgba(139,92,246,.15)'  },   // violet
+    ];
+    const KNOWN_LABELS = {
+      anwesenheit:              'Anwesenheit',
+      wachstunde_ehrenamtlich:  'Wachstunden',
+      sanitätsstunde:           'Sanitätsstunden',
+      wachdienst:               'Wachdienst',
+      sanitaetsdienst:          'Sanitätsdienst',
+      sanitätsdienst:           'Sanitätsdienst',
+      verwaltung:               'Verwaltung',
+      ausbildung:               'Ausbildung',
+      helfer:                   'Helfer',
+    };
+
+    // Dynamisch aus den geladenen Daten abgeleitet
+    let TYPES  = [];    // logType-Strings in Reihenfolge
+    let T_INFO = {};    // logType → { label, main, dim }
+
+    function buildTypeList(typeTotals) {
+      // Reihenfolge: anwesenheit zuerst, danach nach Gesamtstunden absteigend
+      const sorted = Object.keys(typeTotals).sort((a, b) => {
+        if (a === 'anwesenheit') return -1;
+        if (b === 'anwesenheit') return 1;
+        return typeTotals[b] - typeTotals[a];
+      });
+      TYPES  = sorted;
+      T_INFO = {};
+      sorted.forEach((lt, i) => {
+        const c = COLOR_PALETTE[i % COLOR_PALETTE.length];
+        T_INFO[lt] = { label: KNOWN_LABELS[lt] || lt, main: c.main, dim: c.dim };
+      });
+    }
+
+    // Hilfsfunktionen für Inline-Styles
+    function tStyle(lt) {
+      const i = T_INFO[lt] || { main: '#888', dim: 'rgba(128,128,128,.15)' };
+      return `--type-color:${i.main};--type-dim:${i.dim}`;
+    }
+    function tColor(lt) {
+      return `color:${(T_INFO[lt]||{main:'#888'}).main}`;
+    }
+
+    // ─── State ───────────────────────────────────────────────────────────────
+    let DB = null;          // parsed data model
+    let dayIdx  = 0;
+    let weekIdx = 0;
+    let activePerson = null;
+
+    // ─── Hilfsfunktionen ─────────────────────────────────────────────────────
+    function fmtH(ms) {
+      if (!ms) return '—';
+      const h = Math.floor(ms / 3600000);
+      const m = Math.floor((ms % 3600000) / 60000);
+      return `${h}:${String(m).padStart(2,'0')}`;
+    }
+    function fmtMs(ms) {
+      if (!ms) return '—';
+      const h = Math.floor(ms / 3600000);
+      const m = Math.floor((ms % 3600000) / 60000);
+      return h > 0 ? `${h} h ${String(m).padStart(2,'0')} min` : `${m} min`;
+    }
+    function fmtDateLong(iso) {
+      return new Date(iso + 'T12:00:00').toLocaleDateString('de-DE',
+        { weekday:'long', day:'numeric', month:'long', year:'numeric' });
+    }
+    function fmtDateShort(iso) {
+      return new Date(iso + 'T12:00:00').toLocaleDateString('de-DE',
+        { day:'2-digit', month:'2-digit', year:'numeric' });
+    }
+    function fmtWeekday(iso) {
+      return new Date(iso + 'T12:00:00').toLocaleDateString('de-DE', { weekday:'short' });
+    }
+    function isoWeekKey(iso) {
+      const d = new Date(iso + 'T12:00:00');
+      const day = d.getDay() || 7;
+      d.setDate(d.getDate() + 4 - day);
+      const jan4 = new Date(d.getFullYear(), 0, 4);
+      const kw = 1 + Math.round(((d - jan4) / 86400000 - 3 + ((jan4.getDay()||7))) / 7);
+      return `${d.getFullYear()}-W${String(kw).padStart(2,'0')}`;
+    }
+    function fmtWeek(wk) {
+      const [y, w] = wk.split('-W');
+      return `KW\u00a0${w}\u00a0/${y}`;
+    }
+    function showTab(name) {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+      document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === `tab-${name}`));
+    }
+
+    // ─── Laden ───────────────────────────────────────────────────────────────
+    async function processFiles(fileList) {
+      const entries = [];
+      for (const file of fileList) {
+        if (!/^stempeluhr_.*\d{4}-\d{2}-\d{2}\.json$/.test(file.name)) continue;
+        try {
+          const json = JSON.parse(await file.text());
+          const day = json.logicalDay || (file.name.match(/(\d{4}-\d{2}-\d{2})/)||[])[1];
+          if (day && Array.isArray(json.log)) entries.push({ day, log: json.log });
+        } catch { /* überspringe kaputte Datei */ }
+      }
+      if (entries.length === 0) {
+        alert('Keine gültigen stempeluhr_*.json Dateien gefunden.');
+        return;
+      }
+      DB = buildDB(entries);
+      buildTypeList(DB.typeTotals);
+      dayIdx  = DB.days.length - 1;
+      weekIdx = DB.weeks.length - 1;
+      activePerson = DB.persons[0] ?? null;
+      document.getElementById('file-badge').textContent = `${entries.length} Dateien`;
+      document.getElementById('file-badge').style.display = '';
+      document.getElementById('header-range').textContent =
+        `${fmtDateShort(DB.days[0])} – ${fmtDateShort(DB.days[DB.days.length-1])}`;
+      renderAll();
+    }
+
+    document.getElementById('btn-load').addEventListener('click', async () => {
+      if (typeof window.showDirectoryPicker === 'function') {
+        // File System Access API (HTTPS / localhost)
+        try {
+          const dir = await window.showDirectoryPicker({ mode: 'read' });
+          const files = [];
+          for await (const entry of dir.values()) {
+            if (entry.kind === 'file') files.push(await entry.getFile());
+          }
+          await processFiles(files);
+        } catch (e) {
+          if (e.name !== 'AbortError') alert('Fehler: ' + e.message);
+        }
+      } else {
+        // Fallback: <input webkitdirectory> (file://, Firefox, …)
+        document.getElementById('file-input').click();
+      }
+    });
+
+    document.getElementById('file-input').addEventListener('change', async e => {
+      await processFiles(Array.from(e.target.files));
+      e.target.value = ''; // Reset damit gleicher Ordner nochmals ladbar
+    });
+
+    // ─── Datenmodell aufbauen ─────────────────────────────────────────────────
+    function buildDB(entries) {
+      // by[day][person][typ] = ms
+      const by = {};
+      const personSet = new Set();
+      const typeTotals = {};   // logType → Gesamtdauer aller Daten
+
+      for (const { day, log } of entries) {
+        for (const e of log) {
+          if (e.aktion !== 'stop' || !e.dauer_ms) continue;
+          const p = e.nutzer, t = e.typ;
+          personSet.add(p);
+          if (!by[day]) by[day] = {};
+          if (!by[day][p]) by[day][p] = {};
+          by[day][p][t] = (by[day][p][t] || 0) + e.dauer_ms;
+          typeTotals[t] = (typeTotals[t] || 0) + e.dauer_ms;
+        }
+      }
+
+      const days = Object.keys(by).sort();
+      const persons = [...personSet].sort();
+
+      // Wochen
+      const weekMap = {};
+      for (const d of days) {
+        const wk = isoWeekKey(d);
+        if (!weekMap[wk]) weekMap[wk] = [];
+        weekMap[wk].push(d);
+      }
+      const weeks = Object.keys(weekMap).sort();
+
+      return { by, days, persons, weekMap, weeks, typeTotals };
+    }
+
+    // ─── Alle Tabs neu rendern ────────────────────────────────────────────────
+    function renderAll() {
+      ['overview','days','weeks','persons','export'].forEach(t => {
+        document.getElementById(`${t}-empty`).style.display = 'none';
+        document.getElementById(`${t}-data`).style.display  = '';
+      });
+      renderOverview();
+      renderDay();
+      renderWeek();
+      renderPersonFilter();
+      renderPersonDetail();
+    }
+
+    // ─── Übersicht ────────────────────────────────────────────────────────────
+    function renderOverview() {
+      // Gesamtsummen
+      const totals = {};
+      for (const typ of TYPES) totals[typ] = 0;
+      for (const dayData of Object.values(DB.by))
+        for (const pd of Object.values(dayData))
+          for (const typ of TYPES) totals[typ] += pd[typ] || 0;
+
+      document.getElementById('summary-cards').innerHTML = TYPES.map(typ => `
+        <div class="card" style="${tStyle(typ)}">
+          <div class="card-label">${T_INFO[typ]?.label || typ}</div>
+          <div class="card-value">${fmtH(totals[typ])}<span class="card-unit">h</span></div>
+          <div class="card-sub">${DB.days.length} Tage · ${DB.persons.length} Personen</div>
+        </div>
+      `).join('');
+
+      // Personen-Gesamtdaten für Top-Listen
+      const ptotals = {};
+      for (const p of DB.persons) { ptotals[p] = {}; for (const t of TYPES) ptotals[p][t] = 0; }
+      for (const dayData of Object.values(DB.by))
+        for (const [p, pd] of Object.entries(dayData))
+          for (const typ of TYPES) ptotals[p][typ] = (ptotals[p][typ]||0) + (pd[typ]||0);
+
+      const topFor = typ => Object.entries(ptotals)
+        .filter(([,d]) => d[typ] > 0)
+        .sort((a,b) => b[1][typ] - a[1][typ])
+        .slice(0, 5);
+
+      const rankCls = ['rank-1','rank-2','rank-3','',''];
+      document.getElementById('top-grid').innerHTML = TYPES.map(typ => {
+        const top = topFor(typ);
+        return `
+          <div class="top-list">
+            <div class="top-list-hdr" style="${tStyle(typ)}">&#x1F3C6; Top ${T_INFO[typ]?.label || typ}</div>
+            ${top.length === 0
+              ? '<div class="top-item" style="color:var(--text-3)">Keine Daten</div>'
+              : top.map(([name, d], i) => `
+                  <div class="top-item">
+                    <div class="top-rank ${rankCls[i]}">${i+1}</div>
+                    <div class="top-name">${name}</div>
+                    <div class="top-val" style="${tStyle(typ)}">${fmtH(d[typ])} h</div>
+                  </div>`).join('')}
+          </div>`;
+      }).join('');
+
+      // Korrelation mit Anwesenheit
+      renderCorrelation(ptotals);
+
+      // Kalender
+      renderCalendar();
+    }
+
+    function pearsonR(xs, ys) {
+      const n = xs.length;
+      if (n < 2) return null;
+      const mx = xs.reduce((a,b) => a+b, 0) / n;
+      const my = ys.reduce((a,b) => a+b, 0) / n;
+      const num = xs.reduce((s,x,i) => s + (x - mx) * (ys[i] - my), 0);
+      const dx = Math.sqrt(xs.reduce((s,x) => s + (x - mx) ** 2, 0));
+      const dy = Math.sqrt(ys.reduce((s,y) => s + (y - my) ** 2, 0));
+      if (dx === 0 || dy === 0) return null;
+      return num / (dx * dy);
+    }
+
+    function renderCorrelation(ptotals) {
+      const sec = document.getElementById('corr-section');
+      const corrTypes = TYPES.filter(t => t !== 'anwesenheit');
+      if (!TYPES.includes('anwesenheit') || corrTypes.length === 0 || DB.persons.length < 3) {
+        sec.style.display = 'none';
+        return;
+      }
+      const anwVals = DB.persons.map(p => (ptotals[p]?.anwesenheit || 0) / 3600000);
+      const html = corrTypes.map(t => {
+        const tVals = DB.persons.map(p => (ptotals[p]?.[t] || 0) / 3600000);
+        const r = pearsonR(anwVals, tVals);
+        if (r === null) return '';
+        const pct = Math.round(Math.abs(r) * 100);
+        return `
+          <div class="corr-item" style="${tStyle(t)}">
+            <div class="corr-label">Anwesenheit &#x2194; ${T_INFO[t]?.label || t}</div>
+            <div class="corr-bar-wrap">
+              <div class="corr-bar" style="width:${pct}%;background:var(--type-color)"></div>
+            </div>
+            <div class="corr-val">${r >= 0 ? '+' : ''}${r.toFixed(2)}</div>
+          </div>`;
+      }).filter(Boolean).join('');
+      document.getElementById('corr-grid').innerHTML = html || '<span style="color:var(--text-3);font-size:13px">Nicht genug Daten</span>';
+      sec.style.display = html ? '' : 'none';
+    }
+
+    function renderCalendar() {
+      const daySet = new Set(DB.days);
+      // Gruppiere nach Monat
+      const months = {};
+      for (const d of DB.days) {
+        const m = d.slice(0, 7);
+        if (!months[m]) months[m] = true;
+      }
+      // Füge ggf. fehlende Monate im Bereich ein
+      const allMonths = [];
+      if (DB.days.length > 0) {
+        const [y0, m0] = DB.days[0].split('-').map(Number);
+        const [y1, m1] = DB.days[DB.days.length-1].split('-').map(Number);
+        for (let y = y0, m = m0; y < y1 || (y === y1 && m <= m1); ) {
+          allMonths.push(`${y}-${String(m).padStart(2,'0')}`);
+          m++; if (m > 12) { m = 1; y++; }
+        }
+      }
+
+      let html = '';
+      for (const month of allMonths) {
+        const [y, m] = month.split('-').map(Number);
+        const name = new Date(y, m-1, 1).toLocaleDateString('de-DE', { month:'long', year:'numeric' });
+        html += `<div class="cal-month-label">${name}</div>`;
+        // Leertage vorne (Montag = 0)
+        const firstDow = (new Date(y, m-1, 1).getDay() + 6) % 7;
+        for (let i = 0; i < firstDow; i++) html += `<div class="cal-spacer"></div>`;
+        const daysInMonth = new Date(y, m, 0).getDate();
+        for (let d = 1; d <= daysInMonth; d++) {
+          const iso = `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+          const has = daySet.has(iso);
+          html += `<div class="cal-day${has ? ' has-data' : ''}"
+            ${has ? `onclick="jumpToDay('${iso}')" title="${fmtDateShort(iso)}"` : ''}
+          >${d}</div>`;
+        }
+      }
+      document.getElementById('cal-grid').innerHTML = html;
+    }
+
+    function jumpToDay(iso) {
+      const idx = DB.days.indexOf(iso);
+      if (idx < 0) return;
+      dayIdx = idx;
+      renderDay();
+      showTab('days');
+    }
+
+    // ─── Tage ─────────────────────────────────────────────────────────────────
+    function renderDay() {
+      if (!DB || DB.days.length === 0) return;
+      const day = DB.days[dayIdx];
+      const dayData = DB.by[day] || {};
+
+      document.getElementById('day-label-main').textContent = fmtDateLong(day);
+      document.getElementById('day-label-sub').textContent  = `Tag ${dayIdx+1} von ${DB.days.length}`;
+      document.getElementById('day-prev').disabled = dayIdx === 0;
+      document.getElementById('day-next').disabled = dayIdx === DB.days.length - 1;
+
+      const totals = {};
+      let hasAny = false;
+      const rows = DB.persons.map(p => {
+        const d = dayData[p] || {};
+        if (!TYPES.some(t => d[t] > 0)) return '';
+        hasAny = true;
+        for (const t of TYPES) totals[t] = (totals[t]||0) + (d[t]||0);
+        return `<tr>
+          <td>${p}</td>
+          ${TYPES.map(t => `<td class="col-type" style="${tColor(t)}">${fmtMs(d[t])}</td>`).join('')}
+        </tr>`;
+      }).filter(Boolean);
+
+      document.getElementById('day-table').innerHTML = `
+        <table class="data-table">
+          <thead><tr>
+            <th>Person</th>
+            ${TYPES.map(t => `<th class="col-type" style="${tColor(t)}">${T_INFO[t]?.label||t}</th>`).join('')}
+          </tr></thead>
+          <tbody>
+            ${rows.length > 0
+              ? rows.join('') + `<tr class="total-row">
+                  <td>Gesamt</td>
+                  ${TYPES.map(t => `<td class="col-type" style="${tColor(t)}">${fmtMs(totals[t])}</td>`).join('')}
+                </tr>`
+              : `<tr class="no-data-row"><td colspan="${1+TYPES.length}">Keine Einträge für diesen Tag</td></tr>`}
+          </tbody>
+        </table>`;
+    }
+
+    document.getElementById('day-prev').addEventListener('click', () => { dayIdx--; renderDay(); });
+    document.getElementById('day-next').addEventListener('click', () => { dayIdx++; renderDay(); });
+
+    // ─── Wochen ───────────────────────────────────────────────────────────────
+    function renderWeek() {
+      if (!DB || DB.weeks.length === 0) return;
+      const wk = DB.weeks[weekIdx];
+      const wkDays = DB.weekMap[wk] || [];
+
+      document.getElementById('week-label-main').textContent = fmtWeek(wk);
+      document.getElementById('week-label-sub').textContent =
+        wkDays.length > 0
+          ? `${fmtDateShort(wkDays[0])} – ${fmtDateShort(wkDays[wkDays.length-1])}`
+          : '';
+      document.getElementById('week-prev').disabled = weekIdx === 0;
+      document.getElementById('week-next').disabled = weekIdx === DB.weeks.length - 1;
+
+      // Aggregieren
+      const pw = {};
+      for (const p of DB.persons) { pw[p] = {}; for (const t of TYPES) pw[p][t] = 0; }
+      for (const d of wkDays) {
+        for (const [p, pd] of Object.entries(DB.by[d] || {})) {
+          if (!pw[p]) { pw[p] = {}; for (const t of TYPES) pw[p][t] = 0; }
+          for (const t of TYPES) pw[p][t] += pd[t] || 0;
+        }
+      }
+
+      const totals = {};
+      const rows = DB.persons.map(p => {
+        const d = pw[p] || {};
+        if (!TYPES.some(t => d[t] > 0)) return '';
+        for (const t of TYPES) totals[t] = (totals[t]||0) + (d[t]||0);
+        return `<tr>
+          <td>${p}</td>
+          ${TYPES.map(t => `<td class="col-type" style="${tColor(t)}">${fmtMs(d[t])}</td>`).join('')}
+        </tr>`;
+      }).filter(Boolean);
+
+      document.getElementById('week-table').innerHTML = `
+        <table class="data-table">
+          <thead><tr>
+            <th>Person</th>
+            ${TYPES.map(t => `<th class="col-type" style="${tColor(t)}">${T_INFO[t]?.label||t}</th>`).join('')}
+          </tr></thead>
+          <tbody>
+            ${rows.length > 0
+              ? rows.join('') + `<tr class="total-row">
+                  <td>Gesamt</td>
+                  ${TYPES.map(t => `<td class="col-type" style="${tColor(t)}">${fmtMs(totals[t])}</td>`).join('')}
+                </tr>`
+              : `<tr class="no-data-row"><td colspan="${1+TYPES.length}">Keine Einträge für diese Woche</td></tr>`}
+          </tbody>
+        </table>`;
+    }
+
+    document.getElementById('week-prev').addEventListener('click', () => { weekIdx--; renderWeek(); });
+    document.getElementById('week-next').addEventListener('click', () => { weekIdx++; renderWeek(); });
+
+    // ─── Personen ─────────────────────────────────────────────────────────────
+    function renderPersonFilter() {
+      document.getElementById('person-filter').innerHTML = DB.persons.map(p => `
+        <button class="person-btn${p === activePerson ? ' active' : ''}"
+          data-person="${p.replace(/"/g,'&quot;')}">${p}</button>
+      `).join('');
+      document.getElementById('person-filter').addEventListener('click', e => {
+        const btn = e.target.closest('.person-btn');
+        if (!btn) return;
+        activePerson = btn.dataset.person;
+        document.querySelectorAll('.person-btn').forEach(b =>
+          b.classList.toggle('active', b.dataset.person === activePerson));
+        renderPersonDetail();
+      });
+    }
+
+    function renderPersonDetail() {
+      if (!activePerson || !DB) return;
+      const totals = {};
+      for (const t of TYPES) totals[t] = 0;
+      const rows = [];
+
+      for (const day of DB.days) {
+        const d = (DB.by[day] || {})[activePerson] || {};
+        if (!TYPES.some(t => d[t] > 0)) continue;
+        for (const t of TYPES) totals[t] += d[t] || 0;
+        rows.push(`<tr>
+          <td>${fmtDateShort(day)}</td>
+          <td class="col-dim">${fmtWeekday(day)}</td>
+          ${TYPES.map(t => `<td class="col-type" style="${tColor(t)}">${fmtMs(d[t])}</td>`).join('')}
+        </tr>`);
+      }
+
+      document.getElementById('person-detail').innerHTML = `
+        <div class="person-name-heading">${activePerson}</div>
+        <div class="cards" style="margin-bottom:20px">
+          ${TYPES.map(typ => {
+            const anwMs = totals['anwesenheit'];
+            const pct = (typ !== 'anwesenheit' && anwMs > 0)
+              ? Math.round(totals[typ] / anwMs * 100) : null;
+            return `
+            <div class="card" style="${tStyle(typ)}">
+              <div class="card-label">${T_INFO[typ]?.label||typ}</div>
+              <div class="card-value">${fmtH(totals[typ])}<span class="card-unit">h</span></div>
+              ${pct !== null ? `
+              <div style="margin-top:8px">
+                <div style="height:4px;background:var(--bg3);border-radius:2px;overflow:hidden">
+                  <div style="height:100%;width:${Math.min(pct,100)}%;background:var(--type-color);border-radius:2px"></div>
+                </div>
+                <div style="font-size:11px;color:var(--text-2);margin-top:4px">${pct}\u00a0% der Anwesenheit</div>
+              </div>` : ''}
+            </div>`;
+          }).join('')}
+        </div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead><tr>
+              <th>Datum</th><th></th>
+              ${TYPES.map(t => `<th class="col-type" style="${tColor(t)}">${T_INFO[t]?.label||t}</th>`).join('')}
+            </tr></thead>
+            <tbody>
+              ${rows.length > 0
+                ? rows.join('')
+                : `<tr class="no-data-row"><td colspan="${2+TYPES.length}">Keine Daten</td></tr>`}
+            </tbody>
+          </table>
+        </div>`;
+    }
+
+    // ─── Export ───────────────────────────────────────────────────────────────
+    function csvDL(filename, rows) {
+      const csv = '\uFEFF' + rows
+        .map(r => r.map(c => `"${String(c ?? '').replace(/"/g,'""')}"`).join(';'))
+        .join('\r\n');
+      const a = Object.assign(document.createElement('a'), {
+        href: 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv),
+        download: filename,
+      });
+      a.click();
+    }
+
+    document.getElementById('exp-all').addEventListener('click', () => {
+      const header = ['Datum', 'Person', ...TYPES.map(t => `${T_INFO[t]?.label||t} (min)`)];
+      const rows = [header];
+      for (const day of DB.days)
+        for (const [p, pd] of Object.entries(DB.by[day]))
+          rows.push([day, p, ...TYPES.map(t => Math.round((pd[t]||0)/60000))]);
+      csvDL('stempeluhr_alle_tage.csv', rows);
+    });
+
+    document.getElementById('exp-weeks').addEventListener('click', () => {
+      const header = ['KW', 'Person', ...TYPES.map(t => `${T_INFO[t]?.label||t} (min)`)];
+      const rows = [header];
+      for (const wk of DB.weeks) {
+        const pw = {};
+        for (const d of DB.weekMap[wk])
+          for (const [p, pd] of Object.entries(DB.by[d] || {})) {
+            if (!pw[p]) pw[p] = {};
+            for (const t of TYPES) pw[p][t] = (pw[p][t]||0) + (pd[t]||0);
+          }
+        for (const [p, pd] of Object.entries(pw))
+          rows.push([fmtWeek(wk), p, ...TYPES.map(t => Math.round((pd[t]||0)/60000))]);
+      }
+      csvDL('stempeluhr_wochen.csv', rows);
+    });
+
+    document.getElementById('exp-persons').addEventListener('click', () => {
+      const header = ['Person', ...TYPES.map(t => `${T_INFO[t]?.label||t} (min)`)];
+      const rows = [header];
+      const pt = {};
+      for (const [, dayData] of Object.entries(DB.by))
+        for (const [p, pd] of Object.entries(dayData)) {
+          if (!pt[p]) pt[p] = {};
+          for (const t of TYPES) pt[p][t] = (pt[p][t]||0) + (pd[t]||0);
+        }
+      for (const p of DB.persons)
+        rows.push([p, ...TYPES.map(t => Math.round(((pt[p]||{})[t]||0)/60000))]);
+      csvDL('stempeluhr_personen.csv', rows);
+    });
+
+    // ─── Cloud-Laden ──────────────────────────────────────────────────────────
+    const IS_PROXY = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+
+    function getCloudCreds() {
+      if (window.ADMIN_CONFIG?.cloud?.user && window.ADMIN_CONFIG?.cloud?.pass)
+        return window.ADMIN_CONFIG.cloud;
+      try {
+        const s = JSON.parse(localStorage.getItem('stempeluhr_admin_cloud') || '{}');
+        if (s.user && s.pass && (IS_PROXY || s.url)) return s;
+      } catch {}
+      return null;
+    }
+
+    function cloudDavBase(creds) {
+      if (IS_PROXY) return `/remote.php/dav/files/${encodeURIComponent(creds.user)}/Stempeluhr`;
+      let url = creds.url.trim().replace(/\/$/, '');
+      url = url.replace(/\/remote\.php\/dav.*/i, '');
+      url = url.replace(/\/index\.php.*/i, '');
+      return `${url}/remote.php/dav/files/${encodeURIComponent(creds.user)}/Stempeluhr`;
+    }
+
+    async function _doCloudLoad(creds) {
+      const base = cloudDavBase(creds);
+      const auth = 'Basic ' + btoa(unescape(encodeURIComponent(creds.user + ':' + creds.pass)));
+      const btn = document.getElementById('btn-cloud');
+      btn.disabled = true;
+      btn.textContent = '⏳ Lade…';
+      try {
+        const res = await fetch(base, {
+          method: 'PROPFIND',
+          headers: { Authorization: auth, Depth: '1', 'Content-Type': 'application/xml' },
+        });
+        if (!res.ok) throw new Error(`PROPFIND: HTTP ${res.status}`);
+        const xml = await res.text();
+
+        const hrefs = [...xml.matchAll(/<[^>]*:href[^>]*>([^<]+)<\/[^>]*:href>/g)]
+          .map(m => decodeURIComponent(m[1].trim()))
+          .filter(h => /stempeluhr_.*\d{4}-\d{2}-\d{2}\.json$/.test(h));
+
+        if (hrefs.length === 0) {
+          btn.disabled = false; btn.textContent = '☁️ Cloud laden';
+          alert('Keine stempeluhr_*.json Dateien in der Cloud gefunden.');
+          return;
+        }
+
+        const entries = [];
+        for (const href of hrefs) {
+          const fileUrl = IS_PROXY
+            ? href
+            : (creds.url.replace(/\/$/, '') + (href.startsWith('/') ? href : '/' + href));
+          try {
+            const r = await fetch(fileUrl, { headers: { Authorization: auth } });
+            if (!r.ok) continue;
+            const json = await r.json();
+            const m = href.match(/(\d{4}-\d{2}-\d{2})\.json$/);
+            const day = json.logicalDay || (m && m[1]);
+            if (day && Array.isArray(json.log)) entries.push({ day, log: json.log });
+          } catch {}
+        }
+
+        btn.disabled = false; btn.textContent = '☁️ Cloud laden';
+        if (entries.length === 0) { alert('Keine gültigen Dateien geladen.'); return; }
+
+        DB = buildDB(entries);
+        buildTypeList(DB.typeTotals);
+        dayIdx  = DB.days.length - 1;
+        weekIdx = DB.weeks.length - 1;
+        activePerson = DB.persons[0] ?? null;
+        document.getElementById('file-badge').textContent = `☁ ${entries.length} Dateien`;
+        document.getElementById('file-badge').style.display = '';
+        document.getElementById('header-range').textContent =
+          `${fmtDateShort(DB.days[0])} – ${fmtDateShort(DB.days[DB.days.length-1])}`;
+        renderAll();
+      } catch(e) {
+        btn.disabled = false; btn.textContent = '☁️ Cloud laden';
+        alert('Cloud-Fehler: ' + e.message);
+      }
+    }
+
+    document.getElementById('btn-cloud').addEventListener('click', async () => {
+      const creds = getCloudCreds();
+      if (creds) {
+        await _doCloudLoad(creds);
+      } else {
+        const bar = document.getElementById('cloud-creds-bar');
+        bar.style.display = bar.style.display === 'none' ? '' : 'none';
+      }
+    });
+
+    document.getElementById('cc-ok').addEventListener('click', async () => {
+      const url  = document.getElementById('cc-url').value.trim();
+      const user = document.getElementById('cc-user').value.trim();
+      const pass = document.getElementById('cc-pass').value.trim();
+      const hint = document.getElementById('cc-hint');
+      if (!user || !pass || (!IS_PROXY && !url)) {
+        hint.textContent = IS_PROXY
+          ? 'Benutzername und Passwort erforderlich.'
+          : 'URL, Benutzername und Passwort erforderlich.';
+        return;
+      }
+      hint.textContent = '';
+      const creds = { url, user, pass };
+      localStorage.setItem('stempeluhr_admin_cloud', JSON.stringify(creds));
+      document.getElementById('cloud-creds-bar').style.display = 'none';
+      await _doCloudLoad(creds);
+    });
+
+    // ─── Tab-Wechsel ─────────────────────────────────────────────────────────
+    document.querySelectorAll('.tab-btn').forEach(btn =>
+      btn.addEventListener('click', () => showTab(btn.dataset.tab)));
+  </script>
+</body>
+</html>

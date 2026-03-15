@@ -1,0 +1,18 @@
+{
+  "name": "LifeguardClock",
+  "short_name": "LifeguardClock",
+  "description": "Zeiterfassung für Rettungsschwimmer – Anwesenheit, Wachdienst, Sanitätsdienst",
+  "display": "fullscreen",
+  "orientation": "portrait",
+  "background_color": "#09090d",
+  "theme_color": "#09090d",
+  "start_url": "./LifeguardClock.html",
+  "icons": [
+    {
+      "src": "Logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

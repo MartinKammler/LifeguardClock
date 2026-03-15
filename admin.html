@@ -1,0 +1,1596 @@
+<!--
+  admin.html – LifeguardClock · Benutzerverwaltung
+  Copyright (C) 2026  Martin Kammler, Ermlandstr. 10, 75181 Pforzheim, mkammler@gmx.de
+  Lizenz: GNU General Public License v3 – https://www.gnu.org/licenses/gpl-3.0.html
+-->
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LifeguardClock – Benutzerverwaltung</title>
+  <link rel="icon" type="image/png" href="Logo.png">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:      #09090d;
+      --surface: #1e1e2e;
+      --border:  rgba(255,255,255,0.08);
+      --text:    #e8e8f0;
+      --text-2:  #a0a0b8;
+      --blue:    #5b8af5;
+      --green:   #4caf7d;
+      --red:     #e05252;
+      --amber:   #f5c842;
+    }
+
+    html, body {
+      min-height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      font-size: 15px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    body {
+      padding: 24px 16px 48px;
+    }
+
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    /* ── Header ─────────────────────────────────────────────── */
+    .page-header {
+      margin-bottom: 28px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .page-header-logo { height: 48px; width: 48px; object-fit: contain; border-radius: 10px; flex-shrink: 0; }
+
+    .page-header h1 {
+      font-size: 1.55rem;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+    }
+    .page-header h1 span { color: #e03; }
+
+    .header-sub {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 5px;
+      font-size: 0.85rem;
+      color: var(--text-2);
+    }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 2px 10px;
+      border-radius: 20px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      letter-spacing: 0.2px;
+    }
+    .status-badge::before {
+      content: '';
+      display: inline-block;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+    .status-badge.green  { background: rgba(76,175,125,0.18); color: var(--green); }
+    .status-badge.red    { background: rgba(224, 82, 82,0.18); color: var(--red); }
+    .status-badge.gray   { background: rgba(160,160,184,0.14); color: var(--text-2); }
+
+    /* ── Warning banner ─────────────────────────────────────── */
+    .warn-banner {
+      background: rgba(245,200,66,0.12);
+      border: 1px solid rgba(245,200,66,0.35);
+      border-radius: 8px;
+      padding: 10px 16px;
+      color: var(--amber);
+      font-size: 0.86rem;
+      margin-bottom: 20px;
+    }
+
+    /* ── Card ───────────────────────────────────────────────── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 20px 22px;
+      margin-bottom: 20px;
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .card-header h2 {
+      font-size: 0.95rem;
+      font-weight: 600;
+    }
+
+    .toggle-icon {
+      font-size: 0.8rem;
+      color: var(--text-2);
+      transition: transform 0.2s;
+    }
+    .toggle-icon.open { transform: rotate(180deg); }
+
+    .card-body {
+      margin-top: 16px;
+    }
+    .card-body.hidden { display: none; }
+
+    /* ── Form elements ──────────────────────────────────────── */
+    .form-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    @media (max-width: 640px) {
+      .form-grid { grid-template-columns: 1fr; }
+    }
+
+    .form-group label {
+      display: block;
+      font-size: 0.78rem;
+      color: var(--text-2);
+      margin-bottom: 4px;
+      font-weight: 500;
+    }
+
+    input[type="text"],
+    input[type="password"],
+    input[type="url"] {
+      width: 100%;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 7px 10px;
+      color: var(--text);
+      font-size: 0.88rem;
+      font-family: inherit;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    input[type="text"]:focus,
+    input[type="password"]:focus,
+    input[type="url"]:focus {
+      border-color: var(--blue);
+    }
+
+    .btn-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 7px 14px;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
+      font-size: 0.84rem;
+      font-weight: 600;
+      font-family: inherit;
+      transition: opacity 0.15s, filter 0.15s;
+    }
+    .btn:hover { filter: brightness(1.12); }
+    .btn:active { filter: brightness(0.92); }
+
+    .btn-primary  { background: var(--blue);  color: #fff; }
+    .btn-ghost    { background: rgba(255,255,255,0.07); color: var(--text); border: 1px solid var(--border); }
+    .btn-danger   { background: rgba(224,82,82,0.18);   color: var(--red);   border: 1px solid rgba(224,82,82,0.3); }
+    .btn-amber    { background: rgba(245,200,66,0.15);  color: var(--amber); border: 1px solid rgba(245,200,66,0.3); }
+    .btn-green    { background: rgba(76,175,125,0.15);  color: var(--green); border: 1px solid rgba(76,175,125,0.3); }
+
+    .tip {
+      font-size: 0.78rem;
+      color: var(--text-2);
+      margin-top: 10px;
+    }
+
+    /* ── Action bar ─────────────────────────────────────────── */
+    .action-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+
+    .action-bar-right {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    /* ── Add user panel ─────────────────────────────────────── */
+    .add-panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px 20px;
+      margin-bottom: 16px;
+    }
+    .add-panel.hidden { display: none; }
+
+    .add-panel h3 {
+      font-size: 0.9rem;
+      font-weight: 600;
+      margin-bottom: 14px;
+    }
+
+    .add-panel .form-row {
+      display: flex;
+      gap: 12px;
+      align-items: flex-end;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
+    }
+
+    .add-panel .form-row .form-group {
+      flex: 1;
+      min-width: 160px;
+    }
+
+    .perm-group {
+      margin-bottom: 12px;
+    }
+
+    .perm-group label.section-label {
+      font-size: 0.78rem;
+      color: var(--text-2);
+      font-weight: 500;
+      display: block;
+      margin-bottom: 6px;
+    }
+
+    .perm-checks {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .perm-check {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 0.84rem;
+      cursor: pointer;
+    }
+
+    .perm-check input[type="checkbox"] {
+      accent-color: var(--blue);
+      width: 15px;
+      height: 15px;
+      cursor: pointer;
+    }
+
+    /* ── User table ─────────────────────────────────────────── */
+    .table-wrap {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 560px;
+    }
+
+    thead {
+      background: rgba(255,255,255,0.04);
+    }
+
+    thead th {
+      padding: 10px 14px;
+      text-align: left;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-2);
+      white-space: nowrap;
+    }
+
+    thead th.col-num   { width: 42px; text-align: center; }
+    thead th.col-pin   { width: 160px; }
+    thead th.col-perms { width: 220px; }
+    thead th.col-acts  { width: 220px; }
+
+    tbody tr:nth-child(even) { background: rgba(255,255,255,0.025); }
+    tbody tr:nth-child(odd)  { background: transparent; }
+    tbody tr:hover           { background: rgba(255,255,255,0.05); }
+
+    tbody td {
+      padding: 9px 14px;
+      border-top: 1px solid var(--border);
+      vertical-align: middle;
+      font-size: 0.88rem;
+    }
+
+    td.col-num {
+      text-align: center;
+      color: var(--text-2);
+      font-size: 0.78rem;
+    }
+
+    td.col-name {
+      font-weight: 500;
+    }
+
+    .name-display {
+      cursor: pointer;
+      border-radius: 4px;
+      padding: 2px 4px;
+      margin: -2px -4px;
+      transition: background 0.15s;
+    }
+    .name-display:hover {
+      background: rgba(255,255,255,0.08);
+    }
+
+    .name-input {
+      background: rgba(255,255,255,0.07);
+      border: 1px solid var(--blue);
+      border-radius: 5px;
+      padding: 3px 7px;
+      color: var(--text);
+      font-size: 0.88rem;
+      font-family: inherit;
+      font-weight: 500;
+      outline: none;
+      width: 100%;
+    }
+
+    td.col-pin {
+      font-family: 'Courier New', monospace;
+      font-size: 0.9rem;
+    }
+
+    .pin-mask {
+      color: var(--text-2);
+      letter-spacing: 2px;
+    }
+
+    .otp-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      background: rgba(245,200,66,0.15);
+      border: 1px solid rgba(245,200,66,0.3);
+      border-radius: 4px;
+      padding: 1px 6px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: var(--amber);
+      font-family: inherit;
+      margin-left: 5px;
+      vertical-align: middle;
+    }
+
+    td.col-perms .perm-checks {
+      gap: 6px;
+    }
+
+    td.col-perms .perm-check {
+      font-size: 0.8rem;
+    }
+
+    td.col-acts {
+      white-space: nowrap;
+    }
+
+    .acts-row {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .btn-sm {
+      padding: 4px 10px;
+      font-size: 0.78rem;
+    }
+
+    /* ── Toast ──────────────────────────────────────────────── */
+    #toast-container {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      z-index: 9999;
+      pointer-events: none;
+    }
+
+    .toast {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 9px 20px;
+      font-size: 0.85rem;
+      color: var(--text);
+      box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+      animation: toastIn 0.2s ease, toastOut 0.3s ease 2.5s forwards;
+      white-space: nowrap;
+    }
+    .toast.ok   { border-color: rgba(76,175,125,0.4);  color: var(--green); }
+    .toast.err  { border-color: rgba(224,82,82,0.4);   color: var(--red); }
+    .toast.info { border-color: rgba(91,138,245,0.4);  color: var(--blue); }
+
+    @keyframes toastIn  { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+    @keyframes toastOut { from { opacity: 1; } to { opacity: 0; pointer-events: none; } }
+
+    /* ── Footer ─────────────────────────────────────────────── */
+    footer {
+      margin-top: 40px;
+      text-align: center;
+      font-size: 0.75rem;
+      color: var(--text-2);
+      border-top: 1px solid var(--border);
+      padding-top: 16px;
+    }
+
+    .empty-row td {
+      text-align: center;
+      color: var(--text-2);
+      padding: 28px 14px;
+      font-size: 0.88rem;
+    }
+
+    .btn-danger:hover { background: var(--red); color: #fff; }
+
+    /* ── Config card ─────────────────────────────────────── */
+    .card-title { font-size: 0.95rem; font-weight: 600; }
+    .note { font-size: 0.84rem; color: var(--text-2); margin-bottom: 14px; }
+    .config-card { margin-top: 16px; }
+    .cfg-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .cfg-row label { font-size: 13px; color: var(--text-2); min-width: 80px; }
+
+    .cfg-meta-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; font-size: 12px; color: var(--text-2); }
+    .cfg-fields { display: flex; flex-direction: column; gap: 12px; margin-bottom: 18px; padding: 14px 16px; background: rgba(255,255,255,0.03); border-radius: 8px; border: 1px solid var(--border); }
+    .cfg-field-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .cfg-field-row label { min-width: 120px; font-size: 13px; color: var(--text-2); font-weight: 500; }
+    .cfg-inp { padding: 6px 10px; border-radius: 5px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 14px; width: 90px; }
+    .cfg-inp-mono { font-family: monospace; letter-spacing: 3px; width: 110px; }
+    .cfg-hint { font-size: 11px; color: var(--text-2); }
+    .cfg-details { margin-top: 4px; border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; }
+    .cfg-details summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--text-2); user-select: none; list-style: none; }
+    .cfg-details summary:hover { color: var(--text); }
+    .cfg-details[open] summary { color: var(--text); margin-bottom: 4px; }
+    .cfg-json-area { width: 100%; font-family: monospace; font-size: 12px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 10px; resize: vertical; margin-top: 6px; }
+    /* Typen-Verwaltung */
+    .cfg-type-row { padding: 10px 0; border-bottom: 1px solid var(--border); }
+    .cfg-type-row:last-child { border-bottom: none; }
+    .cfg-type-toggle { display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
+    .cfg-type-toggle input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--blue); cursor: pointer; }
+    .cfg-type-name { font-size: 14px; font-weight: 700; color: var(--text); }
+    .cfg-type-key  { font-size: 11px; color: var(--text-2); font-family: monospace; }
+    .cfg-type-tag  { font-size: 10px; padding: 2px 6px; border-radius: 4px; background: rgba(251,191,36,0.15); color: #fbbf24; font-weight: 700; }
+    .cfg-type-row.is-disabled .cfg-type-name { opacity: 0.4; text-decoration: line-through; }
+    .cfg-zf-grid { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; padding-left: 24px; }
+    .cfg-zf-row  { display: flex; align-items: center; gap: 8px; }
+    .cfg-zf-day  { font-size: 12px; font-weight: 700; color: var(--text-2); width: 24px; }
+    .cfg-zf-inp  { padding: 4px 8px; border-radius: 5px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 13px; font-family: monospace; width: 88px; color-scheme: dark; }
+    .cfg-zf-sep  { color: var(--text-2); font-size: 13px; }
+    .btn-zf-clear { background: none; border: none; color: var(--text-2); cursor: pointer; font-size: 16px; padding: 0 4px; line-height: 1; }
+    .btn-zf-clear:hover { color: var(--red); }
+    .cfg-types-actions { display: flex; gap: 8px; margin-top: 10px; }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <!-- Header -->
+  <header class="page-header">
+    <img src="Logo.png" class="page-header-logo" alt="LifeguardClock">
+    <div>
+    <h1>Lifeguard<span>Clock</span> – Benutzerverwaltung</h1>
+    <div class="header-sub">
+      <span>Cloud-Status:</span>
+      <span id="status-badge" class="status-badge gray">Nicht konfiguriert</span>
+    </div>
+    </div>
+  </header>
+
+  <!-- CORS-Warnung wenn file:// -->
+  <div id="cors-banner" class="warn-banner" style="display:none">
+    &#9888; <strong>Netzwerkfehler wegen CORS.</strong>
+    Diese Seite muss &uuml;ber einen lokalen Webserver ge&ouml;ffnet werden, nicht per <code>file://</code>.<br>
+    Im Projektordner ausf&uuml;hren: <code>python -m http.server 8080</code> &rarr; dann
+    <a href="http://localhost:8080/admin.html" style="color:var(--blue)">http://localhost:8080/admin.html</a> &ouml;ffnen.
+  </div>
+
+  <!-- Config-warning if no CONFIG -->
+  <div id="no-config-banner" class="warn-banner" style="display:none">
+    &#9888; <strong>admin_config.js nicht gefunden.</strong>
+    Bitte <code>admin_config.example.js</code> als <code>admin_config.js</code> kopieren und anpassen,
+    oder Zugangsdaten unten manuell eingeben.
+  </div>
+
+  <!-- Cloud card -->
+  <div class="card" id="cloud-card">
+    <div class="card-header" id="cloud-card-toggle">
+      <h2>&#9729; Cloud-Verbindung (Nextcloud / WebDAV)</h2>
+      <span class="toggle-icon" id="cloud-toggle-icon">&#9660;</span>
+    </div>
+    <div class="card-body" id="cloud-card-body">
+      <div class="form-grid">
+        <div class="form-group">
+          <label for="inp-url">Nextcloud-URL</label>
+          <input type="url" id="inp-url" placeholder="https://cloud.example.com">
+        </div>
+        <div class="form-group">
+          <label for="inp-user">Benutzername</label>
+          <input type="text" id="inp-user" placeholder="benutzername" autocomplete="username">
+        </div>
+        <div class="form-group">
+          <label for="inp-pass">App-Passwort</label>
+          <input type="password" id="inp-pass" placeholder="xxxx-xxxx-xxxx-xxxx" autocomplete="current-password">
+        </div>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-primary" id="btn-save-creds">Speichern &amp; verbinden</button>
+        <button class="btn btn-ghost" id="btn-test">Verbindung testen</button>
+        <button class="btn btn-ghost" id="btn-load">Neu laden</button>
+      </div>
+      <p class="tip">Tipp: App-Passwort verwenden (Nextcloud → Einstellungen → Sicherheit)</p>
+    </div>
+  </div>
+
+  <!-- Action bar -->
+  <div class="action-bar">
+    <button class="btn btn-primary" id="btn-add-user">+ Nutzer hinzuf&uuml;gen</button>
+    <div class="action-bar-right">
+      <button class="btn btn-amber" id="btn-print-pins" style="display:none">
+        &#128273; Einmal-PINs drucken (<span id="otp-count">0</span>)
+      </button>
+      <button class="btn btn-ghost" id="btn-export">&#8595; Exportieren</button>
+    </div>
+  </div>
+
+  <!-- Add user panel -->
+  <div class="add-panel hidden" id="add-panel">
+    <h3>Neuen Nutzer hinzuf&uuml;gen</h3>
+    <div class="form-row">
+      <div class="form-group">
+        <label for="new-name">Name</label>
+        <input type="text" id="new-name" placeholder="Vorname Nachname">
+      </div>
+    </div>
+    <div class="perm-group" id="new-perm-group" style="display:none">
+      <label class="section-label">Berechtigungen</label>
+      <div class="perm-checks" id="new-perm-checks"></div>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-green" id="btn-do-add">Hinzuf&uuml;gen</button>
+      <button class="btn btn-ghost" id="btn-cancel-add">Abbrechen</button>
+    </div>
+  </div>
+
+  <!-- User table -->
+  <div class="table-wrap">
+    <table id="user-table">
+      <thead>
+        <tr>
+          <th class="col-num">#</th>
+          <th>Name</th>
+          <th class="col-pin">PIN</th>
+          <th class="col-perms">Berechtigungen</th>
+          <th class="col-acts">Aktionen</th>
+        </tr>
+      </thead>
+      <tbody id="user-tbody">
+        <tr class="empty-row"><td colspan="5">Keine Nutzer geladen. Bitte Zugangsdaten eingeben und &bdquo;Nutzer laden&ldquo; klicken.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Device config card -->
+  <div class="card config-card" id="config-card">
+    <div class="card-header" id="config-card-toggle">
+      <span class="card-title">📋 Gerätekonfigurationen</span>
+      <span class="toggle-icon" id="config-toggle-icon">▾</span>
+    </div>
+    <div class="card-body" id="config-card-body">
+      <p class="note">Lade die Konfiguration eines Geräts, bearbeite sie und speichere sie zurück. Das Gerät übernimmt sie beim nächsten &bdquo;Konfig aktualisieren&ldquo;. <strong>cloud.*</strong> und <strong>deviceId</strong> werden niemals &uuml;berschrieben.</p>
+      <div class="cfg-row">
+        <label>Geräte-ID</label>
+        <select id="cfg-device-select" style="display:none;padding:7px 10px;border-radius:6px;border:1px solid var(--border);background:rgba(255,255,255,0.05);color:var(--text);font-size:0.88rem;font-family:inherit;min-width:200px"></select>
+        <input type="text" id="cfg-device-id" placeholder="z. B. ipad-3f7a" style="width:200px">
+        <button class="btn btn-ghost" id="btn-cfg-discover">&#x1F50D; Suchen</button>
+        <button class="btn btn-ghost" id="btn-cfg-load">Laden</button>
+      </div>
+
+      <div id="cfg-editor-wrap" style="display:none; margin-top:18px">
+        <div class="cfg-meta-row">
+          <span id="cfg-meta"></span>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-green" id="btn-cfg-save">Speichern</button>
+            <button class="btn btn-danger" id="btn-cfg-reset">Zurücksetzen</button>
+          </div>
+        </div>
+
+        <!-- Einfache Felder -->
+        <div class="cfg-fields">
+          <div class="cfg-field-row">
+            <label for="cfg-admin-pin">Admin-PIN</label>
+            <input type="text" id="cfg-admin-pin" maxlength="6" pattern="\d{6}" placeholder="6 Ziffern" class="cfg-inp cfg-inp-mono">
+            <span class="cfg-hint">Zugang zum Admin-Bereich der Stempeluhr</span>
+          </div>
+          <div class="cfg-field-row">
+            <label for="cfg-day-boundary">Tageswechsel</label>
+            <input type="number" id="cfg-day-boundary" min="0" max="23" class="cfg-inp">
+            <span class="cfg-hint">Uhr – Stempel davor zählen noch zum Vortag</span>
+          </div>
+          <div class="cfg-field-row">
+            <label for="cfg-screensaver">Screensaver</label>
+            <input type="number" id="cfg-screensaver" min="10" class="cfg-inp">
+            <span class="cfg-hint">Sekunden Inaktivität bis zum Screensaver</span>
+          </div>
+        </div>
+
+        <!-- Stempel-Typen: Verwaltung -->
+        <details class="cfg-details" id="cfg-types-ui-details" open>
+          <summary>&#9881; Typen verwalten</summary>
+          <div id="cfg-types-list" style="margin-top:8px"></div>
+        </details>
+
+        <!-- Stempel-Typen: ausgeklappt als JSON (Rohbearbeitung) -->
+        <details class="cfg-details" id="cfg-types-details" style="margin-top:8px">
+          <summary>&#9650; Stempel-Typen (JSON)</summary>
+          <p class="note" style="margin:8px 0 6px">Rohe JSON-Bearbeitung. &Auml;nderungen hier werden beim Speichern &uuml;bernommen; &uuml;berschreiben aber die Typen-Verwaltung oben.</p>
+          <textarea id="cfg-types-json" rows="14" spellcheck="false" class="cfg-json-area"></textarea>
+          <div class="cfg-types-actions">
+            <button class="btn btn-ghost" id="btn-json-to-ui" style="font-size:12px">&#x21BB; In Typen-Verwaltung &uuml;bernehmen</button>
+          </div>
+        </details>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    LifeguardClock – Benutzerverwaltung | GPL v3 | Martin Kammler
+  </footer>
+</div>
+
+<!-- Toast container -->
+<div id="toast-container"></div>
+
+<script src="admin_config.js" onerror="window.ADMIN_CONFIG=undefined"></script>
+<script src="config.js"       onerror="window.CONFIG=undefined"></script>
+<script>
+(function () {
+  'use strict';
+
+  /* ── State ─────────────────────────────────────────── */
+  let users = [];          // array of user objects (live)
+  let usersVersion = 1;
+  let _editTypes = [];     // Typen der geladenen Gerätekonfig (live)
+  let usersExported = null;
+  let saveTimer = null;
+  let _cfgFull = null;     // vollständiges config-Objekt (für unveränderte Felder)
+
+  /* ── Bekannte Geräte (localStorage) ────────────────── */
+  const DEVICES_LS_KEY = 'stempeluhr_admin_devices';
+  function getKnownDevices() {
+    try { return JSON.parse(localStorage.getItem(DEVICES_LS_KEY) || '[]'); } catch { return []; }
+  }
+  function addKnownDevice(id) {
+    const list = getKnownDevices().filter(d => d !== id);
+    list.unshift(id);
+    localStorage.setItem(DEVICES_LS_KEY, JSON.stringify(list.slice(0, 20)));
+    renderDeviceList();
+  }
+  function renderDeviceList() {
+    // Bekannte Geräte nur noch als Autocomplete-Fallback – kein select
+    const input = document.getElementById('cfg-device-id');
+    if (!input.value) {
+      const last = getKnownDevices()[0];
+      if (last) input.value = last;
+    }
+  }
+
+  async function discoverDevices() {
+    const creds = getCredentials();
+    if (!creds) { toast('Keine Zugangsdaten gespeichert.', 'err'); return; }
+    const btn = document.getElementById('btn-cfg-discover');
+    btn.disabled = true; btn.textContent = '…';
+    try {
+      const base = buildWebDavBase(creds);
+      const res = await fetch(base, {
+        method: 'PROPFIND',
+        headers: { Authorization: authHeader(creds), Depth: '1' },
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const xml = await res.text();
+      const ids = [...xml.matchAll(/<[^>]*:href[^>]*>([^<]+)<\/[^>]*:href>/g)]
+        .map(m => decodeURIComponent(m[1].trim()))
+        .map(h => (h.match(/stempeluhr_config_([^/]+)\.json$/) || [])[1])
+        .filter(Boolean);
+      if (ids.length === 0) {
+        toast('Keine Gerätekonfigurationen in der Cloud gefunden.', 'info');
+      } else {
+        const sel = document.getElementById('cfg-device-select');
+        const input = document.getElementById('cfg-device-id');
+        sel.innerHTML = ids.map(id => `<option value="${id}">${id}</option>`).join('');
+        sel.style.display = '';
+        input.style.display = 'none';
+        sel.value = ids[0];
+        // Auswahl synchronisiert das versteckte Textfeld
+        sel.onchange = () => { input.value = sel.value; };
+        input.value = ids[0];
+        toast(`${ids.length} Gerät${ids.length !== 1 ? 'e' : ''} gefunden.`, 'ok');
+      }
+    } catch(e) {
+      toast('Suche fehlgeschlagen: ' + e.message, 'err');
+    } finally {
+      btn.disabled = false; btn.textContent = '🔍 Suchen';
+    }
+  }
+
+  /* ── Permissions from CONFIG ───────────────────────── */
+  function getPermDefs() {
+    if (!window.CONFIG || !Array.isArray(window.CONFIG.types)) return [];
+    return window.CONFIG.types
+      .filter(t => t.permissionKey)
+      .map(t => ({ key: t.permissionKey, label: t.label }));
+  }
+
+  /* ── Cloud helpers ─────────────────────────────────── */
+  const ADMIN_LS_KEY = 'stempeluhr_admin_cloud';
+
+  function getCredentials() {
+    // Reihenfolge: localStorage (manuell gespeichert) → admin_config.js
+    const stored = localStorage.getItem(ADMIN_LS_KEY);
+    if (stored) {
+      try { return JSON.parse(stored); } catch (e) {}
+    }
+    if (window.ADMIN_CONFIG && window.ADMIN_CONFIG.cloud) {
+      const c = window.ADMIN_CONFIG.cloud;
+      if (c.url && c.user && c.pass) return { url: c.url, user: c.user, pass: c.pass };
+    }
+    return null;
+  }
+
+  // Läuft der Admin über den Python-Proxy (localhost)?
+  // Dann relative URLs – kein CORS, der Proxy leitet weiter.
+  const IS_PROXY = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+
+  function buildWebDavBase(creds) {
+    if (IS_PROXY) {
+      return `/remote.php/dav/files/${encodeURIComponent(creds.user)}/Stempeluhr`;
+    }
+    const base = creds.url
+      .replace(/\/remote\.php\/dav.*/i, '')
+      .replace(/\/index\.php.*/i, '');
+    return `${base}/remote.php/dav/files/${encodeURIComponent(creds.user)}/Stempeluhr`;
+  }
+
+  function authHeader(creds) {
+    return 'Basic ' + btoa(`${creds.user}:${creds.pass}`);
+  }
+
+  /* ── Status badge ──────────────────────────────────── */
+  const statusBadge = document.getElementById('status-badge');
+  function setStatus(state, text) {
+    statusBadge.className = 'status-badge ' + state;
+    statusBadge.textContent = text;
+  }
+
+  /* ── Toast ─────────────────────────────────────────── */
+  const toastContainer = document.getElementById('toast-container');
+  function toast(msg, type = 'info') {
+    const el = document.createElement('div');
+    el.className = 'toast ' + type;
+    el.textContent = msg;
+    toastContainer.appendChild(el);
+    setTimeout(() => { if (el.parentNode) el.parentNode.removeChild(el); }, 2800);
+  }
+
+  /* ── Load from cloud ───────────────────────────────── */
+  function expandCloudCard() {
+    cloudCardBody.classList.remove('hidden');
+    cloudToggleIcon.classList.add('open');
+  }
+
+  async function loadUsers(silent = false) {
+    const creds = getCredentials();
+    if (!creds) {
+      setStatus('gray', 'Nicht konfiguriert');
+      expandCloudCard();
+      if (!silent) toast('Keine Zugangsdaten gespeichert.', 'err');
+      return;
+    }
+    setStatus('gray', 'Verbinde…');
+    try {
+      const url = buildWebDavBase(creds) + '/stempeluhr_users.json';
+      const res = await fetch(url, {
+        method: 'GET',
+        headers: { 'Authorization': authHeader(creds) }
+      });
+      if (res.status === 404) {
+        setStatus('green', 'Verbunden (neu)');
+        users = [];
+        renderTable();
+        if (!silent) toast('Datei noch nicht vorhanden – wird beim ersten Speichern erstellt.', 'info');
+        return;
+      }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      usersVersion = data.version || 1;
+      usersExported = data.exported || null;
+      users = Array.isArray(data.users) ? data.users : [];
+      setStatus('green', 'Verbunden');
+      renderTable();
+      if (!silent) toast(`${users.length} Nutzer geladen.`, 'ok');
+    } catch (err) {
+      setStatus('red', 'Fehler');
+      expandCloudCard();
+      if (err.message.includes('Failed to fetch') || err.message.includes('NetworkError')) {
+        document.getElementById('cors-banner').style.display = '';
+        toast('Netzwerkfehler – Seite über lokalen Webserver öffnen (siehe Hinweis oben)', 'err');
+      } else {
+        toast('Verbindungsfehler: ' + err.message, 'err');
+      }
+    }
+  }
+
+  /* ── Save to cloud (debounced) ─────────────────────── */
+  function saveToCloud() {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(_doSave, 500);
+  }
+
+  async function _doSave() {
+    const creds = getCredentials();
+    if (!creds) { toast('Keine Zugangsdaten – Speichern nicht möglich.', 'err'); return; }
+    setStatus('gray', 'Speichert…');
+    try {
+      // Ensure directory exists
+      const dirUrl = buildWebDavBase(creds);
+      await fetch(dirUrl, {
+        method: 'MKCOL',
+        headers: { 'Authorization': authHeader(creds) }
+      }).catch(() => {}); // ignore if already exists
+
+      const payload = {
+        version: usersVersion,
+        exported: new Date().toISOString(),
+        count: users.length,
+        users: users
+      };
+      const url = dirUrl + '/stempeluhr_users.json';
+      const res = await fetch(url, {
+        method: 'PUT',
+        headers: {
+          'Authorization': authHeader(creds),
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload, null, 2)
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setStatus('green', 'Gespeichert');
+      updateOtpCount();
+    } catch (err) {
+      setStatus('red', 'Speicherfehler');
+      toast('Fehler beim Speichern: ' + err.message, 'err');
+    }
+  }
+
+  /* ── OTP helpers ───────────────────────────────────── */
+  function genOtp() {
+    return String(Math.floor(100000 + Math.random() * 900000));
+  }
+
+  function genId() {
+    return 'u' + Date.now();
+  }
+
+  function otpUsers() {
+    return users.filter(u => u.mustChangePIN === true && !u.salt);
+  }
+
+  function updateOtpCount() {
+    const n = otpUsers().length;
+    document.getElementById('otp-count').textContent = n;
+    document.getElementById('btn-print-pins').style.display = n > 0 ? '' : 'none';
+  }
+
+  /* ── Render table ──────────────────────────────────── */
+  function renderTable() {
+    const tbody = document.getElementById('user-tbody');
+    tbody.innerHTML = '';
+    updateOtpCount();
+
+    if (users.length === 0) {
+      const tr = document.createElement('tr');
+      tr.className = 'empty-row';
+      tr.innerHTML = '<td colspan="5">Keine Nutzer vorhanden. Mit &bdquo;+ Nutzer hinzuf&uuml;gen&ldquo; starten.</td>';
+      tbody.appendChild(tr);
+      return;
+    }
+
+    const permDefs = getPermDefs();
+
+    users.forEach((user, idx) => {
+      const tr = document.createElement('tr');
+
+      // # column
+      const tdNum = document.createElement('td');
+      tdNum.className = 'col-num';
+      tdNum.textContent = idx + 1;
+      tr.appendChild(tdNum);
+
+      // Name column
+      const tdName = document.createElement('td');
+      tdName.className = 'col-name';
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'name-display';
+      nameSpan.title = 'Klicken zum Bearbeiten';
+      nameSpan.textContent = user.name || '(kein Name)';
+      nameSpan.addEventListener('click', () => startNameEdit(user.id, tdName, nameSpan));
+      tdName.appendChild(nameSpan);
+      tr.appendChild(tdName);
+
+      // PIN column
+      const tdPin = document.createElement('td');
+      tdPin.className = 'col-pin';
+      if (user.mustChangePIN && !user.salt) {
+        // OTP — show plaintext
+        const pinText = document.createTextNode(user.pin + '\u00a0');
+        tdPin.appendChild(pinText);
+        const badge = document.createElement('span');
+        badge.className = 'otp-badge';
+        badge.textContent = '⚠ Einmal-PIN';
+        tdPin.appendChild(badge);
+      } else {
+        const mask = document.createElement('span');
+        mask.className = 'pin-mask';
+        mask.textContent = '••••••';
+        tdPin.appendChild(mask);
+      }
+      tr.appendChild(tdPin);
+
+      // Permissions column
+      const tdPerms = document.createElement('td');
+      tdPerms.className = 'col-perms';
+      if (permDefs.length === 0) {
+        tdPerms.style.color = 'var(--text-2)';
+        tdPerms.style.fontSize = '0.78rem';
+        tdPerms.textContent = 'Keine CONFIG-Typen';
+      } else {
+        const checksDiv = document.createElement('div');
+        checksDiv.className = 'perm-checks';
+        permDefs.forEach(pd => {
+          const lbl = document.createElement('label');
+          lbl.className = 'perm-check';
+          const cb = document.createElement('input');
+          cb.type = 'checkbox';
+          cb.checked = Array.isArray(user.permissions) && user.permissions.includes(pd.key);
+          cb.addEventListener('change', () => {
+            togglePermission(user.id, pd.key, cb.checked);
+          });
+          lbl.appendChild(cb);
+          lbl.appendChild(document.createTextNode(pd.label));
+          checksDiv.appendChild(lbl);
+        });
+        tdPerms.appendChild(checksDiv);
+      }
+      tr.appendChild(tdPerms);
+
+      // Actions column
+      const tdActs = document.createElement('td');
+      tdActs.className = 'col-acts';
+      const actsDiv = document.createElement('div');
+      actsDiv.className = 'acts-row';
+
+      const btnPin = document.createElement('button');
+      btnPin.className = 'btn btn-amber btn-sm';
+      btnPin.textContent = 'PIN zurücksetzen';
+      btnPin.addEventListener('click', () => resetPin(user.id));
+      actsDiv.appendChild(btnPin);
+
+      const btnDel = document.createElement('button');
+      btnDel.className = 'btn btn-danger btn-sm';
+      btnDel.textContent = 'Löschen';
+      btnDel.addEventListener('click', () => deleteUser(user.id));
+      actsDiv.appendChild(btnDel);
+
+      tdActs.appendChild(actsDiv);
+      tr.appendChild(tdActs);
+
+      tbody.appendChild(tr);
+    });
+  }
+
+  /* ── Name inline edit ──────────────────────────────── */
+  function startNameEdit(userId, td, span) {
+    const user = users.find(u => u.id === userId);
+    if (!user) return;
+
+    const inp = document.createElement('input');
+    inp.type = 'text';
+    inp.className = 'name-input';
+    inp.value = user.name || '';
+    td.replaceChild(inp, span);
+    inp.focus();
+    inp.select();
+
+    function commit() {
+      const newName = inp.value.trim();
+      if (newName && newName !== user.name) {
+        user.name = newName;
+        saveToCloud();
+        toast('Name gespeichert.', 'ok');
+      }
+      renderTable();
+    }
+
+    inp.addEventListener('blur', commit);
+    inp.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); inp.blur(); }
+      if (e.key === 'Escape') { inp.value = user.name || ''; inp.blur(); }
+    });
+  }
+
+  /* ── Permission toggle ─────────────────────────────── */
+  function togglePermission(userId, permKey, enabled) {
+    const user = users.find(u => u.id === userId);
+    if (!user) return;
+    if (!Array.isArray(user.permissions)) user.permissions = [];
+    if (enabled) {
+      if (!user.permissions.includes(permKey)) user.permissions.push(permKey);
+    } else {
+      user.permissions = user.permissions.filter(p => p !== permKey);
+    }
+    saveToCloud();
+  }
+
+  /* ── Reset PIN ─────────────────────────────────────── */
+  function resetPin(userId) {
+    const user = users.find(u => u.id === userId);
+    if (!user) return;
+    user.pin = genOtp();
+    user.mustChangePIN = true;
+    delete user.salt;
+    saveToCloud();
+    renderTable();
+    toast(`Einmal-PIN für ${user.name} gesetzt: ${user.pin}`, 'ok');
+  }
+
+  /* ── Delete user ───────────────────────────────────── */
+  function deleteUser(userId) {
+    const user = users.find(u => u.id === userId);
+    if (!user) return;
+    if (!confirm(`Nutzer "${user.name}" wirklich löschen?`)) return;
+    users = users.filter(u => u.id !== userId);
+    saveToCloud();
+    renderTable();
+    toast(`${user.name} gelöscht.`, 'info');
+  }
+
+  /* ── Add user ──────────────────────────────────────── */
+  function buildNewPermChecks() {
+    const permDefs = getPermDefs();
+    const container = document.getElementById('new-perm-checks');
+    container.innerHTML = '';
+    if (permDefs.length === 0) {
+      document.getElementById('new-perm-group').style.display = 'none';
+      return;
+    }
+    document.getElementById('new-perm-group').style.display = '';
+    permDefs.forEach(pd => {
+      const lbl = document.createElement('label');
+      lbl.className = 'perm-check';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.dataset.permKey = pd.key;
+      lbl.appendChild(cb);
+      lbl.appendChild(document.createTextNode(pd.label));
+      container.appendChild(lbl);
+    });
+  }
+
+  document.getElementById('btn-add-user').addEventListener('click', () => {
+    const panel = document.getElementById('add-panel');
+    panel.classList.remove('hidden');
+    document.getElementById('new-name').value = '';
+    buildNewPermChecks();
+    document.getElementById('new-name').focus();
+  });
+
+  document.getElementById('btn-cancel-add').addEventListener('click', () => {
+    document.getElementById('add-panel').classList.add('hidden');
+  });
+
+  document.getElementById('btn-do-add').addEventListener('click', () => {
+    const name = document.getElementById('new-name').value.trim();
+    if (!name) { toast('Bitte einen Namen eingeben.', 'err'); return; }
+
+    const permChecks = document.querySelectorAll('#new-perm-checks input[type="checkbox"]');
+    const permissions = [];
+    permChecks.forEach(cb => { if (cb.checked) permissions.push(cb.dataset.permKey); });
+
+    const newUser = {
+      id: genId(),
+      name: name,
+      pin: genOtp(),
+      mustChangePIN: true
+    };
+    if (permissions.length > 0) newUser.permissions = permissions;
+
+    users.push(newUser);
+    saveToCloud();
+    renderTable();
+    document.getElementById('add-panel').classList.add('hidden');
+    toast(`${name} hinzugefügt. Einmal-PIN: ${newUser.pin}`, 'ok');
+  });
+
+  /* ── Export ────────────────────────────────────────── */
+  document.getElementById('btn-export').addEventListener('click', () => {
+    const payload = {
+      version: usersVersion,
+      exported: new Date().toISOString(),
+      count: users.length,
+      users: users
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'stempeluhr_users_export_' + new Date().toISOString().slice(0,10) + '.json';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    toast('Export gestartet.', 'ok');
+  });
+
+  /* ── Print OTP pins ────────────────────────────────── */
+  document.getElementById('btn-print-pins').addEventListener('click', openPrintPins);
+
+  function openPrintPins() {
+    const otpList = otpUsers();
+    if (otpList.length === 0) { toast('Keine Einmal-PINs vorhanden.', 'info'); return; }
+
+    const dateStr = new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
+
+    let rows = '';
+    otpList.forEach((u, i) => {
+      const even = (i + 1) % 2 === 0;
+      rows += `<tr style="background:${even ? '#f5f5fa' : '#ffffff'}">
+        <td style="padding:7px 12px;border-bottom:1px solid #e0e0ee;color:#999;font-size:9pt;width:32px;text-align:center;">${i + 1}</td>
+        <td style="padding:7px 12px;border-bottom:1px solid #e0e0ee;font-weight:600;font-size:11pt;">${escHtml(u.name)}</td>
+        <td style="padding:7px 12px;border-bottom:1px solid #e0e0ee;font-family:'Courier New',monospace;font-size:13pt;font-weight:700;letter-spacing:6px;color:#1a1a2e;text-align:center;width:130px;">${escHtml(u.pin)}</td>
+        <td style="padding:7px 12px;border-bottom:1px solid #e0e0ee;font-size:8.5pt;color:#888;width:180px;">Beim 1. Login PIN &auml;ndern</td>
+      </tr>`;
+    });
+
+    const html = `<!DOCTYPE html><html lang="de"><head><meta charset="UTF-8">
+<title>LifeguardClock – Einmal-PINs</title>
+<style>
+  @page { size: A4 portrait; margin: 18mm 16mm 16mm 16mm; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', Arial, sans-serif; font-size: 11pt; color: #1a1a2e; background: #fff; }
+  @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+</style>
+</head><body>
+<div style="display:flex;align-items:flex-end;justify-content:space-between;border-bottom:2px solid #1a1a2e;padding-bottom:8px;margin-bottom:18px;">
+  <div>
+    <div style="font-size:18pt;font-weight:700;letter-spacing:-0.3px;display:flex;align-items:center;gap:10px;"><img src="Logo.png" style="height:28pt;vertical-align:middle;border-radius:6pt"> LifeguardClock – Einmal-PINs</div>
+    <div style="font-size:9pt;color:#555;margin-top:3px;">Bitte nach dem ersten Login eine pers&ouml;nliche PIN vergeben</div>
+  </div>
+  <div style="font-size:8.5pt;color:#777;text-align:right;line-height:1.6;">Stand: ${dateStr}<br>Vertraulich – nicht weitergeben</div>
+</div>
+<div style="background:#fff8e1;border:1px solid #f5c842;border-radius:5px;padding:8px 12px;font-size:9pt;color:#5a4200;margin-bottom:18px;">
+  &#9888; Diese PINs sind tempor&auml;re Einmal-PINs. Beim ersten Einloggen wird automatisch eine neue pers&ouml;nliche PIN verlangt.
+  Einmal-PINs bitte nach Aus&shy;h&auml;ndigung nicht aufbewahren.
+</div>
+<table style="width:100%;border-collapse:collapse;">
+  <thead>
+    <tr style="background:#1a1a2e;color:#fff;">
+      <th style="padding:7px 12px;font-size:9pt;font-weight:600;text-transform:uppercase;letter-spacing:0.6px;text-align:center;">#</th>
+      <th style="padding:7px 12px;font-size:9pt;font-weight:600;text-transform:uppercase;letter-spacing:0.6px;text-align:left;">Name</th>
+      <th style="padding:7px 12px;font-size:9pt;font-weight:600;text-transform:uppercase;letter-spacing:0.6px;text-align:center;">Einmal-PIN</th>
+      <th style="padding:7px 12px;font-size:9pt;font-weight:600;text-transform:uppercase;letter-spacing:0.6px;text-align:left;">Hinweis</th>
+    </tr>
+  </thead>
+  <tbody>${rows}</tbody>
+</table>
+<div style="margin-top:18px;border-top:1px solid #ccc;padding-top:8px;font-size:8pt;color:#aaa;display:flex;justify-content:space-between;">
+  <span>LifeguardClock – vertraulich</span>
+  <span>${otpList.length} Mitglied${otpList.length !== 1 ? 'er' : ''}</span>
+</div>
+</body></html>`;
+
+    const w = window.open('', '_blank', 'width=800,height=700');
+    if (!w) { toast('Pop-up blockiert. Bitte Pop-ups erlauben.', 'err'); return; }
+    w.document.write(html);
+    w.document.close();
+    setTimeout(() => w.print(), 400);
+  }
+
+  function escHtml(str) {
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  /* ── Cloud card collapsible ────────────────────────── */
+  const cloudCardBody = document.getElementById('cloud-card-body');
+  const cloudToggleIcon = document.getElementById('cloud-toggle-icon');
+
+  document.getElementById('cloud-card-toggle').addEventListener('click', () => {
+    const hidden = cloudCardBody.classList.toggle('hidden');
+    cloudToggleIcon.classList.toggle('open', !hidden);
+  });
+
+  /* ── Credentials: save + connect ───────────────────── */
+  document.getElementById('btn-save-creds').addEventListener('click', () => {
+    const url  = document.getElementById('inp-url').value.trim().replace(/\/$/, '');
+    const user = document.getElementById('inp-user').value.trim();
+    const pass = document.getElementById('inp-pass').value;
+    if (!user || !pass || (!IS_PROXY && !url)) { toast('Bitte alle Felder ausfüllen.', 'err'); return; }
+    localStorage.setItem('stempeluhr_admin_cloud', JSON.stringify({ url: url || 'http://localhost', user, pass }));
+    loadUsers(false);
+  });
+
+  /* ── Credentials: test ─────────────────────────────── */
+  document.getElementById('btn-test').addEventListener('click', async () => {
+    const url  = document.getElementById('inp-url').value.trim().replace(/\/$/, '');
+    const user = document.getElementById('inp-user').value.trim();
+    const pass = document.getElementById('inp-pass').value;
+    if (!user || !pass || (!IS_PROXY && !url)) { toast('Bitte alle Felder ausfüllen.', 'err'); return; }
+    const creds = { url: url || 'http://localhost', user, pass };
+    setStatus('gray', 'Teste…');
+    try {
+      const davUrl = buildWebDavBase(creds);
+      const res = await fetch(davUrl, {
+        method: 'PROPFIND',
+        headers: {
+          'Authorization': authHeader(creds),
+          'Depth': '0'
+        }
+      });
+      if (res.ok || res.status === 207 || res.status === 404) {
+        setStatus('green', 'Verbunden');
+        toast('Verbindung erfolgreich!', 'ok');
+      } else {
+        throw new Error(`HTTP ${res.status}`);
+      }
+    } catch (err) {
+      setStatus('red', 'Fehler');
+      toast('Verbindungstest fehlgeschlagen: ' + err.message, 'err');
+    }
+  });
+
+  /* ── Credentials: load ─────────────────────────────── */
+  document.getElementById('btn-load').addEventListener('click', () => {
+    // Persist current field values first
+    const url  = document.getElementById('inp-url').value.trim().replace(/\/$/, '');
+    const user = document.getElementById('inp-user').value.trim();
+    const pass = document.getElementById('inp-pass').value;
+    if (user && pass && (url || IS_PROXY)) {
+      localStorage.setItem('stempeluhr_admin_cloud', JSON.stringify({ url: url || 'http://localhost', user, pass }));
+    }
+    loadUsers(false);
+  });
+
+  /* ── Startup ───────────────────────────────────────── */
+  function init() {
+    // Warnung wenn admin_config.js fehlt und auch kein gespeicherter Key
+    if (!window.ADMIN_CONFIG && !localStorage.getItem('stempeluhr_admin_cloud')) {
+      document.getElementById('no-config-banner').style.display = '';
+    }
+
+    // Im Proxy-Modus: URL-Feld ausblenden (wird vom Server übernommen)
+    if (IS_PROXY) {
+      const urlGroup = document.getElementById('inp-url').closest('.form-group');
+      if (urlGroup) urlGroup.style.display = 'none';
+    }
+
+    // Credential-Felder befüllen
+    const creds = getCredentials();
+    if (creds) {
+      document.getElementById('inp-url').value  = creds.url  || '';
+      document.getElementById('inp-user').value = creds.user || '';
+      document.getElementById('inp-pass').value = creds.pass || '';
+    }
+
+    // Collapse cloud card if credentials are already stored
+    const hasCreds = !!localStorage.getItem('stempeluhr_admin_cloud') ||
+      (window.ADMIN_CONFIG && window.ADMIN_CONFIG.cloud && window.ADMIN_CONFIG.cloud.url);
+    if (hasCreds) {
+      cloudCardBody.classList.add('hidden');
+      cloudToggleIcon.classList.remove('open');
+    } else {
+      cloudCardBody.classList.remove('hidden');
+      cloudToggleIcon.classList.add('open');
+    }
+
+    // Nutzer beim Start laden (Fehler sichtbar anzeigen)
+    if (creds && creds.url && creds.user && creds.pass) {
+      loadUsers(false);
+    } else {
+      renderTable();
+    }
+  }
+
+  init();
+  renderDeviceList();
+
+  /* ── Device config editor ──────────────────────────────── */
+  /* ── Typen-Verwaltungs-UI ──────────────────────────────── */
+  const _ZF_DAYS = [
+    { key: 'mo', label: 'Mo' }, { key: 'di', label: 'Di' }, { key: 'mi', label: 'Mi' },
+    { key: 'do', label: 'Do' }, { key: 'fr', label: 'Fr' }, { key: 'sa', label: 'Sa' },
+    { key: 'so', label: 'So' },
+  ];
+
+  function renderTypesUI() {
+    const container = document.getElementById('cfg-types-list');
+    if (!container) return;
+    if (_editTypes.length === 0) {
+      container.innerHTML = '<p class="note" style="margin:0">Keine Typen – Konfiguration laden.</p>';
+      return;
+    }
+    container.innerHTML = _editTypes.map((type, idx) => {
+      const disabled = !!type.disabled;
+      const hasZF    = !!type.requiresZeitfenster;
+      const zfRows   = _ZF_DAYS.map(d => {
+        const zf = type.zeitfenster?.[d.key];
+        return `<div class="cfg-zf-row">
+          <span class="cfg-zf-day">${d.label}</span>
+          <input type="time" class="cfg-zf-inp" data-idx="${idx}" data-day="${d.key}" data-field="start" value="${zf?.start ?? ''}">
+          <span class="cfg-zf-sep">&ndash;</span>
+          <input type="time" class="cfg-zf-inp" data-idx="${idx}" data-day="${d.key}" data-field="end"   value="${zf?.end ?? ''}">
+          <button class="btn-zf-clear" data-idx="${idx}" data-day="${d.key}" title="Zurücksetzen">&#xD7;</button>
+        </div>`;
+      }).join('');
+      return `<div class="cfg-type-row${disabled ? ' is-disabled' : ''}" id="cfg-type-row-${idx}">
+        <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+          <label class="cfg-type-toggle">
+            <input type="checkbox" data-idx="${idx}" data-role="active" ${disabled ? '' : 'checked'}>
+            <span class="cfg-type-name">${escHtml(type.label || type.key)}</span>
+            <span class="cfg-type-key">${escHtml(type.key)}</span>
+          </label>
+          <label class="cfg-type-toggle" style="margin-left:auto">
+            <input type="checkbox" data-idx="${idx}" data-role="zf" ${hasZF ? 'checked' : ''}>
+            <span style="font-size:12px;color:var(--text-2)">Zeitfenster</span>
+          </label>
+        </div>
+        <div class="cfg-zf-grid" id="cfg-zf-grid-${idx}" style="display:${hasZF ? '' : 'none'}">${zfRows}</div>
+      </div>`;
+    }).join('');
+
+    // Aktiv-Checkboxes
+    container.querySelectorAll('input[data-role="active"]').forEach(cb => {
+      cb.addEventListener('change', () => {
+        const idx = parseInt(cb.dataset.idx);
+        _editTypes[idx].disabled = !cb.checked;
+        document.getElementById(`cfg-type-row-${idx}`)?.classList.toggle('is-disabled', !cb.checked);
+        syncTypesToTextarea();
+      });
+    });
+
+    // Zeitfenster-Checkboxes
+    container.querySelectorAll('input[data-role="zf"]').forEach(cb => {
+      cb.addEventListener('change', () => {
+        const idx = parseInt(cb.dataset.idx);
+        _editTypes[idx].requiresZeitfenster = cb.checked;
+        if (!cb.checked) delete _editTypes[idx].requiresZeitfenster;
+        const grid = document.getElementById(`cfg-zf-grid-${idx}`);
+        if (grid) grid.style.display = cb.checked ? '' : 'none';
+        syncTypesToTextarea();
+      });
+    });
+
+    // Zeitfenster-Inputs
+    container.querySelectorAll('.cfg-zf-inp').forEach(inp => {
+      inp.addEventListener('change', () => {
+        const idx   = parseInt(inp.dataset.idx);
+        const day   = inp.dataset.day;
+        const field = inp.dataset.field;
+        if (!_editTypes[idx].zeitfenster) _editTypes[idx].zeitfenster = {};
+        if (!_editTypes[idx].zeitfenster[day]) _editTypes[idx].zeitfenster[day] = {};
+        if (inp.value) {
+          _editTypes[idx].zeitfenster[day][field] = inp.value;
+        } else {
+          delete _editTypes[idx].zeitfenster[day][field];
+          if (!Object.keys(_editTypes[idx].zeitfenster[day]).length)
+            delete _editTypes[idx].zeitfenster[day];
+          if (!Object.keys(_editTypes[idx].zeitfenster).length)
+            delete _editTypes[idx].zeitfenster;
+        }
+        syncTypesToTextarea();
+      });
+    });
+
+    // Clear-Buttons
+    container.querySelectorAll('.btn-zf-clear').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const idx = parseInt(btn.dataset.idx);
+        const day = btn.dataset.day;
+        if (_editTypes[idx].zeitfenster) {
+          delete _editTypes[idx].zeitfenster[day];
+          if (!Object.keys(_editTypes[idx].zeitfenster).length)
+            delete _editTypes[idx].zeitfenster;
+        }
+        renderTypesUI();
+        syncTypesToTextarea();
+      });
+    });
+  }
+
+  function syncTypesToTextarea() {
+    const ta = document.getElementById('cfg-types-json');
+    if (ta) ta.value = JSON.stringify(_editTypes, null, 2);
+  }
+
+  document.getElementById('btn-json-to-ui')?.addEventListener('click', () => {
+    try {
+      const parsed = JSON.parse(document.getElementById('cfg-types-json').value);
+      if (!Array.isArray(parsed)) throw new Error('kein Array');
+      _editTypes = parsed.map(t => ({...t}));
+      renderTypesUI();
+      toast('JSON in Typen-Verwaltung übernommen.', 'ok');
+    } catch (e) {
+      toast('Ungültiges JSON: ' + e.message, 'err');
+    }
+  });
+
+  document.getElementById('btn-cfg-discover').addEventListener('click', discoverDevices);
+
+  const cfgCardToggle = document.getElementById('config-card-toggle');
+  const cfgCardBody   = document.getElementById('config-card-body');
+  const cfgToggleIcon = document.getElementById('config-toggle-icon');
+
+  // Start collapsed
+  cfgCardBody.classList.add('hidden');
+  cfgToggleIcon.classList.remove('open');
+
+  cfgCardToggle.addEventListener('click', () => {
+    cfgCardBody.classList.toggle('hidden');
+    cfgToggleIcon.classList.toggle('open');
+  });
+
+  document.getElementById('btn-cfg-load').addEventListener('click', async () => {
+    const creds = getCredentials();
+    if (!creds) { toast('Keine Zugangsdaten gespeichert.', 'err'); return; }
+    const deviceId = document.getElementById('cfg-device-id').value.trim();
+    if (!deviceId) { toast('Bitte Geräte-ID eingeben.', 'err'); return; }
+    const btn = document.getElementById('btn-cfg-load');
+    btn.disabled = true; btn.textContent = 'Lade…';
+    try {
+      const url = buildWebDavBase(creds) + `/stempeluhr_config_${deviceId}.json`;
+      const res = await fetch(url, { headers: { 'Authorization': authHeader(creds) } });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      const cfg = data.config || data;
+      _cfgFull = cfg;
+
+      // Einfache Felder befüllen
+      document.getElementById('cfg-admin-pin').value    = cfg.adminPin ?? '';
+      document.getElementById('cfg-day-boundary').value = cfg.dayBoundaryHour ?? 4;
+      document.getElementById('cfg-screensaver').value  = cfg.screensaverSeconds ?? 60;
+
+      // Stempel-Typen: in-memory + JSON-Textarea + Verwaltungs-UI
+      _editTypes = (cfg.types || []).map(t => ({...t}));
+      syncTypesToTextarea();
+      renderTypesUI();
+
+      // Typen für Berechtigungs-Spalte übernehmen → Tabelle neu rendern
+      if (_editTypes.length > 0) {
+        if (!window.CONFIG) window.CONFIG = {};
+        window.CONFIG.types = _editTypes;
+        renderTable();
+        buildNewPermChecks();
+      }
+
+      addKnownDevice(deviceId);
+      document.getElementById('cfg-meta').textContent =
+        `Gerät: ${data.deviceId || deviceId} · Stand: ${data.exported ? new Date(data.exported).toLocaleString('de-DE') : '?'}`;
+      document.getElementById('cfg-editor-wrap').style.display = '';
+      toast('Konfiguration geladen.', 'ok');
+    } catch (err) {
+      toast('Fehler beim Laden: ' + err.message, 'err');
+    } finally {
+      btn.disabled = false; btn.textContent = 'Laden';
+    }
+  });
+
+  document.getElementById('btn-cfg-save').addEventListener('click', async () => {
+    const creds = getCredentials();
+    if (!creds) { toast('Keine Zugangsdaten.', 'err'); return; }
+    const deviceId = document.getElementById('cfg-device-id').value.trim();
+    if (!deviceId) { toast('Geräte-ID fehlt.', 'err'); return; }
+
+    // Einfache Felder lesen
+    const adminPin = document.getElementById('cfg-admin-pin').value.trim();
+    if (adminPin && !/^\d{6}$/.test(adminPin)) {
+      toast('Admin-PIN muss genau 6 Ziffern haben.', 'err'); return;
+    }
+    const dayBoundary = parseInt(document.getElementById('cfg-day-boundary').value) || 4;
+    const screensaver = parseInt(document.getElementById('cfg-screensaver').value) || 60;
+
+    // Typen: aus _editTypes (Verwaltungs-UI) — JSON-Textarea nur als Fallback
+    let types = _editTypes.length > 0 ? _editTypes : null;
+    if (!types) {
+      try {
+        types = JSON.parse(document.getElementById('cfg-types-json').value);
+        if (!Array.isArray(types)) throw new Error('muss ein Array sein');
+      } catch (e) {
+        toast('Ungültiges JSON bei Stempel-Typen: ' + e.message, 'err'); return;
+      }
+    }
+
+    // Nur gerätespezifische Felder speichern — defaultUsers/removedUsers/cloud nie in Gerätekonfig
+    const { defaultUsers: _du, removedUsers: _ru, cloud: _cl, ...cfgBase } = (_cfgFull || {});
+    const merged = { ...cfgBase, dayBoundaryHour: dayBoundary, screensaverSeconds: screensaver, types };
+    if (adminPin) merged.adminPin = adminPin;
+
+    const btn = document.getElementById('btn-cfg-save');
+    btn.disabled = true; btn.textContent = '…';
+    try {
+      const payload = JSON.stringify({
+        version: 1, exported: new Date().toISOString(), deviceId,
+        config: merged,
+      }, null, 2);
+      const url = buildWebDavBase(creds) + `/stempeluhr_config_${deviceId}.json`;
+      const res = await fetch(url, {
+        method: 'PUT',
+        headers: { 'Authorization': authHeader(creds), 'Content-Type': 'application/json' },
+        body: payload,
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      _cfgFull = merged;
+      toast('Konfiguration gespeichert.', 'ok');
+      document.getElementById('cfg-meta').textContent =
+        `Gerät: ${deviceId} · Stand: ${new Date().toLocaleString('de-DE')}`;
+    } catch (err) {
+      toast('Fehler beim Speichern: ' + err.message, 'err');
+    } finally {
+      btn.disabled = false; btn.textContent = 'Speichern';
+    }
+  });
+
+  document.getElementById('btn-cfg-reset').addEventListener('click', () => {
+    if (!confirm('Gespeicherte Cloud-Konfiguration für dieses Gerät entfernen?\n(Wirkt erst nach dem nächsten Neustart der App.)')) return;
+    // This only makes sense locally — for the current browser's localStorage
+    localStorage.removeItem('stempeluhr_config_cloud');
+    toast('Cloud-Konfiguration aus lokalem Speicher entfernt.', 'ok');
+  });
+
+})();
+</script>
+</body>
+</html>

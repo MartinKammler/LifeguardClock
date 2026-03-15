@@ -1,0 +1,849 @@
+<!--
+  editor.html – LifeguardClock · Log-Editor
+  Copyright (C) 2026  Martin Kammler, Ermlandstr. 10, 75181 Pforzheim, mkammler@gmx.de
+  Lizenz: GNU General Public License v3 – https://www.gnu.org/licenses/gpl-3.0.html
+-->
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LifeguardClock – Editor</title>
+  <link rel="icon" type="image/png" href="Logo.png">
+  <script src="config.js" onerror="window.CONFIG=undefined"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg:        #09090d; --bg2: #13131a; --bg3: #1e1e2a;
+      --border:    #2a2a3a; --border2: #3a3a50;
+      --text:      #e8e8f0; --text-2: #a0a0b8; --text-3: #606078;
+      --c-anw:     #3b82f6; --c-anw-dim: rgba(59,130,246,.15);
+      --c-wach:    #f59e0b; --c-wach-dim: rgba(245,158,11,.15);
+      --c-san:     #ef4444; --c-san-dim: rgba(239,68,68,.15);
+      --ok:        #22c55e; --ok-dim: rgba(34,197,94,.15);
+      --warn:      #f59e0b; --warn-dim: rgba(245,158,11,.12);
+      --danger:    #ef4444;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text);
+           display: flex; flex-direction: column; min-height: 100%; }
+
+    /* ── Header ─────────────────────────────────── */
+    .app-header { background: var(--bg2); border-bottom: 1px solid var(--border);
+      padding: 12px 20px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .hdr-title { font-size: 18px; font-weight: 800; white-space: nowrap; display:flex; align-items:center; gap:8px; }
+    .hdr-title img { height:26px; width:26px; object-fit:contain; border-radius:5px; }
+    .hdr-title-text span { color:#e03; }
+    .hdr-meta  { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 13px;
+                 color: var(--text-2); }
+    .hdr-ld    { display: flex; align-items: center; gap: 6px; }
+    .hdr-ld label { font-size: 11px; font-weight: 700; text-transform: uppercase;
+                    letter-spacing: .5px; color: var(--text-3); }
+    .hdr-ld input { background: var(--bg3); border: 1px solid var(--border); border-radius: 6px;
+                    color: var(--text); padding: 4px 8px; font-family: inherit; font-size: 13px;
+                    width: 130px; }
+    .v-badge   { font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: 20px; }
+    .v-badge.ok   { color: var(--ok);   background: var(--ok-dim); }
+    .v-badge.warn { color: var(--warn); background: var(--warn-dim); }
+    .hdr-count { color: var(--text-3); font-size: 12px; }
+    .hdr-btns  { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; }
+    .btn { background: var(--bg3); border: 1px solid var(--border); color: var(--text);
+           padding: 7px 14px; border-radius: 8px; font-family: inherit; font-size: 13px;
+           font-weight: 600; cursor: pointer; transition: border-color .15s, background .15s;
+           white-space: nowrap; }
+    .btn:hover:not(:disabled) { border-color: var(--c-anw); background: var(--c-anw-dim); }
+    .btn:disabled  { opacity: .35; cursor: default; }
+    .btn-primary   { background: var(--c-anw-dim); border-color: var(--c-anw); color: var(--c-anw); }
+    .btn-primary:hover:not(:disabled) { background: rgba(59,130,246,.25); }
+    .btn-danger    { background: var(--c-san-dim); border-color: var(--c-san); color: var(--c-san); }
+    .btn-danger:hover:not(:disabled) { background: rgba(239,68,68,.25); }
+    .btn-sm { padding: 4px 10px; font-size: 12px; border-radius: 6px; }
+
+    /* ── Toolbar ─────────────────────────────────── */
+    .toolbar { background: var(--bg2); border-bottom: 1px solid var(--border);
+               display: flex; align-items: center; gap: 0; padding: 0 20px; flex-shrink: 0;
+               flex-wrap: wrap; }
+    .tab-btn { background: none; border: none; border-bottom: 2px solid transparent;
+               color: var(--text-3); padding: 10px 16px; font-family: inherit;
+               font-size: 13px; font-weight: 600; cursor: pointer;
+               transition: color .15s, border-color .15s; }
+    .tab-btn:hover { color: var(--text-2); }
+    .tab-btn.active { color: var(--text); border-bottom-color: var(--c-anw); }
+    .toolbar-sep { width: 1px; height: 24px; background: var(--border); margin: 0 8px; }
+    .person-filter { display: flex; gap: 6px; flex-wrap: wrap; padding: 6px 0; }
+    .filter-btn { background: var(--bg3); border: 1px solid var(--border); color: var(--text-2);
+                  padding: 4px 12px; border-radius: 20px; font-family: inherit; font-size: 12px;
+                  font-weight: 600; cursor: pointer; transition: all .15s; }
+    .filter-btn:hover  { border-color: var(--c-anw); color: var(--text); }
+    .filter-btn.active { background: var(--c-anw-dim); border-color: var(--c-anw); color: var(--c-anw); }
+
+    /* ── Main panels ─────────────────────────────── */
+    .main { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+    .panel { flex: 1; overflow-y: auto; display: flex; flex-direction: column; }
+    [hidden] { display: none !important; }
+
+    /* ── Empty / drop state ──────────────────────── */
+    .empty-state { flex: 1; display: flex; flex-direction: column; align-items: center;
+                   justify-content: center; gap: 12px; color: var(--text-3); min-height: 300px; }
+    .empty-icon  { font-size: 52px; }
+    .empty-title { font-size: 17px; font-weight: 700; }
+    .empty-sub   { font-size: 13px; max-width: 340px; text-align: center; line-height: 1.5; }
+    .drop-active { background: rgba(59,130,246,.06) !important; }
+    .drop-active * { pointer-events: none; }
+
+    /* ── Table ───────────────────────────────────── */
+    .table-wrap { overflow-x: auto; flex: 1; }
+    .log-table  { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .log-table th { text-align: left; padding: 9px 12px; font-size: 11px; font-weight: 700;
+                    text-transform: uppercase; letter-spacing: .5px; color: var(--text-3);
+                    background: var(--bg2); border-bottom: 1px solid var(--border);
+                    position: sticky; top: 0; z-index: 1; }
+    .log-table td { padding: 8px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+    .log-table tbody tr:hover td { background: var(--bg3); }
+    .log-table .row-warn td { background: rgba(245,158,11,.04); }
+    .pair-ok   { color: var(--ok);   font-size: 14px; }
+    .pair-warn { color: var(--warn); font-size: 14px; cursor: help; }
+    .badge-typ { display: inline-block; padding: 2px 8px; border-radius: 12px;
+                 font-size: 11px; font-weight: 700; }
+    .badge-typ.anw  { background: var(--c-anw-dim);  color: var(--c-anw); }
+    .badge-typ.wach { background: var(--c-wach-dim); color: var(--c-wach); }
+    .badge-typ.san  { background: var(--c-san-dim);  color: var(--c-san); }
+    .badge-aktion { display: inline-block; padding: 2px 8px; border-radius: 12px;
+                    font-size: 11px; font-weight: 700; }
+    .badge-aktion.start { background: var(--ok-dim);  color: var(--ok); }
+    .badge-aktion.stop  { background: rgba(100,100,130,.15); color: var(--text-2); }
+    .ts-cell  { color: var(--text-2); font-size: 12px; white-space: nowrap; }
+    .dur-cell { color: var(--text-2); font-size: 12px; white-space: nowrap; }
+    .act-cell { white-space: nowrap; }
+    .table-footer { padding: 12px 16px; background: var(--bg2);
+                    border-top: 1px solid var(--border); display: flex; gap: 8px; }
+
+    /* ── Inline edit ─────────────────────────────── */
+    .edit-input { background: var(--bg); border: 1px solid var(--border2); border-radius: 6px;
+                  color: var(--text); padding: 4px 8px; font-family: inherit; font-size: 13px;
+                  width: 100%; min-width: 80px; }
+    .edit-input:focus { outline: none; border-color: var(--c-anw); }
+    .edit-row td { background: rgba(59,130,246,.05) !important; }
+
+    /* ── Timeline ────────────────────────────────── */
+    #timeline-view { padding: 16px 20px; }
+    .tl-header  { display: flex; align-items: baseline; gap: 8px; margin-bottom: 16px; }
+    .tl-date    { font-size: 15px; font-weight: 700; }
+    .tl-range   { font-size: 12px; color: var(--text-3); }
+    .tl-row     { display: flex; align-items: center; margin-bottom: 8px; gap: 12px; }
+    .tl-label   { min-width: 200px; flex-shrink: 0; }
+    .tl-person  { font-size: 13px; font-weight: 600; white-space: nowrap;
+                  overflow: hidden; text-overflow: ellipsis; max-width: 190px; }
+    .tl-ltype   { font-size: 11px; font-weight: 700; }
+    .tl-track   { flex: 1; height: 28px; background: var(--bg3); border-radius: 6px;
+                  position: relative; overflow: visible; }
+    .tl-seg     { position: absolute; height: 100%; border-radius: 6px;
+                  min-width: 2px; opacity: .85; cursor: help;
+                  transition: opacity .15s; }
+    .tl-seg:hover { opacity: 1; z-index: 1; }
+    .tl-seg-open { opacity: .5; border-right: 2px dashed rgba(255,255,255,.3); }
+    .tl-axis    { position: relative; height: 24px; margin-left: 212px; margin-bottom: 12px;
+                  border-top: 1px solid var(--border); }
+    .tl-tick    { position: absolute; transform: translateX(-50%);
+                  font-size: 11px; color: var(--text-3); padding-top: 4px; white-space: nowrap; }
+    .tl-empty   { color: var(--text-3); text-align: center; padding: 40px; }
+    .tl-legend  { display: flex; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
+    .tl-legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-2); }
+    .tl-legend-dot  { width: 12px; height: 12px; border-radius: 3px; }
+
+    /* ── Modal ───────────────────────────────────── */
+    dialog { background: var(--bg2); border: 1px solid var(--border); border-radius: 14px;
+             padding: 0; color: var(--text); font-family: inherit; min-width: 340px;
+             max-width: 420px; width: 100%; box-shadow: 0 24px 64px rgba(0,0,0,.5); }
+    dialog::backdrop { background: rgba(0,0,0,.6); backdrop-filter: blur(2px); }
+    .modal-hdr  { padding: 18px 20px 14px; border-bottom: 1px solid var(--border);
+                  font-size: 16px; font-weight: 800; }
+    .modal-body { padding: 18px 20px; display: flex; flex-direction: column; gap: 14px; }
+    .form-row   { display: flex; flex-direction: column; gap: 5px; }
+    .form-row label { font-size: 11px; font-weight: 700; text-transform: uppercase;
+                      letter-spacing: .5px; color: var(--text-3); }
+    .form-row input, .form-row select {
+      background: var(--bg3); border: 1px solid var(--border); border-radius: 8px;
+      color: var(--text); padding: 8px 12px; font-family: inherit; font-size: 14px; width: 100%; }
+    .form-row input:focus, .form-row select:focus { outline: none; border-color: var(--c-anw); }
+    .form-row select option { background: var(--bg3); }
+    .from-to-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .dur-preview { padding: 10px 14px; background: var(--bg3); border-radius: 8px;
+                   font-size: 13px; color: var(--text-2); text-align: center; }
+    .modal-ftr  { padding: 14px 20px; border-top: 1px solid var(--border);
+                  display: flex; justify-content: flex-end; gap: 8px; }
+  </style>
+</head>
+<body>
+
+  <!-- ── Header ──────────────────────────────────────────────────── -->
+  <header class="app-header">
+    <span class="hdr-title">
+      <img src="Logo.png" alt="">
+      <span class="hdr-title-text">Lifeguard<span>Clock</span> <span style="font-weight:400;color:var(--text-3);font-size:14px">Editor</span></span>
+    </span>
+    <div class="hdr-meta">
+      <div class="hdr-ld">
+        <label>logicalDay</label>
+        <input id="inp-logical-day" type="date" placeholder="YYYY-MM-DD">
+      </div>
+      <span class="hdr-count" id="entry-count">—</span>
+      <span class="v-badge" id="v-badge" style="display:none"></span>
+    </div>
+    <div class="hdr-btns">
+      <button class="btn" id="btn-undo" disabled title="Rückgängig (Ctrl+Z)">↩</button>
+      <button class="btn" id="btn-redo" disabled title="Wiederholen (Ctrl+Y)">↪</button>
+      <button class="btn" id="btn-load">&#x1F4C2; Laden</button>
+      <button class="btn" id="btn-new">+ Neue Datei</button>
+      <button class="btn btn-primary" id="btn-export" disabled>&#x2193; Export</button>
+    </div>
+  </header>
+
+  <!-- ── Toolbar ─────────────────────────────────────────────────── -->
+  <div class="toolbar">
+    <button class="tab-btn active" data-tab="table">&#x1F4CB; Tabelle</button>
+    <button class="tab-btn" data-tab="timeline">&#x23F1; Timeline</button>
+    <div class="toolbar-sep"></div>
+    <div class="person-filter" id="person-filter"></div>
+  </div>
+
+  <!-- ── Main ────────────────────────────────────────────────────── -->
+  <div class="main" id="main-area">
+
+    <!-- Empty state -->
+    <div class="panel" id="panel-empty">
+      <div class="empty-state">
+        <div class="empty-icon">&#x1F4DD;</div>
+        <div class="empty-title">Keine Datei geladen</div>
+        <div class="empty-sub">JSON-Datei laden, neu anlegen, oder per Drag &amp; Drop auf die Seite ziehen</div>
+      </div>
+    </div>
+
+    <!-- Table panel -->
+    <div class="panel" id="panel-table" hidden>
+      <div class="table-wrap">
+        <table class="log-table">
+          <thead>
+            <tr>
+              <th style="width:36px"></th>
+              <th>Person</th>
+              <th>Typ</th>
+              <th>Aktion</th>
+              <th>Zeitstempel</th>
+              <th>Dauer</th>
+              <th style="width:100px"></th>
+            </tr>
+          </thead>
+          <tbody id="log-tbody"></tbody>
+        </table>
+      </div>
+      <div class="table-footer">
+        <button class="btn btn-primary" id="btn-add-pair">+ Eintragspaar hinzufügen</button>
+      </div>
+    </div>
+
+    <!-- Timeline panel -->
+    <div class="panel" id="panel-timeline" hidden>
+      <div id="timeline-view"></div>
+    </div>
+
+  </div>
+
+  <!-- ── Add pair modal ──────────────────────────────────────────── -->
+  <dialog id="modal-add">
+    <div class="modal-hdr">Neues Eintragspaar</div>
+    <div class="modal-body">
+      <div class="form-row">
+        <label>Person</label>
+        <input id="add-nutzer" list="known-persons-list" placeholder="Name...">
+      </div>
+      <div class="form-row">
+        <label>Typ</label>
+        <select id="add-typ"></select>
+      </div>
+      <div class="from-to-row">
+        <div class="form-row">
+          <label>Von</label>
+          <input type="datetime-local" id="add-von" step="60">
+        </div>
+        <div class="form-row">
+          <label>Bis</label>
+          <input type="datetime-local" id="add-bis" step="60">
+        </div>
+      </div>
+      <div class="dur-preview" id="dur-preview">Dauer: —</div>
+    </div>
+    <div class="modal-ftr">
+      <button class="btn" id="add-cancel">Abbrechen</button>
+      <button class="btn btn-primary" id="add-confirm">Hinzufügen</button>
+    </div>
+  </dialog>
+
+  <!-- Hidden inputs -->
+  <input type="file" id="file-input" accept=".json" hidden>
+  <datalist id="known-persons-list"></datalist>
+
+<script>
+// ─── State ────────────────────────────────────────────────────────────────────
+let logData   = null;   // { version, exported, logicalDay, count, log }
+let history   = [];     // undo stack: array of JSON strings
+let histIdx   = -1;
+let filterPerson = null;
+let activeTab = 'table';
+let editingId = null;   // id of row currently in inline edit mode
+
+// ─── Typ-Farb-Palette (passend zu LifeguardClock.html) ────────────────────────────
+const COLOR_PALETTE = {
+  blue:   { main: '#3b82f6', dim: 'rgba(59,130,246,.15)'  },
+  green:  { main: '#22c55e', dim: 'rgba(34,197,94,.15)'   },
+  amber:  { main: '#f59e0b', dim: 'rgba(245,158,11,.15)'  },
+  red:    { main: '#ef4444', dim: 'rgba(239,68,68,.15)'   },
+  violet: { main: '#8b5cf6', dim: 'rgba(139,92,246,.15)'  },
+};
+const _FALLBACK_COLOR_ORDER = ['blue','amber','red','green','violet'];
+
+// Dynamisch aus CONFIG.types aufgebaut; wird bei jedem Laden erweitert
+let _TYPES   = [];   // [{ logType, label, main, dim }, …]
+let _TYPE_MAP = {};  // logType → { logType, label, main, dim }
+
+function buildTypeMaps() {
+  const seen = new Set();
+  const result = [];
+
+  // 1. Aus CONFIG.types (bevorzugt)
+  if (typeof CONFIG !== 'undefined' && Array.isArray(CONFIG?.types)) {
+    CONFIG.types.filter(t => !t.disabled).forEach((t, i) => {
+      const c = COLOR_PALETTE[t.color] || COLOR_PALETTE[_FALLBACK_COLOR_ORDER[i % 5]];
+      result.push({ logType: t.logType, label: t.label, main: c.main, dim: c.dim });
+      seen.add(t.logType);
+    });
+  }
+
+  // 2. Typen im geladenen Log, die nicht in CONFIG stehen (Alt-Daten)
+  if (logData?.log) {
+    [...new Set(logData.log.map(e => e.typ))].filter(Boolean).forEach((lt, i) => {
+      if (seen.has(lt)) return;
+      const c = COLOR_PALETTE[_FALLBACK_COLOR_ORDER[(result.length + i) % 5]];
+      result.push({ logType: lt, label: lt, main: c.main, dim: c.dim });
+      seen.add(lt);
+    });
+  }
+
+  // 3. Minimal-Fallback (kein config.js, leere Datei)
+  if (result.length === 0) {
+    [['anwesenheit','Anwesenheit','blue'],
+     ['wachstunde_ehrenamtlich','Wachstunden','amber'],
+     ['sanitätsstunde','Sanitätsstunden','red']].forEach(([lt, lbl, col]) => {
+      const c = COLOR_PALETTE[col];
+      result.push({ logType: lt, label: lbl, main: c.main, dim: c.dim });
+    });
+  }
+
+  _TYPES   = result;
+  _TYPE_MAP = {};
+  _TYPES.forEach(t => { _TYPE_MAP[t.logType] = t; });
+}
+
+function populateTypSelect() {
+  const sel = document.getElementById('add-typ');
+  sel.innerHTML = _TYPES.map(t =>
+    `<option value="${t.logType}">${t.label}</option>`
+  ).join('');
+}
+
+// ─── Utils ────────────────────────────────────────────────────────────────────
+function genId() { return Date.now() + Math.random(); }
+
+function isoToLocalInput(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const pad = n => String(n).padStart(2,'0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+function localInputToIso(local) {
+  if (!local) return '';
+  return new Date(local).toISOString();
+}
+
+function fmtMs(ms) {
+  if (!ms || ms < 0) return '—';
+  const h = Math.floor(ms / 3600000);
+  const m = Math.floor((ms % 3600000) / 60000);
+  return h > 0 ? `${h}:${String(m).padStart(2,'0')} h` : `${m} min`;
+}
+function fmtDatetime(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return d.toLocaleDateString('de-DE', { day:'2-digit', month:'2-digit' }) + ' ' +
+         d.toLocaleTimeString('de-DE', { hour:'2-digit', minute:'2-digit' });
+}
+function fmtTime(iso) {
+  if (!iso) return '';
+  return new Date(iso).toLocaleTimeString('de-DE', { hour:'2-digit', minute:'2-digit' });
+}
+
+// ─── Personen (config.js + geladene Datei) ────────────────────────────────────
+function getKnownPersons() {
+  const names = new Set();
+  if (typeof CONFIG !== 'undefined' && CONFIG?.defaultUsers)
+    CONFIG.defaultUsers.forEach(u => names.add(u.name));
+  logData?.log?.forEach(e => e.nutzer && names.add(e.nutzer));
+  return [...names].sort();
+}
+function updateDatalist() {
+  document.getElementById('known-persons-list').innerHTML =
+    getKnownPersons().map(n => `<option value="${n.replace(/"/g,'&quot;')}">`).join('');
+}
+
+// ─── Datei laden / neu ────────────────────────────────────────────────────────
+async function loadFile(file) {
+  try {
+    const json = JSON.parse(await file.text());
+    logData = json;
+    if (!Array.isArray(logData.log)) logData.log = [];
+    history = []; histIdx = -1; editingId = null; filterPerson = null;
+    buildTypeMaps();   // Typen aus Config + Log ableiten
+    populateTypSelect();
+    pushHistory();
+    renderAll();
+  } catch(e) { alert('Ungültige JSON-Datei: ' + e.message); }
+}
+
+function newFile() {
+  const today = new Date().toISOString().slice(0,10);
+  logData = { version: 2, exported: new Date().toISOString(),
+              logicalDay: today, count: 0, log: [] };
+  history = []; histIdx = -1; editingId = null; filterPerson = null;
+  buildTypeMaps();
+  populateTypSelect();
+  pushHistory();
+  renderAll();
+}
+
+// ─── Undo / Redo ──────────────────────────────────────────────────────────────
+function pushHistory() {
+  history = history.slice(0, histIdx + 1);
+  history.push(JSON.stringify(logData.log));
+  if (history.length > 50) history.shift();
+  histIdx = history.length - 1;
+  syncUndoButtons();
+}
+function undo() {
+  if (histIdx <= 0) return;
+  histIdx--;
+  logData.log = JSON.parse(history[histIdx]);
+  logData.count = logData.log.length;
+  editingId = null;
+  syncUndoButtons();
+  renderAll();
+}
+function redo() {
+  if (histIdx >= history.length - 1) return;
+  histIdx++;
+  logData.log = JSON.parse(history[histIdx]);
+  logData.count = logData.log.length;
+  editingId = null;
+  syncUndoButtons();
+  renderAll();
+}
+function syncUndoButtons() {
+  document.getElementById('btn-undo').disabled = histIdx <= 0;
+  document.getElementById('btn-redo').disabled = histIdx >= history.length - 1;
+}
+
+// ─── Paar-Validierung ─────────────────────────────────────────────────────────
+function validatePairs(log) {
+  const issues = new Set();
+  const groups = {};
+  for (const e of log) {
+    const k = `${e.nutzer}|${e.typ}`;
+    if (!groups[k]) groups[k] = [];
+    groups[k].push(e);
+  }
+  for (const entries of Object.values(groups)) {
+    const sorted = [...entries].sort((a,b) => new Date(a.zeitstempel) - new Date(b.zeitstempel));
+    let openStart = null;
+    for (const e of sorted) {
+      if (e.aktion === 'start') {
+        if (openStart) issues.add(openStart.id); // doppelter Start
+        openStart = e;
+      } else {
+        if (!openStart) issues.add(e.id); // Stop ohne Start
+        else openStart = null;
+      }
+    }
+    if (openStart) issues.add(openStart.id); // unclosed
+  }
+  return issues;
+}
+
+// ─── Paired-Start finden (für dauer_ms-Neuberechnung) ─────────────────────────
+function findPairedStart(stopEntry) {
+  const stopTs = new Date(stopEntry.zeitstempel).getTime();
+  return logData.log
+    .filter(e => e.id !== stopEntry.id && e.nutzer === stopEntry.nutzer &&
+                 e.typ === stopEntry.typ && e.aktion === 'start' &&
+                 new Date(e.zeitstempel).getTime() <= stopTs)
+    .sort((a,b) => new Date(b.zeitstempel) - new Date(a.zeitstempel))[0];
+}
+
+// ─── Mutationen ───────────────────────────────────────────────────────────────
+function commit(fn) {
+  fn();
+  logData.log.sort((a,b) => new Date(a.zeitstempel) - new Date(b.zeitstempel));
+  logData.count = logData.log.length;
+  editingId = null;
+  pushHistory();
+  renderAll();
+}
+
+function addPair(nutzer, typ, vonIso, bisIso) {
+  const durMs = new Date(bisIso) - new Date(vonIso);
+  commit(() => {
+    logData.log.push(
+      { id: genId(), nutzer, typ, aktion: 'start', zeitstempel: vonIso },
+      { id: genId(), nutzer, typ, aktion: 'stop',  zeitstempel: bisIso, dauer_ms: durMs }
+    );
+  });
+}
+
+function saveEdit(id) {
+  const nutzer = document.getElementById('ei-nutzer').value.trim();
+  const typ    = document.getElementById('ei-typ').value;
+  const aktion = document.getElementById('ei-aktion').value;
+  const tsVal  = document.getElementById('ei-ts').value;
+  if (!nutzer || !tsVal) return;
+  const zeitstempel = localInputToIso(tsVal);
+  commit(() => {
+    const e = logData.log.find(x => x.id === id);
+    if (!e) return;
+    e.nutzer = nutzer; e.typ = typ; e.aktion = aktion; e.zeitstempel = zeitstempel;
+    if (aktion === 'stop') {
+      const paired = findPairedStart(e);
+      if (paired) e.dauer_ms = new Date(e.zeitstempel) - new Date(paired.zeitstempel);
+    } else {
+      delete e.dauer_ms;
+      // Recalc paired stop
+      const stop = logData.log.find(s =>
+        s.nutzer === nutzer && s.typ === typ && s.aktion === 'stop' &&
+        new Date(s.zeitstempel) >= new Date(zeitstempel));
+      if (stop) stop.dauer_ms = new Date(stop.zeitstempel) - new Date(zeitstempel);
+    }
+  });
+}
+
+function deleteEntry(id) {
+  commit(() => { logData.log = logData.log.filter(e => e.id !== id); });
+}
+
+// ─── Export ───────────────────────────────────────────────────────────────────
+function exportJSON() {
+  const out = { ...logData, exported: new Date().toISOString(), count: logData.log.length };
+  const blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' });
+  const a = Object.assign(document.createElement('a'), {
+    href: URL.createObjectURL(blob),
+    download: `stempeluhr_${logData.logicalDay || 'export'}.json`,
+  });
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+// ─── Render ───────────────────────────────────────────────────────────────────
+function renderAll() {
+  if (!logData) return;
+  // Meta
+  document.getElementById('inp-logical-day').value = logData.logicalDay || '';
+  document.getElementById('entry-count').textContent = `${logData.log.length} Einträge`;
+  document.getElementById('btn-export').disabled = false;
+  // Validation
+  const issues = validatePairs(logData.log);
+  const badge = document.getElementById('v-badge');
+  badge.style.display = '';
+  if (issues.size === 0) {
+    badge.textContent = '✓ Alle Paare vollständig';
+    badge.className = 'v-badge ok';
+  } else {
+    badge.textContent = `⚠ ${issues.size} offene Einträge`;
+    badge.className = 'v-badge warn';
+  }
+  // Panels
+  document.getElementById('panel-empty').hidden    = true;
+  document.getElementById('panel-table').hidden    = activeTab !== 'table';
+  document.getElementById('panel-timeline').hidden = activeTab !== 'timeline';
+  // Person filter
+  renderPersonFilter();
+  // Datalist
+  updateDatalist();
+  // Content
+  if (activeTab === 'table')    renderTable(issues);
+  else                          renderTimeline();
+}
+
+function renderPersonFilter() {
+  const persons = [...new Set(logData.log.map(e => e.nutzer))].filter(Boolean).sort();
+  document.getElementById('person-filter').innerHTML =
+    `<button class="filter-btn${filterPerson === null ? ' active' : ''}" data-p="">Alle</button>` +
+    persons.map(p =>
+      `<button class="filter-btn${filterPerson === p ? ' active' : ''}"
+        data-p="${p.replace(/"/g,'&quot;')}">${p}</button>`
+    ).join('');
+}
+
+function visibleLog() {
+  return filterPerson ? logData.log.filter(e => e.nutzer === filterPerson) : logData.log;
+}
+
+function renderTable(issues) {
+  const log = visibleLog();
+  let html = '';
+  for (const e of log) {
+    const hasIssue = issues.has(e.id);
+    const isEditing = editingId === e.id;
+    const ti = _TYPE_MAP[e.typ] || { logType: e.typ, label: e.typ, main: '#888', dim: 'rgba(128,128,128,.15)' };
+    // Für Edit-Dropdown: alle bekannten Typen + ggf. den aktuellen, falls unbekannt
+    const editOpts = [
+      ...(_TYPE_MAP[e.typ] ? [] : [ti]),
+      ..._TYPES,
+    ].map(t => `<option value="${t.logType}"${e.typ===t.logType?' selected':''}>${t.label}</option>`).join('');
+
+    if (isEditing) {
+      html += `<tr class="edit-row" data-id="${e.id}">
+        <td><span class="${hasIssue ? 'pair-warn' : 'pair-ok'}">${hasIssue ? '⚠' : '✓'}</span></td>
+        <td><input class="edit-input" id="ei-nutzer" list="known-persons-list" value="${e.nutzer}" style="min-width:140px"></td>
+        <td><select class="edit-input" id="ei-typ" style="min-width:150px">${editOpts}</select></td>
+        <td><select class="edit-input" id="ei-aktion">
+          <option value="start"${e.aktion==='start'?' selected':''}>start</option>
+          <option value="stop"${e.aktion==='stop'?' selected':''}>stop</option>
+        </select></td>
+        <td><input type="datetime-local" class="edit-input" id="ei-ts" value="${isoToLocalInput(e.zeitstempel)}" step="60" style="min-width:170px"></td>
+        <td class="dur-cell">${e.aktion==='stop' ? fmtMs(e.dauer_ms) : '—'}</td>
+        <td class="act-cell">
+          <button class="btn btn-sm btn-primary btn-save" data-id="${e.id}">✓</button>
+          <button class="btn btn-sm btn-cancel">✕</button>
+        </td>
+      </tr>`;
+    } else {
+      html += `<tr class="${hasIssue ? 'row-warn' : ''}" data-id="${e.id}">
+        <td><span class="${hasIssue ? 'pair-warn' : 'pair-ok'}" title="${hasIssue ? 'Kein passendes Gegenstück' : 'Paar vollständig'}">${hasIssue ? '⚠' : '✓'}</span></td>
+        <td>${e.nutzer || '<em style="color:var(--text-3)">—</em>'}</td>
+        <td><span class="badge-typ" style="background:${ti.dim};color:${ti.main}">${ti.label}</span></td>
+        <td><span class="badge-aktion ${e.aktion}">${e.aktion}</span></td>
+        <td class="ts-cell">${fmtDatetime(e.zeitstempel)}</td>
+        <td class="dur-cell">${e.aktion==='stop' ? fmtMs(e.dauer_ms) : '—'}</td>
+        <td class="act-cell">
+          <button class="btn btn-sm btn-edit" data-id="${e.id}" title="Bearbeiten">✏</button>
+          <button class="btn btn-sm btn-del" data-id="${e.id}" title="Löschen">&#x1F5D1;</button>
+        </td>
+      </tr>`;
+    }
+  }
+  if (html === '') {
+    html = `<tr><td colspan="7" style="text-align:center;padding:32px;color:var(--text-3)">Keine Einträge</td></tr>`;
+  }
+  document.getElementById('log-tbody').innerHTML = html;
+}
+
+function renderTimeline() {
+  const log = visibleLog();
+  const el = document.getElementById('timeline-view');
+  if (log.length === 0) { el.innerHTML = '<div class="tl-empty">Keine Einträge</div>'; return; }
+
+  const allTs = log.map(e => new Date(e.zeitstempel).getTime()).filter(t => !isNaN(t));
+  const tMin = Math.min(...allTs);
+  const tMax = Math.max(...allTs);
+  const tRange = tMax - tMin || 3600000;
+
+  const persons = [...new Set(log.map(e => e.nutzer))].sort();
+
+  // Axis
+  let axisHtml = '<div class="tl-axis">';
+  for (let i = 0; i <= 4; i++) {
+    const ts = tMin + tRange * i / 4;
+    axisHtml += `<span class="tl-tick" style="left:${(i/4*100).toFixed(1)}%">${fmtTime(new Date(ts).toISOString())}</span>`;
+  }
+  axisHtml += '</div>';
+
+  // Legend (nur verwendete Typen, in Config-Reihenfolge)
+  const usedLogTypes = new Set(log.map(e => e.typ));
+  const legendHtml = '<div class="tl-legend">' +
+    _TYPES.filter(ti => usedLogTypes.has(ti.logType)).map(ti =>
+      `<div class="tl-legend-item"><div class="tl-legend-dot" style="background:${ti.main}"></div>${ti.label}</div>`
+    ).join('') +
+    '</div>';
+
+  // Alle im Log vorkommenden Typen in Config-Reihenfolge (dann Rest)
+  const orderedTypes = [
+    ..._TYPES.filter(ti => usedLogTypes.has(ti.logType)),
+    ...[...usedLogTypes].filter(lt => !_TYPE_MAP[lt]).map(lt => ({
+      logType: lt, label: lt, main: '#888', dim: 'rgba(128,128,128,.15)',
+    })),
+  ];
+
+  let rowsHtml = '';
+  for (const person of persons) {
+    const pLog = log.filter(e => e.nutzer === person);
+    for (const ti of orderedTypes) {
+      const typ = ti.logType;
+      const tLog = pLog.filter(e => e.typ === typ).sort((a,b) => new Date(a.zeitstempel) - new Date(b.zeitstempel));
+      if (tLog.length === 0) continue;
+
+      let segs = '';
+      let openStart = null;
+      for (const e of tLog) {
+        if (e.aktion === 'start') {
+          openStart = e;
+        } else if (e.aktion === 'stop' && openStart) {
+          const s = new Date(openStart.zeitstempel).getTime();
+          const en = new Date(e.zeitstempel).getTime();
+          const left = ((s - tMin) / tRange * 100).toFixed(2);
+          const width = ((en - s) / tRange * 100).toFixed(2);
+          segs += `<div class="tl-seg" style="left:${left}%;width:${width}%;background:${ti.main}"
+            title="${person} · ${ti.label} · ${fmtTime(openStart.zeitstempel)}–${fmtTime(e.zeitstempel)} (${fmtMs(e.dauer_ms)})"></div>`;
+          openStart = null;
+        }
+      }
+      if (openStart) {
+        const s = new Date(openStart.zeitstempel).getTime();
+        const left = ((s - tMin) / tRange * 100).toFixed(2);
+        const width = ((tMax - s) / tRange * 100).toFixed(2);
+        segs += `<div class="tl-seg tl-seg-open" style="left:${left}%;width:${width}%;background:${ti.main}" title="Offen – kein Stop"></div>`;
+      }
+
+      rowsHtml += `<div class="tl-row">
+        <div class="tl-label">
+          <div class="tl-person" title="${person}">${person}</div>
+          <div class="tl-ltype" style="color:${ti.main}">${ti.label}</div>
+        </div>
+        <div class="tl-track">${segs}</div>
+      </div>`;
+    }
+  }
+
+  el.innerHTML = `<div class="tl-header">
+      <span class="tl-date">${logData.logicalDay || ''}</span>
+      <span class="tl-range">${fmtTime(new Date(tMin).toISOString())} – ${fmtTime(new Date(tMax).toISOString())}</span>
+    </div>
+    ${legendHtml}
+    ${axisHtml}
+    ${rowsHtml}`;
+}
+
+// ─── Add pair modal ───────────────────────────────────────────────────────────
+function openAddModal() {
+  const day = logData.logicalDay || new Date().toISOString().slice(0,10);
+  document.getElementById('add-nutzer').value = filterPerson || '';
+  document.getElementById('add-typ').value    = _TYPES[0]?.logType || '';
+  document.getElementById('add-von').value    = `${day}T08:00`;
+  document.getElementById('add-bis').value    = `${day}T12:00`;
+  updateDurPreview();
+  document.getElementById('modal-add').showModal();
+}
+function updateDurPreview() {
+  const von = document.getElementById('add-von').value;
+  const bis = document.getElementById('add-bis').value;
+  if (!von || !bis) { document.getElementById('dur-preview').textContent = 'Dauer: —'; return; }
+  const ms = new Date(bis) - new Date(von);
+  document.getElementById('dur-preview').textContent =
+    ms > 0 ? `Dauer: ${fmtMs(ms)}` : 'Bis muss nach Von liegen';
+}
+
+// ─── Init ─────────────────────────────────────────────────────────────────────
+buildTypeMaps();
+populateTypSelect();
+
+// ─── Event listeners ──────────────────────────────────────────────────────────
+document.getElementById('btn-load').addEventListener('click', () =>
+  document.getElementById('file-input').click());
+document.getElementById('file-input').addEventListener('change', e => {
+  if (e.target.files[0]) loadFile(e.target.files[0]);
+  e.target.value = '';
+});
+document.getElementById('btn-new').addEventListener('click', newFile);
+document.getElementById('btn-export').addEventListener('click', exportJSON);
+document.getElementById('btn-undo').addEventListener('click', undo);
+document.getElementById('btn-redo').addEventListener('click', redo);
+
+document.getElementById('inp-logical-day').addEventListener('change', e => {
+  if (logData) { logData.logicalDay = e.target.value; }
+});
+
+// Tabs
+document.querySelectorAll('.tab-btn').forEach(btn => btn.addEventListener('click', () => {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  activeTab = btn.dataset.tab;
+  if (logData) renderAll();
+}));
+
+// Person filter (event delegation)
+document.getElementById('person-filter').addEventListener('click', e => {
+  const btn = e.target.closest('.filter-btn');
+  if (!btn) return;
+  filterPerson = btn.dataset.p || null;
+  renderAll();
+});
+
+// Table delegation
+document.getElementById('log-tbody').addEventListener('click', e => {
+  const editBtn  = e.target.closest('.btn-edit');
+  const saveBtn  = e.target.closest('.btn-save');
+  const cancelBtn= e.target.closest('.btn-cancel');
+  const delBtn   = e.target.closest('.btn-del');
+  if (editBtn)  { editingId = Number(editBtn.dataset.id); renderTable(validatePairs(logData.log)); }
+  if (saveBtn)  { saveEdit(Number(saveBtn.dataset.id)); }
+  if (cancelBtn){ editingId = null; renderTable(validatePairs(logData.log)); }
+  if (delBtn) {
+    if (confirm('Eintrag löschen?')) deleteEntry(Number(delBtn.dataset.id));
+  }
+});
+
+// Add pair
+document.getElementById('btn-add-pair').addEventListener('click', openAddModal);
+document.getElementById('add-von').addEventListener('input', updateDurPreview);
+document.getElementById('add-bis').addEventListener('input', updateDurPreview);
+document.getElementById('add-cancel').addEventListener('click', () =>
+  document.getElementById('modal-add').close());
+document.getElementById('add-confirm').addEventListener('click', () => {
+  const nutzer = document.getElementById('add-nutzer').value.trim();
+  const typ    = document.getElementById('add-typ').value;
+  const von    = document.getElementById('add-von').value;
+  const bis    = document.getElementById('add-bis').value;
+  if (!nutzer) { alert('Bitte Person eingeben.'); return; }
+  if (!von || !bis) { alert('Bitte Von und Bis ausfüllen.'); return; }
+  const ms = new Date(bis) - new Date(von);
+  if (ms <= 0) { alert('Bis muss nach Von liegen.'); return; }
+  document.getElementById('modal-add').close();
+  addPair(nutzer, typ, localInputToIso(von), localInputToIso(bis));
+});
+
+// Keyboard shortcuts
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
+  if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) { e.preventDefault(); redo(); }
+  if (e.key === 'Escape') {
+    document.getElementById('modal-add').close();
+    if (editingId !== null) { editingId = null; if (logData) renderTable(validatePairs(logData.log)); }
+  }
+});
+
+// Drag & drop
+document.addEventListener('dragover', e => {
+  e.preventDefault();
+  document.getElementById('main-area').classList.add('drop-active');
+});
+document.addEventListener('dragleave', e => {
+  if (!e.relatedTarget || e.relatedTarget === document.documentElement)
+    document.getElementById('main-area').classList.remove('drop-active');
+});
+document.addEventListener('drop', e => {
+  e.preventDefault();
+  document.getElementById('main-area').classList.remove('drop-active');
+  const file = e.dataTransfer.files[0];
+  if (file?.name.endsWith('.json')) loadFile(file);
+  else if (file) alert('Bitte eine .json Datei ablegen.');
+});
+</script>
+</body>
+</html>
