@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <title>LifeguardClock Editor – Unit Tests</title>
+  <style>
+    :root { --bg:#09090d; --bg2:#13131a; --bg3:#1e1e2a; --border:#2a2a3a;
+            --text:#e8e8f0; --text-2:#a0a0b8; --text-3:#606078;
+            --ok:#22c55e; --fail:#ef4444; }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Courier New', monospace; background: var(--bg); color: var(--text);
+           padding: 24px; font-size: 13px; line-height: 1.6; }
+    h1   { font-size: 20px; font-weight: 800; margin-bottom: 4px; }
+    .sub { color: var(--text-3); font-size: 12px; margin-bottom: 24px; }
+    .suite { margin-bottom: 20px; }
+    .suite-title { font-size: 14px; font-weight: 700; color: var(--text-2);
+                   padding: 8px 12px; background: var(--bg2);
+                   border-left: 3px solid var(--border); margin-bottom: 4px;
+                   border-radius: 0 6px 6px 0; }
+    .suite-title.all-ok   { border-left-color: var(--ok); }
+    .suite-title.has-fail { border-left-color: var(--fail); }
+    .test { padding: 4px 12px 4px 20px; border-bottom: 1px solid var(--bg3); }
+    .test.ok   { color: var(--ok); }
+    .test.fail { color: var(--fail); font-weight: 600; }
+    .detail    { color: var(--text-3); font-size: 11px; padding-left: 20px; }
+    .summary { margin-top: 24px; padding: 16px 20px;
+               background: var(--bg2); border-radius: 10px; font-size: 14px; }
+    .summary .big { font-size: 26px; font-weight: 800; }
+    .ok-text   { color: var(--ok); }
+    .fail-text { color: var(--fail); }
+  </style>
+</head>
+<body>
+  <h1>LifeguardClock Editor – Unit Tests</h1>
+  <div class="sub">Funktionen aus editor.html · Render-Funktionen sind gestubbt</div>
+  <div id="output"></div>
+  <div class="summary" id="summary"></div>
+
+<script>
+// ─── Test-Harness ─────────────────────────────────────────────────────────────
+let _suites = [], _cur = null, _total = 0, _passed = 0;
+function suite(name) { _cur = { name, tests: [] }; _suites.push(_cur); }
+function eq(desc, expected, actual) {
+  _total++;
+  const ok = JSON.stringify(expected) === JSON.stringify(actual);
+  if (ok) _passed++;
+  _cur.tests.push({ desc, ok,
+    detail: ok ? null : `erwartet: ${JSON.stringify(expected)}, bekommen: ${JSON.stringify(actual)}` });
+}
+function ok(desc, bool) { eq(desc, true, !!bool); }
+function render() {
+  const out = document.getElementById('output');
+  let html = '';
+  for (const s of _suites) {
+    const failed = s.tests.filter(t => !t.ok).length;
+    html += `<div class="suite">
+      <div class="suite-title ${failed===0?'all-ok':'has-fail'}">${s.name} — ${s.tests.filter(t=>t.ok).length}/${s.tests.length} ✓</div>`;
+    for (const t of s.tests) {
+      html += `<div class="test ${t.ok?'ok':'fail'}">${t.ok?'✓':'✗'} ${t.desc}</div>`;
+      if (t.detail) html += `<div class="detail">↳ ${t.detail}</div>`;
+    }
+    html += `</div>`;
+  }
+  out.innerHTML = html;
+  const allOk = _passed === _total;
+  document.getElementById('summary').innerHTML =
+    `<span class="big ${allOk?'ok-text':'fail-text'}">${_passed}/${_total}</span>
+     &nbsp; Tests bestanden &nbsp;·&nbsp; ${_total-_passed} fehlgeschlagen`;
+}
+
+// ─── Stubs (DOM / Render) ─────────────────────────────────────────────────────
+function renderAll()       {} // no DOM in test context
+function syncUndoButtons() {}
+function updateDatalist()  {}
+window.CONFIG = undefined;    // config.js nicht geladen in Test-Kontext
+
+// ─── State (aus editor.html) ──────────────────────────────────────────────────
+let logData   = null;
+let history   = [];
+let histIdx   = -1;
+let filterPerson = null;
+let editingId = null;
+
+// ─── Funktionen aus editor.html (1:1 kopiert) ─────────────────────────────────
+function genId() { return Date.now() + Math.random(); }
+
+function isoToLocalInput(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const pad = n => String(n).padStart(2,'0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+function localInputToIso(local) {
+  if (!local) return '';
+  return new Date(local).toISOString();
+}
+function fmtMs(ms) {
+  if (!ms || ms < 0) return '—';
+  const h = Math.floor(ms / 3600000);
+  const m = Math.floor((ms % 3600000) / 60000);
+  return h > 0 ? `${h}:${String(m).padStart(2,'0')} h` : `${m} min`;
+}
+function validatePairs(log) {
+  const issues = new Set();
+  const groups = {};
+  for (const e of log) {
+    const k = `${e.nutzer}|${e.typ}`;
+    if (!groups[k]) groups[k] = [];
+    groups[k].push(e);
+  }
+  for (const entries of Object.values(groups)) {
+    const sorted = [...entries].sort((a,b) => new Date(a.zeitstempel) - new Date(b.zeitstempel));
+    let openStart = null;
+    for (const e of sorted) {
+      if (e.aktion === 'start') {
+        if (openStart) issues.add(openStart.id);
+        openStart = e;
+      } else {
+        if (!openStart) issues.add(e.id);
+        else openStart = null;
+      }
+    }
+    if (openStart) issues.add(openStart.id);
+  }
+  return issues;
+}
+function findPairedStart(stopEntry) {
+  const stopTs = new Date(stopEntry.zeitstempel).getTime();
+  return logData.log
+    .filter(e => e.id !== stopEntry.id && e.nutzer === stopEntry.nutzer &&
+                 e.typ === stopEntry.typ && e.aktion === 'start' &&
+                 new Date(e.zeitstempel).getTime() <= stopTs)
+    .sort((a,b) => new Date(b.zeitstempel) - new Date(a.zeitstempel))[0];
+}
+function pushHistory() {
+  history = history.slice(0, histIdx + 1);
+  history.push(JSON.stringify(logData.log));
+  if (history.length > 50) history.shift();
+  histIdx = history.length - 1;
+  syncUndoButtons();
+}
+function undo() {
+  if (histIdx <= 0) return;
+  histIdx--;
+  logData.log = JSON.parse(history[histIdx]);
+  logData.count = logData.log.length;
+  editingId = null;
+  syncUndoButtons();
+  renderAll();
+}
+function redo() {
+  if (histIdx >= history.length - 1) return;
+  histIdx++;
+  logData.log = JSON.parse(history[histIdx]);
+  logData.count = logData.log.length;
+  editingId = null;
+  syncUndoButtons();
+  renderAll();
+}
+function commit(fn) {
+  fn();
+  logData.log.sort((a,b) => new Date(a.zeitstempel) - new Date(b.zeitstempel));
+  logData.count = logData.log.length;
+  editingId = null;
+  pushHistory();
+  renderAll();
+}
+function addPair(nutzer, typ, vonIso, bisIso) {
+  const durMs = new Date(bisIso) - new Date(vonIso);
+  commit(() => {
+    logData.log.push(
+      { id: genId(), nutzer, typ, aktion: 'start', zeitstempel: vonIso },
+      { id: genId(), nutzer, typ, aktion: 'stop',  zeitstempel: bisIso, dauer_ms: durMs }
+    );
+  });
+}
+function deleteEntry(id) {
+  commit(() => { logData.log = logData.log.filter(e => e.id !== id); });
+}
+function getKnownPersons() {
+  const names = new Set();
+  if (typeof CONFIG !== 'undefined' && CONFIG?.defaultUsers)
+    CONFIG.defaultUsers.forEach(u => names.add(u.name));
+  logData?.log?.forEach(e => e.nutzer && names.add(e.nutzer));
+  return [...names].sort();
+}
+
+// ─── Test-Hilfsfunktionen ─────────────────────────────────────────────────────
+function initLogData(log = []) {
+  logData = {
+    version: 2,
+    exported: '2026-01-10T12:00:00.000Z',
+    logicalDay: '2026-01-10',
+    count: log.length,
+    log: JSON.parse(JSON.stringify(log)),
+  };
+  history = []; histIdx = -1;
+  pushHistory();
+}
+
+// Testobjekte für häufig verwendete Einträge
+function makeEntry(id, nutzer, typ, aktion, ts, dauer_ms) {
+  const e = { id, nutzer, typ, aktion, zeitstempel: ts };
+  if (dauer_ms !== undefined) e.dauer_ms = dauer_ms;
+  return e;
+}
+
+const TS08 = '2026-01-10T08:00:00.000Z';
+const TS10 = '2026-01-10T10:00:00.000Z';
+const TS11 = '2026-01-10T11:00:00.000Z';
+const TS12 = '2026-01-10T12:00:00.000Z';
+const TS13 = '2026-01-10T13:00:00.000Z';
+const H4   = 14400000; // 4 h
+const H3   = 10800000; // 3 h
+const H2   = 7200000;  // 2 h
+const H1   = 3600000;  // 1 h
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Suite 1 – fmtMs
+// ═══════════════════════════════════════════════════════════════════════════════
+suite('Suite 1 – fmtMs: Millisekunden-Formatierung');
+eq('0 → —',       '—',       fmtMs(0));
+eq('null → —',    '—',       fmtMs(null));
+eq('negativ → —', '—',       fmtMs(-1000));
+eq('30 min',      '30 min',  fmtMs(1800000));
+eq('1:00 h',      '1:00 h',  fmtMs(H1));
+eq('4:00 h',      '4:00 h',  fmtMs(H4));
+eq('1:30 h',      '1:30 h',  fmtMs(5400000));
+eq('2:45 h',      '2:45 h',  fmtMs(9900000));
+eq('5 min',       '5 min',   fmtMs(300000));
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Suite 2 – Zeitstempel-Konvertierung
+// ═══════════════════════════════════════════════════════════════════════════════
+suite('Suite 2 – Zeitstempel-Konvertierung');
+eq('isoToLocalInput(null) → ""',  '', isoToLocalInput(null));
+eq('isoToLocalInput("") → ""',    '', isoToLocalInput(''));
+eq('localInputToIso("") → ""',    '', localInputToIso(''));
+// Format-Check: muss YYYY-MM-DDTHH:MM sein
+ok('isoToLocalInput gibt YYYY-MM-DDTHH:MM zurück',
+   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(isoToLocalInput(TS08)));
+// Round-trip: lokale Zeit wieder zurück in UTC → selbe Minute
+ok('isoToLocalInput→localInputToIso Round-trip korrekt (±60s)',
+   Math.abs(new Date(localInputToIso(isoToLocalInput(TS08))) - new Date(TS08)) < 60000);
+ok('Round-trip für 12:00 UTC korrekt',
+   Math.abs(new Date(localInputToIso(isoToLocalInput(TS12))) - new Date(TS12)) < 60000);
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Suite 3 – validatePairs: vollständige Paare
+// ═══════════════════════════════════════════════════════════════════════════════
+suite('Suite 3 – validatePairs: vollständige Paare');
+eq('Leeres Log → keine Issues', 0,
+   validatePairs([]).size);
+eq('Ein vollständiges Paar → keine Issues', 0, validatePairs([
+   makeEntry(1,'Martin','anwesenheit','start',TS08),
+   makeEntry(2,'Martin','anwesenheit','stop', TS12, H4),
+]).size);
+eq('Zwei Paare selbe Person+Typ → keine Issues', 0, validatePairs([
+   makeEntry(1,'Martin','wachstunde_ehrenamtlich','start',TS08),
+   makeEntry(2,'Martin','wachstunde_ehrenamtlich','stop', TS10, H2),
+   makeEntry(3,'Martin','wachstunde_ehrenamtlich','start',TS11),
+   makeEntry(4,'Martin','wachstunde_ehrenamtlich','stop', TS12, H1),
+]).size);
+eq('Zwei Personen, je ein Paar → keine Issues', 0, validatePairs([
+   makeEntry(1,'Anna','anwesenheit','start',TS08),
+   makeEntry(2,'Anna','anwesenheit','stop', TS12, H4),
+   makeEntry(3,'Ben', 'anwesenheit','start',TS08),
+   makeEntry(4,'Ben', 'anwesenheit','stop', TS12, H4),
+]).size);
+eq('Zwei Typen, je ein Paar → keine Issues', 0, validatePairs([
+   makeEntry(1,'Martin','anwesenheit',            'start',TS08),
+   makeEntry(2,'Martin','anwesenheit',            'stop', TS12, H4),
+   makeEntry(3,'Martin','wachstunde_ehrenamtlich','start',TS08),
+   makeEntry(4,'Martin','wachstunde_ehrenamtlich','stop', TS12, H4),
+]).size);
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Suite 4 – validatePairs: Fehlerfälle
+// ═══════════════════════════════════════════════════════════════════════════════
+suite('Suite 4 – validatePairs: Fehlerfälle');
+
+// Start ohne Stop
+const onlyStart = validatePairs([makeEntry(10,'X','anwesenheit','start',TS08)]);
+eq('Start ohne Stop → 1 Issue', 1, onlyStart.size);
+ok('Start ohne Stop → Start-ID in issues', onlyStart.has(10));
+
+// Stop ohne Start
+const onlyStop = validatePairs([makeEntry(20,'X','anwesenheit','stop',TS12,H4)]);
+eq('Stop ohne Start → 1 Issue', 1, onlyStop.size);
+ok('Stop ohne Start → Stop-ID in issues', onlyStop.has(20));
+
+// Doppelter Start (kein Stop dazwischen)
+const dblStart = validatePairs([
+  makeEntry(30,'X','anwesenheit','start',TS08),
+  makeEntry(31,'X','anwesenheit','start',TS10),
+  makeEntry(32,'X','anwesenheit','stop', TS12, H2),
+]);
+ok('Doppelter Start → erster Start als Issue', dblStart.has(30));
+ok('Doppelter Start → zweiter Start NICHT als Issue (er hat einen Stop)', !dblStart.has(31));
+
+// Gemischt: ein gutes Paar + ein einzelner Start
+const mixed = validatePairs([
+  makeEntry(40,'A','anwesenheit','start',TS08),
+  makeEntry(41,'A','anwesenheit','stop', TS12, H4),  // vollständig
+  makeEntry(42,'A','anwesenheit','start',TS13),       // kein Stop
+]);
+eq('Gemischt: genau 1 Issue (der einzelne Start)', 1, mixed.size);
+ok('Gemischt: korrekte ID markiert', mixed.has(42));
+
+// Zwei Personen: eine ok, eine mit Problem
+const twoPers = validatePairs([
+  makeEntry(50,'Anna','anwesenheit','start',TS08),
+  makeEntry(51,'Anna','anwesenheit','stop', TS12, H4), // ok
+  makeEntry(52,'Ben', 'anwesenheit','start',TS08),     // kein Stop
+]);
+eq('Zwei Personen: nur die fehlerhafte hat Issue', 1, twoPers.size);
+ok('Ben Start ist Issue', twoPers.has(52));
+ok('Anna ist nicht betroffen', !twoPers.has(50) && !twoPers.has(51));
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Suite 5 – validatePairs: Reihenfolge via Zeitstempel
+// ═══════════════════════════════════════════════════════════════════════════════
+suite('Suite 5 – validatePairs: Zeitstempel-Sortierung');
+// Einträge im Array in falscher Reihenfolge → validatePairs sortiert intern
+eq('Verkehrte Array-Reihenfolge: trotzdem kein Issue', 0, validatePairs([
+  makeEntry(60,'X','anwesenheit','stop', TS12, H4),  // stop zuerst im Array
+  makeEntry(61,'X','anwesenheit','start',TS08),       // start später im Array
+]).size);
+
+// Stop-Zeitstempel liegt VOR Start-Zeitstempel → beide als Issue
+const wrongOrder = validatePairs([
+  makeEntry(70,'X','anwesenheit','start',TS12),  // start um 12
+  makeEntry(71,'X','anwesenheit','stop', TS08),  // stop um 08 → liegt VOR start
+]);
+ok('Stop vor Start in Zeit: Stop ohne Start → Issue', wrongOrder.has(71));
+ok('Stop vor Start in Zeit: Start ohne Stop → Issue', wrongOrder.has(70));
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Suite 6 – findPairedStart
+// ═══════════════════════════════════════════════════════════════════════════════
+suite('Suite 6 – findPairedStart');
+
+initLogData([
+  makeEntry(101,'Martin','anwesenheit','start',TS08),
+  makeEntry(102,'Martin','anwesenheit','stop', TS12, H4),
+  makeEntry(103,'Carmen','anwesenheit','start',TS08),
+  makeEntry(104,'Carmen','anwesenheit','stop', TS12, H4),
+  makeEntry(105,'Martin','wachstunde_ehrenamtlich','start',TS08),
+  makeEntry(106,'Martin','wachstunde_ehrenamtlich','stop', TS12, H4),
+]);
+
+const stop102 = logData.log.find(e => e.id === 102);
+const paired = findPairedStart(stop102);
+ok('Findet den richtigen Start für Martin Anwesenheit', paired?.id === 101);
+ok('Gibt nicht Carmens Start zurück (andere Person)', paired?.nutzer === 'Martin');
+ok('Gibt nicht Wachstunden-Start zurück (anderen Typ)', paired?.typ === 'anwesenheit');
+
+// Kein Start vorhanden
+initLogData([ makeEntry(200,'X','anwesenheit','stop',TS12, H4) ]);
+const stopAlone = logData.log.find(e => e.id === 200);
+ok('Kein passender Start → undefined', findPairedStart(stopAlone) === undefined);
+
+// Mehrere Starts → nächstgelegener wird gewählt
+initLogData([
+  makeEntry(301,'Martin','wachstunde_ehrenamtlich','start','2026-01-10T06:00:00.000Z'),
+  makeEntry(302,'Martin','wachstunde_ehrenamtlich','start',TS10), // näher am Stop
+  makeEntry(303,'Martin','wachstunde_ehrenamtlich','stop', TS12, H2),
+]);
+const stop303 = logData.log.find(e => e.id === 303);
+const nearest = findPairedStart(stop303);
+ok('Bei zwei Starts: der zeitlich nächste wird gewählt (id=302)', nearest?.id === 302);
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Suite 7 – addPair
+// ═══════════════════════════════════════════════════════════════════════════════
+suite('Suite 7 – addPair: Eintragspaar hinzufügen');
+
+initLogData([]);
+addPair('Martin Kammler', 'anwesenheit', TS08, TS12);
+eq('Genau 2 Einträge im Log', 2, logData.log.length);
+eq('count aktualisiert', 2, logData.count);
+
+const startE = logData.log.find(e => e.aktion === 'start');
+const stopE  = logData.log.find(e => e.aktion === 'stop');
+ok('Start-Eintrag vorhanden',    !!startE);
+ok('Stop-Eintrag vorhanden',     !!stopE);
+eq('Person korrekt (start)',     'Martin Kammler', startE?.nutzer);
+eq('Typ korrekt (start)',        'anwesenheit', startE?.typ);
+eq('dauer_ms korrekt berechnet', H4, stopE?.dauer_ms);
+eq('Zeitstempel start korrekt',  TS08, startE?.zeitstempel);
+eq('Zeitstempel stop korrekt',   TS12, stopE?.zeitstempel);
+ok('Start hat keine dauer_ms',   startE?.dauer_ms === undefined);
+
+// Sortierung: Einträge werden nach Zeitstempel sortiert
+initLogData([
+  makeEntry(400,'X','anwesenheit','start',TS12), // liegt nach dem neuen Paar
+  makeEntry(401,'X','anwesenheit','stop', TS13, H1),
+]);
+addPair('Y', 'sanitätsstunde', TS08, TS10);
+eq('Log nach addPair chronologisch sortiert',
+   TS08, logData.log[0].zeitstempel);
+
+// Validierung: neu eingefügtes Paar hat keine Issues
+initLogData([]);
+addPair('Testperson','wachstunde_ehrenamtlich', TS08, TS12);
+eq('Neu eingefügtes Paar hat keine Validierungsfehler', 0,
+   validatePairs(logData.log).size);
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Suite 8 – deleteEntry
+// ═══════════════════════════════════════════════════════════════════════════════
+suite('Suite 8 – deleteEntry');
+
+initLogData([
+  makeEntry(501,'A','anwesenheit','start',TS08),
+  makeEntry(502,'A','anwesenheit','stop', TS12, H4),
+  makeEntry(503,'B','anwesenheit','start',TS08),
+]);
+deleteEntry(502);
+eq('Nach deleteEntry: 2 Einträge übrig', 2, logData.log.length);
+ok('Gelöschter Eintrag (502) nicht mehr vorhanden',
+   !logData.log.find(e => e.id === 502));
+ok('Andere Einträge bleiben (501 noch da)',
+   !!logData.log.find(e => e.id === 501));
+ok('Andere Einträge bleiben (503 noch da)',
+   !!logData.log.find(e => e.id === 503));
+eq('count wird aktualisiert', 2, logData.count);
+
+// Nach deleteEntry: offener Start wird von validatePairs erkannt
+const issuesAfterDelete = validatePairs(logData.log);
+ok('Nach Löschen des Stops: Start (501) als Issue markiert',
+   issuesAfterDelete.has(501));
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Suite 9 – Undo / Redo
+// ═══════════════════════════════════════════════════════════════════════════════
+suite('Suite 9 – Undo / Redo');
+
+// Basis: neues File, dann addPair, dann undo
+initLogData([]);
+eq('Initial: histIdx=0', 0, histIdx);
+addPair('Martin','anwesenheit', TS08, TS12);
+eq('Nach addPair: 2 Einträge', 2, logData.log.length);
+eq('Nach addPair: histIdx=1', 1, histIdx);
+
+undo();
+eq('Nach undo: 0 Einträge', 0, logData.log.length);
+eq('Nach undo: histIdx=0', 0, histIdx);
+
+redo();
+eq('Nach redo: 2 Einträge', 2, logData.log.length);
+eq('Nach redo: histIdx=1', 1, histIdx);
+
+// Undo am Anfang hat keinen Effekt
+undo();
+eq('histIdx nach letztem undo = 0', 0, histIdx);
+undo(); // nochmals → kein Effekt
+eq('histIdx bleibt bei 0', 0, histIdx);
+eq('Log bleibt leer', 0, logData.log.length);
+
+// Redo am Ende hat keinen Effekt
+redo();
+eq('histIdx nach redo = 1', 1, histIdx);
+redo(); // nochmals → kein Effekt
+eq('histIdx bleibt bei 1', 1, histIdx);
+
+// Neue Mutation nach undo löscht Redo-Stack
+initLogData([]);
+addPair('A','anwesenheit', TS08, TS12);  // histIdx=1
+addPair('B','anwesenheit', TS08, TS12);  // histIdx=2
+undo();                                   // histIdx=1
+undo();                                   // histIdx=0
+addPair('C','anwesenheit', TS08, TS12);  // histIdx=1, Redo-Stack weg
+eq('Neue Mutation nach undo: histIdx=1', 1, histIdx);
+eq('Neue Mutation nach undo: history.length=2', 2, history.length);
+redo(); // kein Redo mehr verfügbar
+eq('Kein redo möglich nach neuer Mutation: histIdx=1', 1, histIdx);
+
+// Mehrfaches undo/redo korrekt
+initLogData([]);
+addPair('X','anwesenheit', TS08, TS10); // 2 Einträge
+addPair('X','anwesenheit', TS11, TS12); // 4 Einträge
+eq('Vor undo: 4 Einträge', 4, logData.log.length);
+undo();
+eq('Nach 1x undo: 2 Einträge', 2, logData.log.length);
+undo();
+eq('Nach 2x undo: 0 Einträge', 0, logData.log.length);
+redo();
+redo();
+eq('Nach 2x redo: 4 Einträge', 4, logData.log.length);
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Suite 10 – getKnownPersons
+// ═══════════════════════════════════════════════════════════════════════════════
+suite('Suite 10 – getKnownPersons');
+
+// Kein CONFIG, leerer Log
+initLogData([]);
+eq('Kein CONFIG, leeres Log → leere Liste', [], getKnownPersons());
+
+// Personen aus logData.log
+initLogData([
+  makeEntry(601,'Zara','anwesenheit','start',TS08),
+  makeEntry(602,'Anna','anwesenheit','stop', TS12, H4),
+  makeEntry(603,'Zara','anwesenheit','stop', TS12, H4), // Zara nochmals → nur einmal
+]);
+const persons = getKnownPersons();
+eq('Personen aus Log: alphabetisch sortiert', ['Anna','Zara'], persons);
+eq('Keine Duplikate', 2, persons.length);
+
+// Mit CONFIG-Stub
+window.CONFIG = { defaultUsers: [
+  { name: 'Carmen Fest' },
+  { name: 'Martin Kammler' },
+]};
+initLogData([ makeEntry(701,'Neuer User','anwesenheit','start',TS08) ]);
+const withConfig = getKnownPersons();
+ok('CONFIG-Namen vorhanden', withConfig.includes('Martin Kammler'));
+ok('Log-Namen vorhanden', withConfig.includes('Neuer User'));
+ok('Alphabetisch sortiert', withConfig[0] <= withConfig[1]);
+window.CONFIG = undefined; // Reset
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Suite 11 – dauer_ms Auto-Berechnung bei findPairedStart
+// ═══════════════════════════════════════════════════════════════════════════════
+suite('Suite 11 – dauer_ms Berechnung');
+// Prüft dass dauer_ms = stop_ts - start_ts korrekt ist
+initLogData([
+  makeEntry(801,'X','anwesenheit','start',TS08),
+  makeEntry(802,'X','anwesenheit','stop', TS12, 0), // dauer_ms bewusst falsch
+]);
+const s802 = logData.log.find(e => e.id === 802);
+const s801 = findPairedStart(s802);
+const recalc = new Date(s802.zeitstempel) - new Date(s801.zeitstempel);
+eq('Neu berechnete dauer_ms = 4h', H4, recalc);
+
+// Zwei Paare: start 08-10 (2h) und start 11-12 (1h)
+initLogData([
+  makeEntry(810,'M','wachstunde_ehrenamtlich','start',TS08),
+  makeEntry(811,'M','wachstunde_ehrenamtlich','stop', TS10, H2),
+  makeEntry(812,'M','wachstunde_ehrenamtlich','start',TS11),
+  makeEntry(813,'M','wachstunde_ehrenamtlich','stop', TS12, H1),
+]);
+const s811 = logData.log.find(e => e.id === 811);
+const s813 = logData.log.find(e => e.id === 813);
+const paired811 = findPairedStart(s811);
+const paired813 = findPairedStart(s813);
+eq('Stop 10:00 findet Start 08:00', 810, paired811?.id);
+eq('Stop 12:00 findet Start 11:00 (den nächstgelegenen)', 812, paired813?.id);
+eq('dauer_ms Paar 1: 2h', H2, new Date(s811.zeitstempel) - new Date(paired811.zeitstempel));
+eq('dauer_ms Paar 2: 1h', H1, new Date(s813.zeitstempel) - new Date(paired813.zeitstempel));
+
+render();
+</script>
+</body>
+</html>

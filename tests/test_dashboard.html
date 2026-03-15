@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <title>LifeguardClock Dashboard – Unit Tests</title>
+  <style>
+    :root { --bg:#09090d; --bg2:#13131a; --bg3:#1e1e2a; --border:#2a2a3a;
+            --text:#e8e8f0; --text-2:#a0a0b8; --text-3:#606078;
+            --ok:#22c55e; --fail:#ef4444; --skip:#f59e0b; }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Courier New', monospace; background: var(--bg); color: var(--text);
+           padding: 24px; font-size: 13px; line-height: 1.6; }
+    h1   { font-size: 20px; font-weight: 800; margin-bottom: 4px; }
+    .sub { color: var(--text-3); font-size: 12px; margin-bottom: 24px; }
+    .suite { margin-bottom: 20px; }
+    .suite-title { font-size: 14px; font-weight: 700; color: var(--text-2);
+                   padding: 8px 12px; background: var(--bg2);
+                   border-left: 3px solid var(--border); margin-bottom: 4px;
+                   border-radius: 0 6px 6px 0; }
+    .suite-title.all-ok   { border-left-color: var(--ok); }
+    .suite-title.has-fail { border-left-color: var(--fail); }
+    .test { padding: 4px 12px 4px 20px; border-bottom: 1px solid var(--bg3); }
+    .test.ok   { color: var(--ok); }
+    .test.fail { color: var(--fail); font-weight: 600; }
+    .detail    { color: var(--text-3); font-size: 11px; padding-left: 20px; }
+    .summary { margin-top: 24px; padding: 16px 20px;
+               background: var(--bg2); border-radius: 10px; font-size: 14px; }
+    .summary .big { font-size: 26px; font-weight: 800; }
+    .ok-text   { color: var(--ok); }
+    .fail-text { color: var(--fail); }
+  </style>
+</head>
+<body>
+  <h1>LifeguardClock Dashboard – Unit Tests</h1>
+  <div class="sub">Funktionen aus dashboard.html · Demo-Daten aus tests/demo_data/</div>
+  <div id="output"></div>
+  <div class="summary" id="summary"></div>
+
+<script>
+// ─── Test-Harness ─────────────────────────────────────────────────────────────
+let _suites = [], _cur = null, _total = 0, _passed = 0;
+
+function suite(name) {
+  _cur = { name, tests: [] };
+  _suites.push(_cur);
+}
+function eq(desc, expected, actual) {
+  _total++;
+  const ok = JSON.stringify(expected) === JSON.stringify(actual);
+  if (ok) _passed++;
+  _cur.tests.push({ desc, ok,
+    detail: ok ? null : `erwartet: ${JSON.stringify(expected)}, bekommen: ${JSON.stringify(actual)}` });
+}
+function ok(desc, bool) { eq(desc, true, bool); }
+
+function render() {
+  const out = document.getElementById('output');
+  let html = '';
+  for (const s of _suites) {
+    const failed = s.tests.filter(t => !t.ok).length;
+    const cls = failed === 0 ? 'all-ok' : 'has-fail';
+    html += `<div class="suite">
+      <div class="suite-title ${cls}">${s.name} — ${s.tests.filter(t=>t.ok).length}/${s.tests.length} ✓</div>`;
+    for (const t of s.tests) {
+      html += `<div class="test ${t.ok ? 'ok' : 'fail'}">${t.ok ? '✓' : '✗'} ${t.desc}</div>`;
+      if (t.detail) html += `<div class="detail">↳ ${t.detail}</div>`;
+    }
+    html += `</div>`;
+  }
+  out.innerHTML = html;
+  const allOk = _passed === _total;
+  document.getElementById('summary').innerHTML =
+    `<span class="big ${allOk ? 'ok-text' : 'fail-text'}">${_passed}/${_total}</span>
+     &nbsp; Tests bestanden &nbsp;·&nbsp; ${_total - _passed} fehlgeschlagen`;
+}
+
+// ─── Funktionen aus dashboard.html (1:1 kopiert) ──────────────────────────────
+const TYPES = ['anwesenheit', 'wachstunde_ehrenamtlich', 'sanitätsstunde'];
+
+function fmtH(ms) {
+  if (!ms) return '—';
+  const h = Math.floor(ms / 3600000);
+  const m = Math.floor((ms % 3600000) / 60000);
+  return `${h}:${String(m).padStart(2,'0')}`;
+}
+function fmtMs(ms) {
+  if (!ms) return '—';
+  const h = Math.floor(ms / 3600000);
+  const m = Math.floor((ms % 3600000) / 60000);
+  return h > 0 ? `${h} h ${String(m).padStart(2,'0')} min` : `${m} min`;
+}
+function fmtDateShort(iso) {
+  return new Date(iso + 'T12:00:00').toLocaleDateString('de-DE',
+    { day:'2-digit', month:'2-digit', year:'numeric' });
+}
+function isoWeekKey(iso) {
+  const d = new Date(iso + 'T12:00:00');
+  const day = d.getDay() || 7;
+  d.setDate(d.getDate() + 4 - day);
+  const jan4 = new Date(d.getFullYear(), 0, 4);
+  const kw = 1 + Math.round(((d - jan4) / 86400000 - 3 + ((jan4.getDay()||7))) / 7);
+  return `${d.getFullYear()}-W${String(kw).padStart(2,'0')}`;
+}
+function fmtWeek(wk) {
+  const [y, w] = wk.split('-W');
+  return `KW\u00a0${w}\u00a0/${y}`;
+}
+function buildDB(entries) {
+  const by = {};
+  const personSet = new Set();
+  for (const { day, log } of entries) {
+    for (const e of log) {
+      if (e.aktion !== 'stop' || !e.dauer_ms) continue;
+      const p = e.nutzer, t = e.typ;
+      personSet.add(p);
+      if (!by[day]) by[day] = {};
+      if (!by[day][p]) by[day][p] = {};
+      by[day][p][t] = (by[day][p][t] || 0) + e.dauer_ms;
+    }
+  }
+  const days = Object.keys(by).sort();
+  const persons = [...personSet].sort();
+  const weekMap = {};
+  for (const d of days) {
+    const wk = isoWeekKey(d);
+    if (!weekMap[wk]) weekMap[wk] = [];
+    weekMap[wk].push(d);
+  }
+  const weeks = Object.keys(weekMap).sort();
+  return { by, days, persons, weekMap, weeks };
+}
+
+// ─── Demo-Daten (entspricht tests/demo_data/) ─────────────────────────────────
+// Übersicht der Solldaten:
+// Tag         KW   Personen  anw(h)  wach(h)  san(h)
+// 2026-01-10  02   6         20      12       3
+// 2026-01-11  02   5         18      14       1     (Martin bis 01:00 nächster Tag)
+// 2026-01-17  03   5         18      14       2
+// 2026-01-18  03   4         16      12       3
+// 2026-01-24  04   5         18      14       2
+// 2026-01-25  04   4         20      16       4     (Martin bis 02:00 nächster Tag)
+// 2026-01-31  05   4         14      10       2
+// 2026-02-01  05   4         16      12       3
+// Gesamt           20*       140     104      20
+// *alle 20 Personen aus config.js
+
+const H1=3600000, H2=7200000, H3=10800000, H4=14400000, H5=18000000, H6=21600000;
+
+function makeLog(entries) {
+  // entries: [{nutzer, typ, dauer_ms, zeitstempel_stop}]
+  // erzeugt start+stop-Paare
+  return entries.flatMap(({ nutzer, typ, dauer_ms, ts_stop }) => [
+    { aktion:'start', nutzer, typ, zeitstempel: 'X', id: Math.random() },
+    { aktion:'stop',  nutzer, typ, zeitstempel: ts_stop || 'X', dauer_ms, id: Math.random() },
+  ]);
+}
+
+const DEMO = [
+  { day: '2026-01-10', log: makeLog([
+      { nutzer:'Martin Kammler',  typ:'anwesenheit',             dauer_ms:H4 },
+      { nutzer:'Martin Kammler',  typ:'wachstunde_ehrenamtlich', dauer_ms:H4 },
+      { nutzer:'Carmen Fest',     typ:'anwesenheit',             dauer_ms:H4 },
+      { nutzer:'Carmen Fest',     typ:'wachstunde_ehrenamtlich', dauer_ms:H3 },
+      { nutzer:'Yannick Rehberg', typ:'anwesenheit',             dauer_ms:H3 },
+      { nutzer:'Yannick Rehberg', typ:'wachstunde_ehrenamtlich', dauer_ms:H3 },
+      { nutzer:'Maja Schwartz',   typ:'anwesenheit',             dauer_ms:H4 },
+      { nutzer:'Maja Schwartz',   typ:'sanitätsstunde',          dauer_ms:H1 },
+      { nutzer:'Andreas Brock',   typ:'anwesenheit',             dauer_ms:H3 },
+      { nutzer:'Andreas Brock',   typ:'wachstunde_ehrenamtlich', dauer_ms:H2 },
+      { nutzer:'Fabian Schmitt',  typ:'anwesenheit',             dauer_ms:H2 },
+      { nutzer:'Fabian Schmitt',  typ:'sanitätsstunde',          dauer_ms:H2 },
+  ])},
+  { day: '2026-01-11', log: makeLog([
+      { nutzer:'Martin Kammler', typ:'anwesenheit',             dauer_ms:H5, ts_stop:'2026-01-12T01:00:00.000Z' },
+      { nutzer:'Martin Kammler', typ:'wachstunde_ehrenamtlich', dauer_ms:H5, ts_stop:'2026-01-12T01:00:00.000Z' },
+      { nutzer:'Ute Jenisch',    typ:'anwesenheit',             dauer_ms:H4 },
+      { nutzer:'Ute Jenisch',    typ:'wachstunde_ehrenamtlich', dauer_ms:H4 },
+      { nutzer:'Manuel Lied',    typ:'anwesenheit',             dauer_ms:H3 },
+      { nutzer:'Manuel Lied',    typ:'wachstunde_ehrenamtlich', dauer_ms:H3 },
+      { nutzer:'Klara Brock',    typ:'anwesenheit',             dauer_ms:H4 },
+      { nutzer:'Klara Brock',    typ:'sanitätsstunde',          dauer_ms:H1 },
+      { nutzer:'Robin Kwiet',    typ:'anwesenheit',             dauer_ms:H2 },
+      { nutzer:'Robin Kwiet',    typ:'wachstunde_ehrenamtlich', dauer_ms:H2 },
+  ])},
+  { day: '2026-01-17', log: makeLog([
+      { nutzer:'Martin Kammler',   typ:'anwesenheit',             dauer_ms:H4 },
+      { nutzer:'Martin Kammler',   typ:'wachstunde_ehrenamtlich', dauer_ms:H4 },
+      { nutzer:'Stefanie Kammler', typ:'anwesenheit',             dauer_ms:H4 },
+      { nutzer:'Stefanie Kammler', typ:'sanitätsstunde',          dauer_ms:H2 },
+      { nutzer:'Bärbel Petermann', typ:'anwesenheit',             dauer_ms:H3 },
+      { nutzer:'Bärbel Petermann', typ:'wachstunde_ehrenamtlich', dauer_ms:H3 },
+      { nutzer:'Ben Kasper',       typ:'anwesenheit',             dauer_ms:H3 },
+      { nutzer:'Ben Kasper',       typ:'wachstunde_ehrenamtlich', dauer_ms:H3 },
+      { nutzer:'Silke Fest',       typ:'anwesenheit',             dauer_ms:H4 },
+      { nutzer:'Silke Fest',       typ:'wachstunde_ehrenamtlich', dauer_ms:H4 },
+  ])},
+  { day: '2026-01-18', log: makeLog([
+      { nutzer:'Martin Kammler',  typ:'anwesenheit',             dauer_ms:H5 },
+      { nutzer:'Martin Kammler',  typ:'wachstunde_ehrenamtlich', dauer_ms:H5 },
+      { nutzer:'Dorit Storzum',   typ:'anwesenheit',             dauer_ms:H4 },
+      { nutzer:'Dorit Storzum',   typ:'sanitätsstunde',          dauer_ms:H3 },
+      { nutzer:'Amelie Pfüller',  typ:'anwesenheit',             dauer_ms:H4 },
+      { nutzer:'Amelie Pfüller',  typ:'wachstunde_ehrenamtlich', dauer_ms:H4 },
+      { nutzer:'Susanne Mittag',  typ:'anwesenheit',             dauer_ms:H3 },
+      { nutzer:'Susanne Mittag',  typ:'wachstunde_ehrenamtlich', dauer_ms:H3 },
+  ])},
+  { day: '2026-01-24', log: makeLog([
+      { nutzer:'Martin Kammler',  typ:'anwesenheit',             dauer_ms:H4 },
+      { nutzer:'Martin Kammler',  typ:'wachstunde_ehrenamtlich', dauer_ms:H4 },
+      { nutzer:'Anja Schönfeld',  typ:'anwesenheit',             dauer_ms:H3 },
+      { nutzer:'Anja Schönfeld',  typ:'wachstunde_ehrenamtlich', dauer_ms:H3 },
+      { nutzer:'Uwe Schönfeld',   typ:'anwesenheit',             dauer_ms:H3 },
+      { nutzer:'Uwe Schönfeld',   typ:'wachstunde_ehrenamtlich', dauer_ms:H3 },
+      { nutzer:'Melanie Stahr',   typ:'anwesenheit',             dauer_ms:H4 },
+      { nutzer:'Melanie Stahr',   typ:'sanitätsstunde',          dauer_ms:H2 },
+      { nutzer:'Carmen Fest',     typ:'anwesenheit',             dauer_ms:H4 },
+      { nutzer:'Carmen Fest',     typ:'wachstunde_ehrenamtlich', dauer_ms:H4 },
+  ])},
+  { day: '2026-01-25', log: makeLog([
+      { nutzer:'Martin Kammler',  typ:'anwesenheit',             dauer_ms:H6, ts_stop:'2026-01-26T02:00:00.000Z' },
+      { nutzer:'Martin Kammler',  typ:'wachstunde_ehrenamtlich', dauer_ms:H6, ts_stop:'2026-01-26T02:00:00.000Z' },
+      { nutzer:'Yannick Rehberg', typ:'anwesenheit',             dauer_ms:H5, ts_stop:'2026-01-26T01:00:00.000Z' },
+      { nutzer:'Yannick Rehberg', typ:'wachstunde_ehrenamtlich', dauer_ms:H5, ts_stop:'2026-01-26T01:00:00.000Z' },
+      { nutzer:'Maja Schwartz',   typ:'anwesenheit',             dauer_ms:H4, ts_stop:'2026-01-26T00:00:00.000Z' },
+      { nutzer:'Maja Schwartz',   typ:'sanitätsstunde',          dauer_ms:H4, ts_stop:'2026-01-26T00:00:00.000Z' },
+      { nutzer:'Andreas Brock',   typ:'anwesenheit',             dauer_ms:H5, ts_stop:'2026-01-26T01:00:00.000Z' },
+      { nutzer:'Andreas Brock',   typ:'wachstunde_ehrenamtlich', dauer_ms:H5, ts_stop:'2026-01-26T01:00:00.000Z' },
+  ])},
+  { day: '2026-01-31', log: makeLog([
+      { nutzer:'Martin Kammler', typ:'anwesenheit',             dauer_ms:H4 },
+      { nutzer:'Martin Kammler', typ:'wachstunde_ehrenamtlich', dauer_ms:H4 },
+      { nutzer:'Fabian Schmitt', typ:'anwesenheit',             dauer_ms:H3 },
+      { nutzer:'Fabian Schmitt', typ:'wachstunde_ehrenamtlich', dauer_ms:H3 },
+      { nutzer:'Robin Kwiet',    typ:'anwesenheit',             dauer_ms:H3 },
+      { nutzer:'Robin Kwiet',    typ:'wachstunde_ehrenamtlich', dauer_ms:H3 },
+      { nutzer:'Silke Fest',     typ:'anwesenheit',             dauer_ms:H4 },
+      { nutzer:'Silke Fest',     typ:'sanitätsstunde',          dauer_ms:H2 },
+  ])},
+  { day: '2026-02-01', log: makeLog([
+      { nutzer:'Martin Kammler', typ:'anwesenheit',             dauer_ms:H5 },
+      { nutzer:'Martin Kammler', typ:'wachstunde_ehrenamtlich', dauer_ms:H5 },
+      { nutzer:'Klara Brock',    typ:'anwesenheit',             dauer_ms:H4 },
+      { nutzer:'Klara Brock',    typ:'sanitätsstunde',          dauer_ms:H3 },
+      { nutzer:'Ben Kasper',     typ:'anwesenheit',             dauer_ms:H4 },
+      { nutzer:'Ben Kasper',     typ:'wachstunde_ehrenamtlich', dauer_ms:H4 },
+      { nutzer:'Manuel Lied',    typ:'anwesenheit',             dauer_ms:H3 },
+      { nutzer:'Manuel Lied',    typ:'wachstunde_ehrenamtlich', dauer_ms:H3 },
+  ])},
+];
+
+const DB = buildDB(DEMO);
+
+// ─── Hilfsfunktionen für Tests ────────────────────────────────────────────────
+function personTotal(db, person, typ) {
+  let sum = 0;
+  for (const dayData of Object.values(db.by))
+    sum += (dayData[person]?.[typ] || 0);
+  return sum;
+}
+function weekTotal(db, wk, typ) {
+  let sum = 0;
+  for (const d of (db.weekMap[wk] || []))
+    for (const pd of Object.values(db.by[d] || {}))
+      sum += pd[typ] || 0;
+  return sum;
+}
+function grandTotal(db, typ) {
+  let sum = 0;
+  for (const dv of Object.values(db.by))
+    for (const pd of Object.values(dv))
+      sum += pd[typ] || 0;
+  return sum;
+}
+function topPerson(db, typ) {
+  const pt = {};
+  for (const dv of Object.values(db.by))
+    for (const [p, pd] of Object.entries(dv))
+      pt[p] = (pt[p]||0) + (pd[typ]||0);
+  return Object.entries(pt).sort((a,b)=>b[1]-a[1])[0][0];
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Suite 1 – fmtH (Stunden-Formatierung)
+// ═══════════════════════════════════════════════════════════════════════════════
+suite('Suite 1 – fmtH: Stunden-Formatierung');
+eq('0 ms → —',          '—',     fmtH(0));
+eq('null → —',          '—',     fmtH(null));
+eq('1 h (3600000 ms)',   '1:00',  fmtH(H1));
+eq('1:30 h (5400000 ms)','1:30',  fmtH(5400000));
+eq('4 h',               '4:00',  fmtH(H4));
+eq('37 h (Martin total)','37:00', fmtH(37 * H1));
+eq('Minuten ohne Stunden','0:10', fmtH(600000));
+eq('Gemischt 2:45',     '2:45',  fmtH(9900000));
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Suite 2 – fmtMs (Minuten-Formatierung)
+// ═══════════════════════════════════════════════════════════════════════════════
+suite('Suite 2 – fmtMs: Minutenformatierung');
+eq('0 ms → —',          '—',          fmtMs(0));
+eq('null → —',          '—',          fmtMs(null));
+eq('30 min',            '30 min',     fmtMs(1800000));
+eq('1 h 00 min',        '1 h 00 min', fmtMs(H1));
+eq('1 h 30 min',        '1 h 30 min', fmtMs(5400000));
+eq('4 h 00 min',        '4 h 00 min', fmtMs(H4));
+eq('2 h 45 min',        '2 h 45 min', fmtMs(9900000));
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Suite 3 – isoWeekKey: ISO-Wochennummer
+// ═══════════════════════════════════════════════════════════════════════════════
+suite('Suite 3 – isoWeekKey: ISO-Wochennummer');
+eq('2026-01-01 (Do) → KW01', '2026-W01', isoWeekKey('2026-01-01'));
+eq('2026-01-05 (Mo) → KW02', '2026-W02', isoWeekKey('2026-01-05'));
+eq('2026-01-10 (Sa) → KW02', '2026-W02', isoWeekKey('2026-01-10'));
+eq('2026-01-11 (So) → KW02', '2026-W02', isoWeekKey('2026-01-11'));
+eq('2026-01-12 (Mo) → KW03', '2026-W03', isoWeekKey('2026-01-12'));
+eq('2026-01-17 (Sa) → KW03', '2026-W03', isoWeekKey('2026-01-17'));
+eq('2026-01-19 (Mo) → KW04', '2026-W04', isoWeekKey('2026-01-19'));
+eq('2026-01-24 (Sa) → KW04', '2026-W04', isoWeekKey('2026-01-24'));
+eq('2026-01-26 (Mo) → KW05', '2026-W05', isoWeekKey('2026-01-26'));
+eq('2026-01-31 (Sa) → KW05', '2026-W05', isoWeekKey('2026-01-31'));
+eq('2026-02-01 (So) → KW05', '2026-W05', isoWeekKey('2026-02-01'));
+eq('2025-12-29 (Mo) → 2026-W01 (Jahreswechsel)', '2026-W01', isoWeekKey('2025-12-29'));
+eq('2025-12-28 (So) → 2025-W52', '2025-W52', isoWeekKey('2025-12-28'));
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Suite 4 – fmtWeek: Wochenformatierung
+// ═══════════════════════════════════════════════════════════════════════════════
+suite('Suite 4 – fmtWeek: Wochenformatierung');
+eq('2026-W02 → KW 02 / 2026', 'KW\u00a002\u00a0/2026', fmtWeek('2026-W02'));
+eq('2026-W53 → KW 53 / 2026', 'KW\u00a053\u00a0/2026', fmtWeek('2026-W53'));
+eq('Jahr bleibt korrekt',      'KW\u00a001\u00a0/2025', fmtWeek('2025-W01'));
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Suite 5 – buildDB: Grundfunktionen
+// ═══════════════════════════════════════════════════════════════════════════════
+suite('Suite 5 – buildDB: Grundfunktionen');
+
+// Leere Eingabe
+const emptyDB = buildDB([]);
+eq('Leere Eingabe: keine Tage',    0, emptyDB.days.length);
+eq('Leere Eingabe: keine Personen',0, emptyDB.persons.length);
+eq('Leere Eingabe: keine Wochen',  0, emptyDB.weeks.length);
+
+// Einfacher Fall: ein Tag, eine Person, ein Typ
+const simpleDB = buildDB([{
+  day: '2026-03-01',
+  log: [
+    { aktion:'start', nutzer:'Test User', typ:'anwesenheit', zeitstempel:'X', id:1 },
+    { aktion:'stop',  nutzer:'Test User', typ:'anwesenheit', zeitstempel:'X', dauer_ms:H2, id:2 },
+  ]
+}]);
+eq('1 Tag gespeichert',                1,         simpleDB.days.length);
+eq('1 Person gespeichert',             1,         simpleDB.persons.length);
+eq('Dauer korrekt gespeichert',        H2,        simpleDB.by['2026-03-01']['Test User']['anwesenheit']);
+
+// Start-Einträge ohne dauer_ms werden ignoriert
+eq('Start-Einträge werden ignoriert – nur stop zählt',
+   1, Object.keys(simpleDB.by['2026-03-01']['Test User']).length);
+
+// Mehrere Stop-Einträge werden summiert (z.B. Verlängerung)
+const sumDB = buildDB([{
+  day: '2026-03-02',
+  log: [
+    { aktion:'stop', nutzer:'Anna', typ:'wachstunde_ehrenamtlich', zeitstempel:'X', dauer_ms:H1, id:1 },
+    { aktion:'stop', nutzer:'Anna', typ:'wachstunde_ehrenamtlich', zeitstempel:'X', dauer_ms:H2, id:2 },
+  ]
+}]);
+eq('Mehrfache stops werden summiert (1h + 2h = 3h)', H3,
+   sumDB.by['2026-03-02']['Anna']['wachstunde_ehrenamtlich']);
+
+// Tage werden sortiert
+const unsortedDB = buildDB([
+  { day: '2026-03-10', log: [{ aktion:'stop', nutzer:'X', typ:'anwesenheit', dauer_ms:H1, id:1 }] },
+  { day: '2026-03-01', log: [{ aktion:'stop', nutzer:'X', typ:'anwesenheit', dauer_ms:H1, id:2 }] },
+  { day: '2026-03-05', log: [{ aktion:'stop', nutzer:'X', typ:'anwesenheit', dauer_ms:H1, id:3 }] },
+]);
+eq('Tage alphabetisch/chronologisch sortiert', ['2026-03-01','2026-03-05','2026-03-10'], unsortedDB.days);
+
+// Personen alphabetisch sortiert
+const personsDB = buildDB([{
+  day: '2026-03-01',
+  log: [
+    { aktion:'stop', nutzer:'Zara',    typ:'anwesenheit', dauer_ms:H1, id:1 },
+    { aktion:'stop', nutzer:'Amelie',  typ:'anwesenheit', dauer_ms:H1, id:2 },
+    { aktion:'stop', nutzer:'Martin',  typ:'anwesenheit', dauer_ms:H1, id:3 },
+  ]
+}]);
+eq('Personen alphabetisch sortiert', ['Amelie','Martin','Zara'], personsDB.persons);
+
+// Einträge ohne dauer_ms komplett ignoriert
+const noDurDB = buildDB([{
+  day: '2026-03-01',
+  log: [
+    { aktion:'stop', nutzer:'Ghost', typ:'anwesenheit', id:1 }, // kein dauer_ms
+  ]
+}]);
+eq('stop ohne dauer_ms erzeugt keinen Tag-Eintrag', 0, noDurDB.days.length);
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Suite 6 – buildDB: Wochenzuordnung
+// ═══════════════════════════════════════════════════════════════════════════════
+suite('Suite 6 – buildDB: Wochenzuordnung');
+
+const weekTestDB = buildDB([
+  { day:'2026-01-10', log:[{ aktion:'stop', nutzer:'A', typ:'anwesenheit', dauer_ms:H1, id:1 }] },
+  { day:'2026-01-11', log:[{ aktion:'stop', nutzer:'A', typ:'anwesenheit', dauer_ms:H1, id:2 }] },
+  { day:'2026-01-17', log:[{ aktion:'stop', nutzer:'A', typ:'anwesenheit', dauer_ms:H1, id:3 }] },
+  { day:'2026-01-24', log:[{ aktion:'stop', nutzer:'A', typ:'anwesenheit', dauer_ms:H1, id:4 }] },
+]);
+eq('3 verschiedene Wochen erkannt', 3, weekTestDB.weeks.length);
+eq('KW02 enthält Jan 10 und Jan 11', ['2026-01-10','2026-01-11'], weekTestDB.weekMap['2026-W02']);
+eq('KW03 enthält nur Jan 17',        ['2026-01-17'],              weekTestDB.weekMap['2026-W03']);
+eq('KW04 enthält nur Jan 24',        ['2026-01-24'],              weekTestDB.weekMap['2026-W04']);
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Suite 7 – Demo-Daten: Grundstruktur
+// ═══════════════════════════════════════════════════════════════════════════════
+suite('Suite 7 – Demo-Daten: Grundstruktur');
+eq('8 Tage geladen',    8,  DB.days.length);
+eq('4 Wochen (KW02–05)',4,  DB.weeks.length);
+eq('20 Personen',       20, DB.persons.length);
+eq('Erster Tag = 2026-01-10', '2026-01-10', DB.days[0]);
+eq('Letzter Tag = 2026-02-01','2026-02-01', DB.days[DB.days.length-1]);
+eq('Wochen sortiert korrekt', ['2026-W02','2026-W03','2026-W04','2026-W05'], DB.weeks);
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Suite 8 – Demo-Daten: Gesamtsummen
+// ═══════════════════════════════════════════════════════════════════════════════
+suite('Suite 8 – Demo-Daten: Gesamtsummen');
+eq('Gesamt Anwesenheit = 140 h',   140 * H1, grandTotal(DB,'anwesenheit'));
+eq('Gesamt Wachstunden = 104 h',   104 * H1, grandTotal(DB,'wachstunde_ehrenamtlich'));
+eq('Gesamt Sanitätsstunden = 20 h', 20 * H1, grandTotal(DB,'sanitätsstunde'));
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Suite 9 – Demo-Daten: Wochensummen
+// ═══════════════════════════════════════════════════════════════════════════════
+suite('Suite 9 – Demo-Daten: Wochensummen');
+eq('KW02 Wachstunden = 26 h', 26 * H1, weekTotal(DB,'2026-W02','wachstunde_ehrenamtlich'));
+eq('KW03 Wachstunden = 26 h', 26 * H1, weekTotal(DB,'2026-W03','wachstunde_ehrenamtlich'));
+eq('KW04 Wachstunden = 30 h', 30 * H1, weekTotal(DB,'2026-W04','wachstunde_ehrenamtlich'));
+eq('KW05 Wachstunden = 22 h', 22 * H1, weekTotal(DB,'2026-W05','wachstunde_ehrenamtlich'));
+eq('KW02 Sanitätsstunden = 4 h',  4 * H1, weekTotal(DB,'2026-W02','sanitätsstunde'));
+eq('KW04 Sanitätsstunden = 6 h',  6 * H1, weekTotal(DB,'2026-W04','sanitätsstunde'));
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Suite 10 – Demo-Daten: Personensummen
+// ═══════════════════════════════════════════════════════════════════════════════
+suite('Suite 10 – Demo-Daten: Personensummen');
+eq('Martin Kammler Wachstunden = 37 h', 37 * H1, personTotal(DB,'Martin Kammler','wachstunde_ehrenamtlich'));
+eq('Martin Kammler Anwesenheit = 37 h', 37 * H1, personTotal(DB,'Martin Kammler','anwesenheit'));
+eq('Carmen Fest Wachstunden = 7 h',     7 * H1,  personTotal(DB,'Carmen Fest','wachstunde_ehrenamtlich'));
+eq('Maja Schwartz Sanitätsstunden = 5 h',5 * H1, personTotal(DB,'Maja Schwartz','sanitätsstunde'));
+eq('Klara Brock Sanitätsstunden = 4 h', 4 * H1,  personTotal(DB,'Klara Brock','sanitätsstunde'));
+eq('Klara Brock hat keine Wachstunden', 0,        personTotal(DB,'Klara Brock','wachstunde_ehrenamtlich'));
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Suite 11 – Demo-Daten: Top-Ranglisten
+// ═══════════════════════════════════════════════════════════════════════════════
+suite('Suite 11 – Demo-Daten: Top-Ranglisten');
+eq('Top Wachstunden: Martin Kammler (37 h)',   'Martin Kammler', topPerson(DB,'wachstunde_ehrenamtlich'));
+eq('Top Sanitätsstunden: Maja Schwartz (5 h)', 'Maja Schwartz',  topPerson(DB,'sanitätsstunde'));
+// Yannick (8h) vor Carmen/Andreas (je 7h)
+eq('Yannick Rehberg Wachstunden = 8 h', 8 * H1, personTotal(DB,'Yannick Rehberg','wachstunde_ehrenamtlich'));
+eq('Ben Kasper Wachstunden = 7 h',      7 * H1,  personTotal(DB,'Ben Kasper','wachstunde_ehrenamtlich'));
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Suite 12 – logicalDay: Mitternachtsregel
+// ═══════════════════════════════════════════════════════════════════════════════
+suite('Suite 12 – logicalDay: Mitternachtsregel');
+
+// Martin Jan 11: stop zeitstempel = "2026-01-12T01:00:00Z" → zählt zu 2026-01-11
+ok('Jan-11-Eintrag existiert obwohl stop nach Mitternacht war',
+   !!DB.by['2026-01-11']?.['Martin Kammler']);
+ok('Jan-12 existiert NICHT als eigenständiger Tag (kein eigener Daten)',
+   !DB.by['2026-01-12']);
+eq('Martin Jan 11 Wachstunden korrekt = 5 h', H5,
+   DB.by['2026-01-11']['Martin Kammler']['wachstunde_ehrenamtlich']);
+
+// Martin Jan 25: stop = "2026-01-26T02:00:00Z", logicalDay = 2026-01-25 → 6h
+eq('Martin Jan 25 Wachstunden = 6 h (bis 02:00 Uhr)', H6,
+   DB.by['2026-01-25']['Martin Kammler']['wachstunde_ehrenamtlich']);
+ok('Jan-26 existiert NICHT als eigenständiger Tag',
+   !DB.by['2026-01-26']);
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Suite 13 – Dateiname-Fallback (ohne logicalDay-Feld)
+// ═══════════════════════════════════════════════════════════════════════════════
+suite('Suite 13 – Dateiname-Fallback');
+// processFiles() liest json.logicalDay || filename-Datum.
+// Hier simulieren wir: kein logicalDay → Tag wird aus "day"-Parameter verwendet
+const fallbackDB = buildDB([{
+  day: '2026-05-01', // würde aus Dateiname extrahiert
+  log: [
+    { aktion:'stop', nutzer:'Fallback User', typ:'anwesenheit', dauer_ms:H3, id:99 }
+  ]
+}]);
+eq('Fallback-Tag korrekt eingelesen', '2026-05-01', fallbackDB.days[0]);
+eq('Fallback Dauer korrekt', H3, fallbackDB.by['2026-05-01']['Fallback User']['anwesenheit']);
+eq('Fallback KW korrekt', '2026-W18', isoWeekKey('2026-05-01'));
+
+render();
+</script>
+</body>
+</html>

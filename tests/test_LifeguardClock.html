@@ -1,0 +1,1769 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <title>LifeguardClock – Unit Tests</title>
+  <style>
+    body { font-family: monospace; background: #0d0d12; color: #ccc; margin: 0; padding: 20px; }
+    h1   { color: #fff; font-size: 1.1rem; margin-bottom: 16px; }
+    .suite { margin-bottom: 20px; }
+    .suite-title { color: #7eb8f7; font-size: .9rem; margin-bottom: 6px; font-weight: bold; }
+    .pass { color: #4caf7d; }
+    .fail { color: #f76e6e; }
+    .skip { color: #888; }
+    .result { font-size: .82rem; margin: 2px 0 2px 12px; }
+    #summary { margin-top: 24px; font-size: 1rem; font-weight: bold; padding: 10px; border-radius: 6px; }
+    .all-pass { background: #1a3a28; color: #4caf7d; }
+    .has-fail  { background: #3a1a1a; color: #f76e6e; }
+  </style>
+</head>
+<body>
+<h1>LifeguardClock – Unit Tests</h1>
+<div id="output"></div>
+<div id="summary"></div>
+
+<script>
+/* ── Mini Test-Runner (async-fähig) ────────────────────────── */
+const results = [];
+let currentSuite = '';
+
+function suite(name) { currentSuite = name; }
+
+// test() gibt ein Promise zurück – alle Aufrufe werden mit await gesammelt
+async function test(name, fn) {
+  try {
+    await fn();
+    results.push({ suite: currentSuite, name, ok: true });
+  } catch (e) {
+    results.push({ suite: currentSuite, name, ok: false, err: e.message });
+  }
+}
+
+function assert(cond, msg) {
+  if (!cond) throw new Error(msg || 'Assertion failed');
+}
+function assertEqual(a, b, msg) {
+  if (a !== b) throw new Error((msg || '') + ` — erwartet: ${JSON.stringify(b)}, bekommen: ${JSON.stringify(a)}`);
+}
+function assertNull(v, msg) {
+  if (v !== null) throw new Error((msg || '') + ` — erwartet null, bekommen: ${JSON.stringify(v)}`);
+}
+function assertNotNull(v, msg) {
+  if (v === null) throw new Error((msg || '') + ' — erwartet nicht null');
+}
+
+/* ── Mock localStorage ─────────────────────────────────────── */
+const _store = {};
+const localStorage = {
+  getItem:    k       => (_store[k] ?? null),
+  setItem:    (k, v)  => { _store[k] = String(v); },
+  removeItem: k       => { delete _store[k]; },
+  clear:      ()      => { Object.keys(_store).forEach(k => delete _store[k]); },
+};
+function resetStore() { localStorage.clear(); }
+
+/* ── Stub für DOM/Toast (nicht getestet) ───────────────────── */
+const currentUser = null;
+function syncDashboard() {}
+function showToast() {}
+function syncToCloud() {}
+function writeLocalBackup() {}
+function scheduleCloudSync() {}
+function scheduleUsersCloudSync() {}
+
+/* ── CONFIG-Mock (für getUsers-Tests überschreibbar) ────────── */
+let CONFIG = {
+  dayBoundaryHour: 4,
+  defaultUsers: [{ id: 'default_a', name: 'Default A', pin: '111111', mustChangePIN: true }],
+  removedUsers: [],
+  types: [
+    { key: 'anwesenheit', label: 'Anwesenheit',   logType: 'anwesenheit',   color: 'blue',  pinned: true },
+    { key: 'wachdienst',  label: 'Wachdienst',    logType: 'wachdienst',    color: 'amber',
+      requiresZeitfenster: true, maxDurationMs: 7200000, cooldownMs: 1800000,
+      autoStartKeys: ['anwesenheit'], mutexKeys: ['sanitaet'], permissionKey: 'wachdienst' },
+    { key: 'sanitaet',    label: 'Sanitätsdienst', logType: 'sanitaetsdienst', color: 'red',
+      requiresZeitfenster: true, maxDurationMs: 21600000, cooldownMs: 1800000,
+      autoStartKeys: ['anwesenheit'], mutexKeys: ['wachdienst'], permissionKey: 'sanitaet' },
+  ],
+};
+function resetConfig() {
+  CONFIG = {
+    dayBoundaryHour: 4,
+    defaultUsers: [{ id: 'default_a', name: 'Default A', pin: '111111', mustChangePIN: true }],
+    removedUsers: [],
+    types: [
+      { key: 'anwesenheit', label: 'Anwesenheit',   logType: 'anwesenheit',   color: 'blue',  pinned: true },
+      { key: 'wachdienst',  label: 'Wachdienst',    logType: 'wachdienst',    color: 'amber',
+        requiresZeitfenster: true, maxDurationMs: 7200000, cooldownMs: 1800000,
+        autoStartKeys: ['anwesenheit'], mutexKeys: ['sanitaet'], permissionKey: 'wachdienst' },
+      { key: 'sanitaet',    label: 'Sanitätsdienst', logType: 'sanitaetsdienst', color: 'red',
+        requiresZeitfenster: true, maxDurationMs: 21600000, cooldownMs: 1800000,
+        autoStartKeys: ['anwesenheit'], mutexKeys: ['wachdienst'], permissionKey: 'sanitaet' },
+    ],
+  };
+}
+// TYPES aus CONFIG ableiten (wie in LifeguardClock.html) – deaktivierte Typen herausfiltern
+let TYPES = (CONFIG.types || []).filter(t => !t.disabled).map(t => ({ ...t }));
+function rebuildTypes() { TYPES = (CONFIG.types || []).filter(t => !t.disabled).map(t => ({ ...t })); }
+
+/* ── Funktionen aus LifeguardClock.html (1:1 kopiert) ───────────────── */
+
+function pad(n) { return String(n).padStart(2, '0'); }
+
+function markLocalChange() {
+  localStorage.setItem('stempeluhr_cloud_last_change', new Date().toISOString());
+}
+function getLog() {
+  try { return JSON.parse(localStorage.getItem('stempeluhr_log') || '[]'); }
+  catch { return []; }
+}
+function saveLog(log) {
+  localStorage.setItem('stempeluhr_log', JSON.stringify(log));
+  markLocalChange();
+}
+function getAllStates() {
+  try { return JSON.parse(localStorage.getItem('stempeluhr_state') || '{}'); }
+  catch { return {}; }
+}
+function saveAllStates(s) {
+  localStorage.setItem('stempeluhr_state', JSON.stringify(s));
+  markLocalChange();
+}
+function todayISO(d = new Date()) {
+  const boundary = CONFIG.dayBoundaryHour ?? 4;
+  const dt = new Date(d);
+  if (dt.getHours() < boundary) dt.setDate(dt.getDate() - 1);
+  return dt.toISOString().slice(0, 10);
+}
+function detectPlatformPrefix() {
+  const ua = (navigator.userAgent || '').toLowerCase();
+  const pl = (navigator.platform  || '').toLowerCase();
+  if (/ipad/.test(ua))                             return 'ipad';
+  if (/iphone/.test(ua))                           return 'iphone';
+  if (/android/.test(ua) && /mobile/.test(ua))     return 'android';
+  if (/android/.test(ua))                          return 'android-tab';
+  if (/win/.test(pl))                              return 'win';
+  if (/mac/.test(pl) && !/iphone|ipad/.test(ua))   return 'mac';
+  if (/linux/.test(pl))                            return 'linux';
+  return 'geraet';
+}
+function getDeviceId() {
+  if (CONFIG.deviceId) return CONFIG.deviceId.trim();
+  const KEY = 'stempeluhr_device_id';
+  let id = localStorage.getItem(KEY);
+  if (!id) {
+    const suffix = crypto.randomUUID().replace(/-/g, '').slice(0, 4);
+    id = `${detectPlatformPrefix()}-${suffix}`;
+    localStorage.setItem(KEY, id);
+  }
+  return id;
+}
+function currentHHMM() {
+  const n = new Date();
+  return `${pad(n.getHours())}:${pad(n.getMinutes())}`;
+}
+function getZeitfenster() {
+  try {
+    const s = JSON.parse(localStorage.getItem('stempeluhr_zeitfenster') || 'null');
+    if (s && s.date === todayISO()) return s;
+  } catch {}
+  return { date: todayISO(), start: '07:00', end: '21:00' };
+}
+function saveZeitfenster(start, end) {
+  localStorage.setItem('stempeluhr_zeitfenster', JSON.stringify({ date: todayISO(), start, end }));
+}
+function isWithinZeitfenster() {
+  const { start, end } = getZeitfenster();
+  const now = currentHHMM();
+  return now >= start && now < end;
+}
+function calcDurationMs(userName, logType, atTs) {
+  const atTime = atTs ? new Date(atTs).getTime() : Date.now();
+  const log = getLog();
+  for (let i = log.length - 1; i >= 0; i--) {
+    const e = log[i];
+    if (e.nutzer === userName && e.typ === logType && e.aktion === 'start')
+      return Math.max(0, atTime - new Date(e.zeitstempel).getTime());
+  }
+  return 0;
+}
+function getTypeStartMs(userName, logType) {
+  const log = getLog();
+  for (let i = log.length - 1; i >= 0; i--) {
+    const e = log[i];
+    if (e.nutzer === userName && e.typ === logType) {
+      return e.aktion === 'start' ? new Date(e.zeitstempel).getTime() : null;
+    }
+  }
+  return null;
+}
+function typeRemainingMs(userName, type) {
+  if (!type.maxDurationMs) return null;
+  const startMs = getTypeStartMs(userName, type.logType);
+  if (startMs === null) return null;
+  return Math.max(0, type.maxDurationMs - (Date.now() - startMs));
+}
+
+/* ── Per-Typ-Zeitfenster (neu) ──────────────────────────────── */
+const _ZF_DAY_KEYS = ['so', 'mo', 'di', 'mi', 'do', 'fr', 'sa'];
+
+function getZFDefaultForType(type) {
+  const d = new Date();
+  if (d.getHours() < (CONFIG.dayBoundaryHour ?? 4)) d.setDate(d.getDate() - 1);
+  const dayKey = _ZF_DAY_KEYS[d.getDay()];
+  if (type?.zeitfenster) return type.zeitfenster[dayKey] ?? null;
+  return (CONFIG.zeitfensterDefaults?.[dayKey]) ?? { start: '07:00', end: '21:00' };
+}
+function getZeitfensterForType(type) {
+  try {
+    const s = JSON.parse(localStorage.getItem('stempeluhr_zeitfenster') || 'null');
+    if (s && s.date === todayISO() && s.types?.[type.key]) return s.types[type.key];
+  } catch {}
+  return getZFDefaultForType(type);
+}
+function saveZeitfensterForType(typeKey, start, end) {
+  let s = {};
+  try { s = JSON.parse(localStorage.getItem('stempeluhr_zeitfenster') || '{}'); } catch {}
+  if (s.date !== todayISO()) s = { date: todayISO(), types: {} };
+  if (!s.types) s.types = {};
+  s.types[typeKey] = { start, end };
+  localStorage.setItem('stempeluhr_zeitfenster', JSON.stringify(s));
+}
+function saveZeitfensterAllTypes(start, end) {
+  TIME_KEYS.forEach(k => saveZeitfensterForType(k, start, end));
+}
+function isWithinZeitfensterForType(type) {
+  const zf = getZeitfensterForType(type);
+  if (!zf) return false;
+  const now = currentHHMM();
+  return now >= zf.start && now < zf.end;
+}
+
+const TIME_KEYS = TYPES.filter(t => t.requiresZeitfenster).map(t => t.key);
+
+let USERS = [{ id: 'test_user', name: 'Test User' }];
+function saveUsers(list) {
+  localStorage.setItem('stempeluhr_users', JSON.stringify(list));
+  USERS.length = 0;
+  list.forEach(u => USERS.push(u));
+}
+function getUsers() {
+  const removeIds = new Set(CONFIG.removedUsers || []);
+  const defaults  = CONFIG.defaultUsers
+    .filter(u => !removeIds.has(u.id))
+    .map(u => ({...u}));
+
+  let stored;
+  try { stored = JSON.parse(localStorage.getItem('stempeluhr_users') || 'null'); } catch {}
+  if (!Array.isArray(stored)) {
+    localStorage.setItem('stempeluhr_users', JSON.stringify(defaults));
+    return defaults;
+  }
+
+  stored = stored.filter(u => !removeIds.has(u.id));
+  const storedIds = new Set(stored.map(u => u.id));
+  const newUsers  = defaults.filter(u => !storedIds.has(u.id)).map(u => ({...u}));
+  const result    = newUsers.length ? [...stored, ...newUsers] : stored;
+  localStorage.setItem('stempeluhr_users', JSON.stringify(result));
+  return result;
+}
+
+// Neue per-typ Version (wie in LifeguardClock.html)
+function checkZeitfensterEnd() {
+  const allStates = getAllStates();
+  const now       = new Date().toISOString();
+  let changed     = false;
+  USERS.forEach(user => {
+    const state = allStates[user.id];
+    if (!state) return;
+    TIME_KEYS.forEach(key => {
+      if (!state[key]) return;
+      const type = TYPES.find(t => t.key === key);
+      if (isWithinZeitfensterForType(type)) return;   // per-Typ-Prüfung
+      const durMs = calcDurationMs(user.name, type.logType, now);
+      const log   = getLog();
+      log.push({ id: Date.now() + Math.random(), nutzer: user.name, typ: type.logType, aktion: 'stop', zeitstempel: now, auto: true, dauer_ms: durMs });
+      saveLog(log);
+      state[key] = false;
+      changed = true;
+      if (currentUser && currentUser.id === user.id) {
+        syncDashboard();
+        showToast(`Zeitfenster abgelaufen – ${type.label} beendet`);
+      }
+    });
+  });
+  if (changed) saveAllStates(allStates);
+}
+
+function checkTimeLimits() {
+  const allStates = getAllStates();
+  const now       = new Date();
+  let changed     = false;
+  USERS.forEach(user => {
+    const state = allStates[user.id];
+    if (!state) return;
+    TYPES.forEach(type => {
+      if (!type.maxDurationMs || !state[type.key]) return;
+      const startMs = getTypeStartMs(user.name, type.logType);
+      if (startMs === null) return;
+      if (now.getTime() - startMs < type.maxDurationMs) return;
+      const stopTs = new Date(startMs + type.maxDurationMs).toISOString();
+      const log    = getLog();
+      log.push({ id: Date.now() + Math.random(), nutzer: user.name, typ: type.logType, aktion: 'stop',
+        zeitstempel: stopTs, auto: true, dauer_ms: type.maxDurationMs });
+      saveLog(log);
+      state[type.key] = false;
+      if (type.cooldownMs) {
+        if (!state.cooldown) state.cooldown = {};
+        state.cooldown[type.key] = new Date(now.getTime() + type.cooldownMs).toISOString();
+      }
+      allStates[user.id] = state;
+      changed = true;
+    });
+  });
+  if (changed) saveAllStates(allStates);
+}
+
+/* ── Neu: Crypto, PIN-Validierung ─────────────────────────── */
+async function hashPIN(pin, salt) {
+  const data = new TextEncoder().encode(salt + ':' + pin);
+  const buf  = await crypto.subtle.digest('SHA-256', data);
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function isWeakPIN(pin) {
+  if (/^(.)\1{5}$/.test(pin)) return true;
+  const n = [...pin].map(Number);
+  const diffs = n.slice(1).map((d, i) => d - n[i]);
+  if (diffs.every(d => d === 1))  return true;
+  if (diffs.every(d => d === -1)) return true;
+  return false;
+}
+
+async function isPINTaken(pin, excludeId) {
+  for (const u of USERS) {
+    if (u.id === excludeId) continue;
+    if (u.mustChangePIN || !u.salt) {
+      if (u.pin === pin) return true;
+    } else {
+      if ((await hashPIN(pin, u.salt)) === u.pin) return true;
+    }
+  }
+  return false;
+}
+
+const ADMIN_PW_KEY     = 'stempeluhr_admin_pw';
+const ADMIN_PW_DEFAULT = 'Admin1234';
+function getAdminPw() {
+  return localStorage.getItem(ADMIN_PW_KEY) || ADMIN_PW_DEFAULT;
+}
+function saveAdminPw(pw) {
+  localStorage.setItem(ADMIN_PW_KEY, pw);
+}
+
+/* ═══════════════════════════════════════════════════════════ */
+/*  TESTS                                                      */
+/* ═══════════════════════════════════════════════════════════ */
+function msAgo(ms) { return new Date(Date.now() - ms).toISOString(); }
+function setStateActive(userId, key, val = true) {
+  const all = getAllStates();
+  if (!all[userId]) { all[userId] = {}; TYPES.forEach(t => { all[userId][t.key] = false; }); }
+  all[userId][key] = val;
+  saveAllStates(all);
+}
+function pushLog(entry) {
+  const log = getLog();
+  log.push({ id: Date.now() + Math.random(), ...entry });
+  saveLog(log);
+}
+function resetUsers() {
+  USERS.length = 0;
+  USERS.push({ id: 'test_user', name: 'Test User' });
+}
+
+(async () => {
+
+/* ── Suite 1: getTypeStartMs ───────────────────────────────── */
+suite('getTypeStartMs (Wachdienst)');
+
+await test('gibt null zurück wenn Log leer', () => {
+  resetStore();
+  assertNull(getTypeStartMs('Test User', 'wachdienst'), 'leeres Log');
+});
+
+await test('gibt null zurück wenn letzter Eintrag ein stop ist', () => {
+  resetStore();
+  pushLog({ nutzer: 'Test User', typ: 'wachdienst', aktion: 'start', zeitstempel: msAgo(60000) });
+  pushLog({ nutzer: 'Test User', typ: 'wachdienst', aktion: 'stop',  zeitstempel: msAgo(30000), dauer_ms: 30000 });
+  assertNull(getTypeStartMs('Test User', 'wachdienst'), 'letzter Eintrag ist stop');
+});
+
+await test('gibt Startzeit zurück wenn letzter Eintrag ein start ist', () => {
+  resetStore();
+  const startTs = msAgo(10 * 60 * 1000);
+  pushLog({ nutzer: 'Test User', typ: 'wachdienst', aktion: 'start', zeitstempel: startTs });
+  const result = getTypeStartMs('Test User', 'wachdienst');
+  assertNotNull(result, 'soll Startzeit liefern');
+  assert(Math.abs(result - new Date(startTs).getTime()) < 10, 'Startzeit stimmt nicht überein');
+});
+
+await test('ignoriert andere Nutzer', () => {
+  resetStore();
+  pushLog({ nutzer: 'Anderer Nutzer', typ: 'wachdienst', aktion: 'start', zeitstempel: msAgo(5000) });
+  assertNull(getTypeStartMs('Test User', 'wachdienst'), 'soll anderen Nutzer ignorieren');
+});
+
+await test('ignoriert andere Typen', () => {
+  resetStore();
+  pushLog({ nutzer: 'Test User', typ: 'anwesenheit', aktion: 'start', zeitstempel: msAgo(5000) });
+  assertNull(getTypeStartMs('Test User', 'wachdienst'), 'soll andere Typen ignorieren');
+});
+
+/* ── Suite 2: typeRemainingMs ──────────────────────────────── */
+suite('typeRemainingMs (Wachdienst)');
+
+await test('gibt null zurück wenn kein aktiver Start', () => {
+  resetStore();
+  assertNull(typeRemainingMs('Test User', TYPES.find(t => t.key === 'wachdienst')), 'kein Start im Log');
+});
+
+await test('gibt ~2h zurück bei gerade eingechecktem Start', () => {
+  resetStore();
+  pushLog({ nutzer: 'Test User', typ: 'wachdienst', aktion: 'start', zeitstempel: msAgo(1000) });
+  const rem = typeRemainingMs('Test User', TYPES.find(t => t.key === 'wachdienst'));
+  assert(rem > 0, 'soll positiv sein');
+  assert(rem <= TYPES.find(t => t.key === 'wachdienst').maxDurationMs, 'soll maximal 2h sein');
+  assert(rem > TYPES.find(t => t.key === 'wachdienst').maxDurationMs - 5000, 'soll fast 2h sein');
+});
+
+await test('gibt 0 zurück wenn Start vor mehr als 2h', () => {
+  resetStore();
+  pushLog({ nutzer: 'Test User', typ: 'wachdienst', aktion: 'start', zeitstempel: msAgo(TYPES.find(t => t.key === 'wachdienst').maxDurationMs + 60000) });
+  assertEqual(typeRemainingMs('Test User', TYPES.find(t => t.key === 'wachdienst')), 0, 'nach >2h soll 0 kommen');
+});
+
+await test('gibt 0 zurück exakt bei 2h', () => {
+  resetStore();
+  pushLog({ nutzer: 'Test User', typ: 'wachdienst', aktion: 'start', zeitstempel: msAgo(TYPES.find(t => t.key === 'wachdienst').maxDurationMs) });
+  assertEqual(typeRemainingMs('Test User', TYPES.find(t => t.key === 'wachdienst')), 0, 'bei exakt 2h soll 0 kommen');
+});
+
+await test('gibt null zurück nach stop-Eintrag (nicht mehr aktiv)', () => {
+  resetStore();
+  pushLog({ nutzer: 'Test User', typ: 'wachdienst', aktion: 'start', zeitstempel: msAgo(60 * 60 * 1000) });
+  pushLog({ nutzer: 'Test User', typ: 'wachdienst', aktion: 'stop',  zeitstempel: msAgo(30 * 60 * 1000), dauer_ms: 30 * 60 * 1000 });
+  assertNull(typeRemainingMs('Test User', TYPES.find(t => t.key === 'wachdienst')), 'nach stop soll null kommen');
+});
+
+/* ── Suite 3: checkTimeLimits ──────────────────────────────── */
+suite('checkTimeLimits (auto-stop + cooldown)');
+
+await test('stoppt wachdienst nach >2h auch INNERHALB des Zeitfensters', () => {
+  resetStore();
+  saveZeitfenster('00:00', '23:59');
+  assert(isWithinZeitfenster(), 'Voraussetzung: wir sind im Zeitfenster');
+  pushLog({ nutzer: 'Test User', typ: 'wachdienst', aktion: 'start', zeitstempel: msAgo(TYPES.find(t => t.key === 'wachdienst').maxDurationMs + 5 * 60 * 1000) });
+  setStateActive('test_user', 'wachdienst', true);
+  checkTimeLimits();
+  const state = getAllStates()['test_user'];
+  assertEqual(state.wachdienst, false, 'wachdienst soll nach >2h deaktiviert sein');
+  const log = getLog();
+  const stopEntry = log.find(e => e.nutzer === 'Test User' && e.typ === 'wachdienst' && e.aktion === 'stop' && e.auto === true);
+  assert(stopEntry !== undefined, 'auto-stop Eintrag im Log fehlt');
+  assertEqual(stopEntry.dauer_ms, TYPES.find(t => t.key === 'wachdienst').maxDurationMs, 'dauer_ms soll exakt 2h sein');
+});
+
+await test('stoppt NICHT wenn wachdienst weniger als 2h aktiv', () => {
+  resetStore();
+  saveZeitfenster('00:00', '23:59');
+  pushLog({ nutzer: 'Test User', typ: 'wachdienst', aktion: 'start', zeitstempel: msAgo(30 * 60 * 1000) });
+  setStateActive('test_user', 'wachdienst', true);
+  checkTimeLimits();
+  const state = getAllStates()['test_user'];
+  assertEqual(state.wachdienst, true, 'wachdienst soll nach nur 30min noch aktiv sein');
+  const stopEntry = getLog().find(e => e.aktion === 'stop');
+  assert(stopEntry === undefined, 'kein stop-Eintrag erwartet');
+});
+
+await test('stoppt NICHT wenn wachdienst bereits inaktiv (state=false)', () => {
+  resetStore();
+  pushLog({ nutzer: 'Test User', typ: 'wachdienst', aktion: 'start', zeitstempel: msAgo(TYPES.find(t => t.key === 'wachdienst').maxDurationMs + 60000) });
+  setStateActive('test_user', 'wachdienst', false);
+  checkTimeLimits();
+  const stopEntry = getLog().find(e => e.aktion === 'stop');
+  assert(stopEntry === undefined, 'kein zweiter stop-Eintrag erwartet');
+});
+
+await test('stop-Zeitstempel ist startzeit + 2h (nicht jetzt)', () => {
+  resetStore();
+  const overMs = 10 * 60 * 1000;
+  const startTs = msAgo(TYPES.find(t => t.key === 'wachdienst').maxDurationMs + overMs);
+  const expectedStopMs = new Date(startTs).getTime() + TYPES.find(t => t.key === 'wachdienst').maxDurationMs;
+  pushLog({ nutzer: 'Test User', typ: 'wachdienst', aktion: 'start', zeitstempel: startTs });
+  setStateActive('test_user', 'wachdienst', true);
+  checkTimeLimits();
+  const stopEntry = getLog().find(e => e.aktion === 'stop' && e.auto);
+  assert(stopEntry !== undefined, 'auto-stop Eintrag fehlt');
+  const actualStopMs = new Date(stopEntry.zeitstempel).getTime();
+  assert(Math.abs(actualStopMs - expectedStopMs) < 1000, `stop-Zeitstempel soll start+2h sein, Differenz: ${actualStopMs - expectedStopMs}ms`);
+});
+
+/* ── Suite 4: checkZeitfensterEnd ──────────────────────────── */
+suite('checkZeitfensterEnd (soll wachdienst bei aktivem Zeitfenster NICHT stoppen)');
+
+await test('tut nichts wenn wir im Zeitfenster sind', () => {
+  resetStore();
+  saveZeitfensterAllTypes('00:00', '23:59');
+  pushLog({ nutzer: 'Test User', typ: 'wachdienst', aktion: 'start', zeitstempel: msAgo(TYPES.find(t => t.key === 'wachdienst').maxDurationMs + 60000) });
+  setStateActive('test_user', 'wachdienst', true);
+  checkZeitfensterEnd();
+  const state = getAllStates()['test_user'];
+  assertEqual(state.wachdienst, true, 'checkZeitfensterEnd soll wachdienst im Zeitfenster nicht anfassen');
+  assert(getLog().every(e => e.aktion !== 'stop'), 'kein stop-Eintrag durch checkZeitfensterEnd erwartet');
+});
+
+await test('stoppt wachdienst wenn wir AUSSERHALB des Zeitfensters sind', () => {
+  resetStore();
+  saveZeitfensterAllTypes('01:00', '01:01');
+  assert(!isWithinZeitfenster(), 'Voraussetzung: wir sind außerhalb');
+  pushLog({ nutzer: 'Test User', typ: 'wachdienst', aktion: 'start', zeitstempel: msAgo(30 * 60 * 1000) });
+  setStateActive('test_user', 'wachdienst', true);
+  checkZeitfensterEnd();
+  assertEqual(getAllStates()['test_user'].wachdienst, false, 'wachdienst soll außerhalb gestoppt werden');
+});
+
+await test('stoppt sanitaet wenn Zeitfenster abgelaufen', () => {
+  resetStore();
+  saveZeitfensterAllTypes('01:00', '01:01');
+  pushLog({ nutzer: 'Test User', typ: 'sanitaetsdienst', aktion: 'start', zeitstempel: msAgo(30 * 60 * 1000) });
+  setStateActive('test_user', 'sanitaet', true);
+  checkZeitfensterEnd();
+  assertEqual(getAllStates()['test_user'].sanitaet, false, 'sanitaet soll außerhalb gestoppt werden');
+  assert(getLog().find(e => e.typ === 'sanitaetsdienst' && e.aktion === 'stop'), 'stop-Eintrag fehlt');
+});
+
+await test('lässt anwesenheit bei abgelaufenem Zeitfenster unberührt', () => {
+  resetStore();
+  saveZeitfensterAllTypes('01:00', '01:01');
+  pushLog({ nutzer: 'Test User', typ: 'anwesenheit', aktion: 'start', zeitstempel: msAgo(30 * 60 * 1000) });
+  setStateActive('test_user', 'anwesenheit', true);
+  checkZeitfensterEnd();
+  assertEqual(getAllStates()['test_user'].anwesenheit, true, 'anwesenheit soll nicht gestoppt werden');
+});
+
+/* ── Suite 5: calcDurationMs ───────────────────────────────── */
+suite('calcDurationMs');
+
+await test('gibt 0 zurück wenn kein Start im Log', () => {
+  resetStore();
+  assertEqual(calcDurationMs('Test User', 'wachdienst'), 0, 'kein Start → 0');
+});
+
+await test('berechnet Dauer seit Start korrekt', () => {
+  resetStore();
+  const startedMsAgo = 30 * 60 * 1000;
+  pushLog({ nutzer: 'Test User', typ: 'wachdienst', aktion: 'start', zeitstempel: msAgo(startedMsAgo) });
+  const dur = calcDurationMs('Test User', 'wachdienst');
+  assert(Math.abs(dur - startedMsAgo) < 500, `Dauer soll ~30min sein, war ${dur}ms`);
+});
+
+await test('nimmt atTs-Zeitstempel statt Date.now()', () => {
+  resetStore();
+  const startTs = msAgo(60 * 60 * 1000);
+  pushLog({ nutzer: 'Test User', typ: 'wachdienst', aktion: 'start', zeitstempel: startTs });
+  const atTs = new Date(new Date(startTs).getTime() + 45 * 60 * 1000).toISOString();
+  const dur  = calcDurationMs('Test User', 'wachdienst', atTs);
+  assert(Math.abs(dur - 45 * 60 * 1000) < 500, `Dauer soll 45min sein, war ${dur}ms`);
+});
+
+await test('ignoriert früheren Start wenn neuerer vorhanden', () => {
+  resetStore();
+  pushLog({ nutzer: 'Test User', typ: 'wachdienst', aktion: 'start', zeitstempel: msAgo(90 * 60 * 1000) });
+  pushLog({ nutzer: 'Test User', typ: 'wachdienst', aktion: 'stop',  zeitstempel: msAgo(80 * 60 * 1000), dauer_ms: 10 * 60 * 1000 });
+  pushLog({ nutzer: 'Test User', typ: 'wachdienst', aktion: 'start', zeitstempel: msAgo(20 * 60 * 1000) });
+  const dur = calcDurationMs('Test User', 'wachdienst');
+  assert(Math.abs(dur - 20 * 60 * 1000) < 500, `Dauer soll ~20min sein, war ${dur}ms`);
+});
+
+await test('gibt Zeit seit letztem Start zurück (auch wenn stop folgte)', () => {
+  resetStore();
+  pushLog({ nutzer: 'Test User', typ: 'wachdienst', aktion: 'start', zeitstempel: msAgo(60 * 60 * 1000) });
+  pushLog({ nutzer: 'Test User', typ: 'wachdienst', aktion: 'stop',  zeitstempel: msAgo(30 * 60 * 1000), dauer_ms: 30 * 60 * 1000 });
+  const dur = calcDurationMs('Test User', 'wachdienst');
+  assert(Math.abs(dur - 60 * 60 * 1000) < 500, `Gibt Zeit seit letztem start zurück (~1h), war ${dur}ms`);
+});
+
+/* ── Suite 6: todayISO – dayBoundaryHour ───────────────────── */
+suite('todayISO (dayBoundaryHour aus CONFIG)');
+
+await test('gibt das Datum für 12:00 Uhr zurück', () => {
+  CONFIG.dayBoundaryHour = 4;
+  const d = new Date(); d.setHours(12, 0, 0, 0);
+  assertEqual(todayISO(d), d.toISOString().slice(0, 10), 'Mittag → gleiches Datum');
+});
+
+await test('gibt den Vortag zurück für 02:00 Uhr (vor 04:00-Grenze)', () => {
+  CONFIG.dayBoundaryHour = 4;
+  const d = new Date(); d.setHours(2, 0, 0, 0);
+  const yesterday = new Date(d); yesterday.setDate(yesterday.getDate() - 1);
+  assertEqual(todayISO(d), yesterday.toISOString().slice(0, 10), '02:00 Uhr → Vortag');
+});
+
+await test('gibt genau 04:00 Uhr als heutigen Tag zurück', () => {
+  CONFIG.dayBoundaryHour = 4;
+  const d = new Date(); d.setHours(4, 0, 0, 0);
+  assertEqual(todayISO(d), d.toISOString().slice(0, 10), '04:00 Uhr → heutiges Datum');
+});
+
+await test('gibt 03:59 Uhr als Vortag zurück', () => {
+  CONFIG.dayBoundaryHour = 4;
+  const d = new Date(); d.setHours(3, 59, 59, 0);
+  const yesterday = new Date(d); yesterday.setDate(yesterday.getDate() - 1);
+  assertEqual(todayISO(d), yesterday.toISOString().slice(0, 10), '03:59 Uhr → Vortag');
+});
+
+await test('dayBoundaryHour: 0 → kein Tageswechsel, 00:30 bleibt heute', () => {
+  CONFIG.dayBoundaryHour = 0;
+  const d = new Date(); d.setHours(0, 30, 0, 0);
+  assertEqual(todayISO(d), d.toISOString().slice(0, 10), 'boundary=0 → 00:30 ist heute');
+  CONFIG.dayBoundaryHour = 4;
+});
+
+await test('dayBoundaryHour: 6 → 05:00 Uhr zählt noch zum Vortag', () => {
+  CONFIG.dayBoundaryHour = 6;
+  const d = new Date(); d.setHours(5, 0, 0, 0);
+  const yesterday = new Date(d); yesterday.setDate(yesterday.getDate() - 1);
+  assertEqual(todayISO(d), yesterday.toISOString().slice(0, 10), 'boundary=6, 05:00 → Vortag');
+  CONFIG.dayBoundaryHour = 4;
+});
+
+/* ── Suite 6b: getDeviceId ─────────────────────────────────── */
+suite('getDeviceId');
+
+await test('gibt CONFIG.deviceId zurück wenn gesetzt', () => {
+  resetStore();
+  CONFIG.deviceId = 'mein-geraet';
+  assertEqual(getDeviceId(), 'mein-geraet', 'soll CONFIG.deviceId zurückgeben');
+  delete CONFIG.deviceId;
+});
+
+await test('erzeugt und speichert Auto-ID wenn kein CONFIG.deviceId', () => {
+  resetStore();
+  delete CONFIG.deviceId;
+  const id = getDeviceId();
+  assertNotNull(id, 'soll eine ID erzeugen');
+  assert(id.length > 0, 'ID darf nicht leer sein');
+  assertEqual(localStorage.getItem('stempeluhr_device_id'), id, 'soll in localStorage gespeichert sein');
+});
+
+await test('gibt dieselbe Auto-ID beim zweiten Aufruf zurück', () => {
+  resetStore();
+  delete CONFIG.deviceId;
+  const id1 = getDeviceId();
+  const id2 = getDeviceId();
+  assertEqual(id1, id2, 'ID soll stabil bleiben');
+});
+
+await test('Auto-ID hat Format "prefix-xxxx"', () => {
+  resetStore();
+  delete CONFIG.deviceId;
+  const id = getDeviceId();
+  assert(/^[a-z]+-[a-z0-9]{4}$/.test(id), `ID-Format ungültig: ${id}`);
+});
+
+await test('CONFIG.deviceId hat Vorrang vor gespeicherter Auto-ID', () => {
+  resetStore();
+  delete CONFIG.deviceId;
+  getDeviceId(); // erzeugt Auto-ID
+  CONFIG.deviceId = 'vorrang';
+  assertEqual(getDeviceId(), 'vorrang', 'CONFIG.deviceId soll Auto-ID überschreiben');
+  delete CONFIG.deviceId;
+});
+
+/* ── Suite 7: isWithinZeitfenster ──────────────────────────── */
+suite('isWithinZeitfenster (Grenzfälle)');
+
+await test('liefert true für HH:MM genau am Startpunkt', () => {
+  resetStore(); const now = currentHHMM();
+  saveZeitfenster(now, '23:59');
+  assert(isWithinZeitfenster(), 'exakt am Start → true (>=)');
+});
+
+await test('liefert false für HH:MM genau am Endpunkt', () => {
+  resetStore(); const now = currentHHMM();
+  saveZeitfenster('00:00', now);
+  assert(!isWithinZeitfenster(), 'exakt am Ende → false (<)');
+});
+
+await test('liefert true wenn Zeitfenster den ganzen Tag umfasst', () => {
+  resetStore(); saveZeitfenster('00:00', '23:59');
+  assert(isWithinZeitfenster(), '00:00–23:59 → immer true');
+});
+
+await test('liefert false wenn Zeitfenster in der Vergangenheit', () => {
+  resetStore(); saveZeitfenster('01:00', '01:01');
+  assert(!isWithinZeitfenster(), 'vergangenes Fenster → false');
+});
+
+/* ── Suite 8: Verlängern ───────────────────────────────────── */
+suite('Verlängern (extend:true) – Countdown-Reset');
+
+await test('typeRemainingMs zeigt ~2h nach Verlängern', () => {
+  resetStore();
+  pushLog({ nutzer: 'Test User', typ: 'wachdienst', aktion: 'start', zeitstempel: msAgo(110 * 60 * 1000) });
+  pushLog({ nutzer: 'Test User', typ: 'wachdienst', aktion: 'stop',  zeitstempel: msAgo(5000), dauer_ms: 110 * 60 * 1000, extend: true });
+  pushLog({ nutzer: 'Test User', typ: 'wachdienst', aktion: 'start', zeitstempel: msAgo(5000), extend: true });
+  const rem = typeRemainingMs('Test User', TYPES.find(t => t.key === 'wachdienst'));
+  assert(rem !== null, 'rem soll nicht null sein');
+  assert(rem > TYPES.find(t => t.key === 'wachdienst').maxDurationMs - 10000, `Countdown soll ~2h sein nach Verlängern, war ${rem}ms`);
+});
+
+await test('getTypeStartMs gibt den neuesten Start zurück nach Verlängern', () => {
+  resetStore();
+  const oldStart = msAgo(110 * 60 * 1000);
+  const newStart = msAgo(5000);
+  pushLog({ nutzer: 'Test User', typ: 'wachdienst', aktion: 'start', zeitstempel: oldStart });
+  pushLog({ nutzer: 'Test User', typ: 'wachdienst', aktion: 'stop',  zeitstempel: msAgo(5100), dauer_ms: 110 * 60 * 1000, extend: true });
+  pushLog({ nutzer: 'Test User', typ: 'wachdienst', aktion: 'start', zeitstempel: newStart, extend: true });
+  const startMs = getTypeStartMs('Test User', 'wachdienst');
+  assert(Math.abs(startMs - new Date(newStart).getTime()) < 100, 'soll den neuen Start zurückgeben');
+});
+
+await test('checkTimeLimits stoppt NICHT nach Verlängern wenn noch < 2h seit neuem Start', () => {
+  resetStore();
+  saveZeitfenster('00:00', '23:59');
+  pushLog({ nutzer: 'Test User', typ: 'wachdienst', aktion: 'start', zeitstempel: msAgo(150 * 60 * 1000) });
+  pushLog({ nutzer: 'Test User', typ: 'wachdienst', aktion: 'stop',  zeitstempel: msAgo(20 * 60 * 1000), dauer_ms: 130 * 60 * 1000, extend: true });
+  pushLog({ nutzer: 'Test User', typ: 'wachdienst', aktion: 'start', zeitstempel: msAgo(20 * 60 * 1000), extend: true });
+  setStateActive('test_user', 'wachdienst', true);
+  checkTimeLimits();
+  assertEqual(getAllStates()['test_user'].wachdienst, true, 'nach Verlängern soll wachdienst noch aktiv sein');
+});
+
+/* ── Suite 9: Idempotenz ───────────────────────────────────── */
+suite('Idempotenz');
+
+await test('checkTimeLimits zweimal aufgerufen erzeugt nur einen stop-Eintrag', () => {
+  resetStore(); saveZeitfenster('00:00', '23:59');
+  pushLog({ nutzer: 'Test User', typ: 'wachdienst', aktion: 'start', zeitstempel: msAgo(TYPES.find(t => t.key === 'wachdienst').maxDurationMs + 60000) });
+  setStateActive('test_user', 'wachdienst', true);
+  checkTimeLimits();
+  checkTimeLimits();
+  const stops = getLog().filter(e => e.aktion === 'stop' && e.auto);
+  assertEqual(stops.length, 1, `Nur ein auto-stop erwartet, gefunden: ${stops.length}`);
+});
+
+await test('checkZeitfensterEnd zweimal aufgerufen erzeugt nur einen stop-Eintrag', () => {
+  resetStore(); saveZeitfensterAllTypes('01:00', '01:01');
+  pushLog({ nutzer: 'Test User', typ: 'wachdienst', aktion: 'start', zeitstempel: msAgo(30 * 60 * 1000) });
+  setStateActive('test_user', 'wachdienst', true);
+  checkZeitfensterEnd();
+  checkZeitfensterEnd();
+  const stops = getLog().filter(e => e.aktion === 'stop');
+  assertEqual(stops.length, 1, `Nur ein stop erwartet, gefunden: ${stops.length}`);
+});
+
+/* ── Suite 10: Mehrere Nutzer – Isolation ──────────────────── */
+suite('Mehrere Nutzer – Isolation');
+
+await test('checkTimeLimits stoppt nur den Nutzer dessen 2h abgelaufen sind', () => {
+  resetStore(); saveZeitfenster('00:00', '23:59');
+  const USER_B = { id: 'user_b', name: 'User B' };
+  USERS.push(USER_B);
+  pushLog({ nutzer: 'Test User', typ: 'wachdienst', aktion: 'start', zeitstempel: msAgo(TYPES.find(t => t.key === 'wachdienst').maxDurationMs + 30 * 60 * 1000) });
+  setStateActive('test_user', 'wachdienst', true);
+  pushLog({ nutzer: 'User B', typ: 'wachdienst', aktion: 'start', zeitstempel: msAgo(30 * 60 * 1000) });
+  setStateActive('user_b', 'wachdienst', true);
+  checkTimeLimits();
+  const states = getAllStates();
+  assertEqual(states['test_user'].wachdienst, false, 'Test User soll gestoppt sein');
+  assertEqual(states['user_b'].wachdienst, true,  'User B soll noch aktiv sein');
+  resetUsers();
+});
+
+await test('checkZeitfensterEnd stoppt beide Nutzer außerhalb des Zeitfensters', () => {
+  resetStore(); saveZeitfensterAllTypes('01:00', '01:01');
+  const USER_B = { id: 'user_b', name: 'User B' };
+  USERS.push(USER_B);
+  pushLog({ nutzer: 'Test User', typ: 'wachdienst', aktion: 'start', zeitstempel: msAgo(30 * 60 * 1000) });
+  setStateActive('test_user', 'wachdienst', true);
+  pushLog({ nutzer: 'User B', typ: 'sanitaetsdienst', aktion: 'start', zeitstempel: msAgo(20 * 60 * 1000) });
+  setStateActive('user_b', 'sanitaet', true);
+  checkZeitfensterEnd();
+  const states = getAllStates();
+  assertEqual(states['test_user'].wachdienst, false, 'Test User wachdienst soll gestoppt sein');
+  assertEqual(states['user_b'].sanitaet,   false, 'User B sanitaet soll gestoppt sein');
+  resetUsers();
+});
+
+/* ── Suite 11: Log-Integrität ──────────────────────────────── */
+suite('Log-Integrität');
+
+await test('jeder Log-Eintrag hat eine eindeutige id', () => {
+  resetStore();
+  for (let i = 0; i < 10; i++) {
+    pushLog({ nutzer: 'Test User', typ: 'anwesenheit', aktion: i % 2 === 0 ? 'start' : 'stop', zeitstempel: msAgo(i * 1000), dauer_ms: 1000 });
+  }
+  const ids = getLog().map(e => e.id);
+  assertEqual(new Set(ids).size, ids.length, 'Alle IDs sollen eindeutig sein');
+});
+
+await test('saveLog / getLog Roundtrip bleibt verlustfrei', () => {
+  resetStore();
+  const original = [
+    { id: 1.1, nutzer: 'Test User', typ: 'wachdienst', aktion: 'start', zeitstempel: msAgo(5000), extend: true },
+    { id: 1.2, nutzer: 'Test User', typ: 'wachdienst', aktion: 'stop',  zeitstempel: msAgo(1000), dauer_ms: 4000, auto: true },
+  ];
+  saveLog(original);
+  const loaded = getLog();
+  assertEqual(loaded.length, 2, 'Anzahl Einträge muss stimmen');
+  assertEqual(loaded[0].extend, true,  'extend:true muss erhalten bleiben');
+  assertEqual(loaded[1].auto,   true,  'auto:true muss erhalten bleiben');
+  assertEqual(loaded[1].dauer_ms, 4000, 'dauer_ms muss korrekt sein');
+});
+
+await test('getLog gibt leeres Array zurück bei ungültigem JSON', () => {
+  localStorage.setItem('stempeluhr_log', 'KEIN_JSON{{{');
+  const log = getLog();
+  assert(Array.isArray(log), 'soll Array zurückgeben');
+  assertEqual(log.length, 0, 'soll leer sein bei Parse-Fehler');
+  resetStore();
+});
+
+/* ── Suite 12: isWeakPIN (Regex-Bug-Fix) ───────────────────── */
+suite('isWeakPIN (Schwache PINs erkennen)');
+
+await test('111111 → schwach (alle gleich)', () => {
+  assert(isWeakPIN('111111'), '111111 soll als schwach gelten');
+});
+await test('999999 → schwach (alle gleich)', () => {
+  assert(isWeakPIN('999999'), '999999 soll als schwach gelten');
+});
+await test('000000 → schwach (alle gleich)', () => {
+  assert(isWeakPIN('000000'), '000000 soll als schwach gelten');
+});
+await test('123456 → schwach (aufsteigend)', () => {
+  assert(isWeakPIN('123456'), '123456 soll als schwach gelten');
+});
+await test('234567 → schwach (aufsteigend)', () => {
+  assert(isWeakPIN('234567'), '234567 soll als schwach gelten');
+});
+await test('987654 → schwach (absteigend)', () => {
+  assert(isWeakPIN('987654'), '987654 soll als schwach gelten');
+});
+await test('876543 → schwach (absteigend)', () => {
+  assert(isWeakPIN('876543'), '876543 soll als schwach gelten');
+});
+await test('142536 → nicht schwach (zufällig)', () => {
+  assert(!isWeakPIN('142536'), '142536 soll nicht als schwach gelten');
+});
+await test('382910 → nicht schwach (zufällig)', () => {
+  assert(!isWeakPIN('382910'), '382910 soll nicht als schwach gelten');
+});
+await test('112233 → nicht schwach (nicht rein auf-/absteigend)', () => {
+  assert(!isWeakPIN('112233'), '112233 soll nicht als schwach gelten');
+});
+await test('246810 → nicht schwach (Diff 2, nicht 1)', () => {
+  assert(!isWeakPIN('246810'), '246810 soll nicht als schwach gelten (Schrittweite 2)');
+});
+
+/* ── Suite 13: PIN-Format-Validierung (/^\d{6}$/) ─────────── */
+suite('PIN-Format-Validierung (Admin: 6 Ziffern)');
+
+// Die Regex direkt testen – deckt den saveUserEdit-Bug ab
+const pinFormatOk = (pin) => /^\d{6}$/.test(pin);
+
+await test('123456 → valid', () => {
+  assert(pinFormatOk('123456'), '123456 soll gültig sein');
+});
+await test('000000 → valid (Format, nicht Stärke)', () => {
+  assert(pinFormatOk('000000'), '000000 soll format-gültig sein');
+});
+await test('12345 → ungültig (zu kurz)', () => {
+  assert(!pinFormatOk('12345'), '12345 soll ungültig sein (5 Ziffern)');
+});
+await test('1234567 → ungültig (zu lang)', () => {
+  assert(!pinFormatOk('1234567'), '1234567 soll ungültig sein (7 Ziffern)');
+});
+await test('abcdef → ungültig (Buchstaben)', () => {
+  assert(!pinFormatOk('abcdef'), 'abcdef soll ungültig sein');
+});
+await test('12345a → ungültig (gemischt)', () => {
+  assert(!pinFormatOk('12345a'), '12345a soll ungültig sein');
+});
+await test('"" → ungültig (leer)', () => {
+  assert(!pinFormatOk(''), 'Leerstring soll ungültig sein');
+});
+await test('" 123456" → ungültig (Leerzeichen)', () => {
+  assert(!pinFormatOk(' 123456'), 'Führendes Leerzeichen soll ungültig sein');
+});
+
+/* ── Suite 14: hashPIN (Kryptographie) ────────────────────── */
+suite('hashPIN (SHA-256)');
+
+await test('liefert einen 64-Zeichen Hex-String', async () => {
+  const h = await hashPIN('123456', 'testsalt');
+  assertEqual(h.length, 64, `Erwarte 64 Hex-Zeichen, bekam ${h.length}`);
+  assert(/^[0-9a-f]+$/.test(h), 'Soll nur Hex-Zeichen enthalten');
+});
+
+await test('gleiche Eingabe → gleicher Hash', async () => {
+  const h1 = await hashPIN('247813', 'salz42');
+  const h2 = await hashPIN('247813', 'salz42');
+  assertEqual(h1, h2, 'Gleiche Eingabe soll gleichen Hash liefern');
+});
+
+await test('unterschiedliche PINs → unterschiedliche Hashes', async () => {
+  const h1 = await hashPIN('111111', 'salz');
+  const h2 = await hashPIN('222222', 'salz');
+  assert(h1 !== h2, 'Unterschiedliche PINs sollen unterschiedliche Hashes liefern');
+});
+
+await test('unterschiedliche Salts → unterschiedliche Hashes', async () => {
+  const h1 = await hashPIN('123456', 'salt_a');
+  const h2 = await hashPIN('123456', 'salt_b');
+  assert(h1 !== h2, 'Unterschiedliche Salts sollen unterschiedliche Hashes liefern');
+});
+
+await test('Salt ist Teil des Hashes (salt:pin Format)', async () => {
+  // hashPIN('123456', 'a') soll != hashPIN('a', '123456') sein
+  const h1 = await hashPIN('123456', 'a');
+  const h2 = await hashPIN('a', '123456');
+  assert(h1 !== h2, 'Reihenfolge salt:pin soll nicht vertauscht werden können');
+});
+
+/* ── Suite 15: isPINTaken ──────────────────────────────────── */
+suite('isPINTaken (Duplikat-PIN-Prüfung)');
+
+await test('gibt false wenn USERS leer', async () => {
+  resetUsers();
+  USERS.length = 0;
+  assert(!(await isPINTaken('123456', 'test_user')), 'Leere Nutzerliste → false');
+  resetUsers();
+});
+
+await test('gibt false wenn eigene PIN (excludeId greift)', async () => {
+  resetUsers();
+  USERS[0] = { id: 'test_user', name: 'Test User', pin: '247813', mustChangePIN: true };
+  assert(!(await isPINTaken('247813', 'test_user')), 'Eigene PIN soll nicht als belegt gelten');
+  resetUsers();
+});
+
+await test('gibt true wenn anderer OTP-Nutzer dieselbe PIN hat', async () => {
+  resetUsers();
+  USERS.push({ id: 'user_b', name: 'User B', pin: '382910', mustChangePIN: true });
+  assert(await isPINTaken('382910', 'test_user'), 'OTP-PIN eines anderen Nutzers soll als belegt gelten');
+  resetUsers();
+});
+
+await test('gibt false wenn anderer OTP-Nutzer andere PIN hat', async () => {
+  resetUsers();
+  USERS.push({ id: 'user_b', name: 'User B', pin: '382910', mustChangePIN: true });
+  assert(!(await isPINTaken('111222', 'test_user')), 'Andere PIN soll nicht als belegt gelten');
+  resetUsers();
+});
+
+await test('gibt true wenn gehashter Nutzer dieselbe PIN hat', async () => {
+  resetUsers();
+  const salt = 'testsalt99';
+  const hash = await hashPIN('567890', salt);
+  USERS.push({ id: 'user_b', name: 'User B', pin: hash, salt, mustChangePIN: false });
+  assert(await isPINTaken('567890', 'test_user'), 'Gehashte PIN soll als belegt erkannt werden');
+  resetUsers();
+});
+
+await test('gibt false wenn gehashter Nutzer andere PIN hat', async () => {
+  resetUsers();
+  const salt = 'testsalt99';
+  const hash = await hashPIN('567890', salt);
+  USERS.push({ id: 'user_b', name: 'User B', pin: hash, salt, mustChangePIN: false });
+  assert(!(await isPINTaken('111222', 'test_user')), 'Andere PIN soll nicht als belegt gelten');
+  resetUsers();
+});
+
+/* ── Suite 16: getAdminPw / saveAdminPw ────────────────────── */
+suite('getAdminPw (Fallback Admin1234)');
+
+await test('gibt Admin1234 zurück wenn kein gespeicherter Wert', () => {
+  resetStore();
+  assertEqual(getAdminPw(), ADMIN_PW_DEFAULT, 'Soll Admin1234 zurückgeben ohne gespeicherten Wert');
+});
+
+await test('gibt gespeicherten Wert zurück nach saveAdminPw', () => {
+  resetStore();
+  saveAdminPw('MeinNeuesPasswort');
+  assertEqual(getAdminPw(), 'MeinNeuesPasswort', 'Soll gespeichertes Passwort zurückgeben');
+  resetStore();
+});
+
+await test('Admin1234 ist der Default (nicht leer)', () => {
+  assert(ADMIN_PW_DEFAULT.length > 0, 'Default-Passwort soll nicht leer sein');
+  assertEqual(ADMIN_PW_DEFAULT, 'Admin1234', 'Default soll Admin1234 sein');
+});
+
+/* ── Suite 17: getZeitfenster – Ablauf ─────────────────────── */
+suite('getZeitfenster (Ablauf und Fallback)');
+
+await test('gibt gespeichertes Fenster zurück wenn Datum = heute', () => {
+  resetStore();
+  saveZeitfenster('08:00', '18:00');
+  const zf = getZeitfenster();
+  assertEqual(zf.start, '08:00', 'start soll 08:00 sein');
+  assertEqual(zf.end,   '18:00', 'end soll 18:00 sein');
+});
+
+await test('gibt Fallback zurück wenn kein Eintrag vorhanden', () => {
+  resetStore();
+  const zf = getZeitfenster();
+  assertEqual(zf.start, '07:00', 'Fallback-start soll 07:00 sein');
+  assertEqual(zf.end,   '21:00', 'Fallback-end soll 21:00 sein');
+});
+
+await test('gibt Fallback zurück wenn gespeichertes Datum von gestern ist', () => {
+  resetStore();
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  const oldDate = yesterday.toISOString().slice(0, 10);
+  localStorage.setItem('stempeluhr_zeitfenster', JSON.stringify({ date: oldDate, start: '10:00', end: '12:00' }));
+  const zf = getZeitfenster();
+  assertEqual(zf.start, '07:00', 'Abgelaufenes Fenster soll Fallback liefern');
+  assertEqual(zf.end,   '21:00', 'Abgelaufenes Fenster soll Fallback liefern');
+});
+
+await test('gibt Fallback zurück bei ungültigem JSON', () => {
+  localStorage.setItem('stempeluhr_zeitfenster', 'KAPUTT{{');
+  const zf = getZeitfenster();
+  assertEqual(zf.start, '07:00', 'Bei Parse-Fehler soll Fallback kommen');
+  resetStore();
+});
+
+/* ── Suite 18: getUsers – removedUsers ─────────────────────── */
+suite('getUsers (removedUsers-Filterung)');
+
+await test('removedUser aus defaultUsers wird nicht zurückgegeben (kein Storage)', () => {
+  resetStore(); resetConfig();
+  CONFIG.removedUsers = ['default_a'];
+  const users = getUsers();
+  assert(users.every(u => u.id !== 'default_a'), 'removed_a darf nicht im Ergebnis sein');
+  resetConfig();
+});
+
+await test('removedUser aus stored wird gefiltert', () => {
+  resetStore(); resetConfig();
+  localStorage.setItem('stempeluhr_users', JSON.stringify([
+    { id: 'stored_user', name: 'Stored', pin: '222222', mustChangePIN: true },
+    { id: 'will_be_removed', name: 'Gone', pin: '333333', mustChangePIN: true },
+  ]));
+  CONFIG.removedUsers = ['will_be_removed'];
+  const users = getUsers();
+  assert(users.every(u => u.id !== 'will_be_removed'), 'will_be_removed darf nicht im Ergebnis sein');
+  assert(users.some(u => u.id === 'stored_user'), 'stored_user soll erhalten bleiben');
+  resetConfig();
+});
+
+await test('removedUser in defaultUsers und stored: wird nicht per Merge re-added', () => {
+  resetStore(); resetConfig();
+  // Szenario: 'default_a' ist in defaultUsers UND in removedUsers; Storage ist leer
+  CONFIG.removedUsers = ['default_a'];
+  const users = getUsers();
+  assert(!users.some(u => u.id === 'default_a'), 'default_a soll nicht re-added werden');
+  resetConfig();
+});
+
+await test('removedUser in defaultUsers aber Storage hat ihn: wird aus stored entfernt', () => {
+  resetStore(); resetConfig();
+  localStorage.setItem('stempeluhr_users', JSON.stringify([
+    { id: 'default_a', name: 'Default A', pin: '111111', mustChangePIN: true },
+    { id: 'other_user', name: 'Other', pin: '444444', mustChangePIN: true },
+  ]));
+  CONFIG.removedUsers = ['default_a'];
+  const users = getUsers();
+  assert(!users.some(u => u.id === 'default_a'), 'default_a soll aus stored gefiltert werden');
+  assert(users.some(u => u.id === 'other_user'), 'other_user soll erhalten bleiben');
+  resetConfig();
+});
+
+/* ── Suite 19: getUsers – Storage-Robustheit ──────────────── */
+suite('getUsers (Storage-Robustheit)');
+
+await test('kein Storage → Defaults werden gespeichert und zurückgegeben', () => {
+  resetStore(); resetConfig();
+  const users = getUsers();
+  assertEqual(users.length, 1, 'Soll 1 Default-User zurückgeben');
+  assertEqual(users[0].id, 'default_a', 'Default-User-ID stimmt nicht');
+  // und gespeichert:
+  const stored = JSON.parse(localStorage.getItem('stempeluhr_users'));
+  assertEqual(stored.length, 1, 'Soll auch in localStorage gespeichert sein');
+  resetConfig();
+});
+
+await test('ungültiges JSON in Storage → Defaults werden verwendet', () => {
+  resetStore(); resetConfig();
+  localStorage.setItem('stempeluhr_users', 'KEIN_JSON{{{');
+  const users = getUsers();
+  assertEqual(users.length, 1, 'Soll Defaults liefern bei Parse-Fehler');
+  resetConfig();
+});
+
+await test('Storage ist ein Objekt statt Array → Defaults werden verwendet', () => {
+  resetStore(); resetConfig();
+  localStorage.setItem('stempeluhr_users', JSON.stringify({ id: 'no_array' }));
+  const users = getUsers();
+  assertEqual(users.length, 1, 'Soll Defaults liefern wenn kein Array');
+  resetConfig();
+});
+
+await test('neuer Default-User wird zu vorhandenen stored-Usern ergänzt', () => {
+  resetStore(); resetConfig();
+  // Simulate: stored hat nur einen benutzerdefinierten User (default_a noch nicht vorhanden)
+  localStorage.setItem('stempeluhr_users', JSON.stringify([
+    { id: 'custom_user', name: 'Custom', pin: '999888', mustChangePIN: true },
+  ]));
+  // default_a ist in defaultUsers aber nicht in stored → soll ergänzt werden
+  const users = getUsers();
+  assert(users.some(u => u.id === 'default_a'), 'default_a soll aus defaults ergänzt werden');
+  assert(users.some(u => u.id === 'custom_user'), 'custom_user soll erhalten bleiben');
+  resetConfig();
+});
+
+await test('zurückgegebene Objekte sind Kopien (keine Referenzen auf CONFIG)', () => {
+  resetStore(); resetConfig();
+  const users = getUsers();
+  users[0].name = 'MUTIERT';
+  // Original in CONFIG soll unberührt sein
+  assert(CONFIG.defaultUsers[0].name !== 'MUTIERT', 'CONFIG.defaultUsers darf nicht mutiert werden');
+  resetConfig();
+});
+
+/* ── Hilfsfunktionen für Config-Tests ─────────────────────── */
+
+// Extrahierte Overlay-Logik (1:1 aus LifeguardClock.html)
+const OVERLAY_DEVICE_FIELDS = ['adminPin', 'dayBoundaryHour', 'pinClearSeconds',
+                               'autoLogoutSeconds', 'screensaverSeconds', 'zeitfensterDefaults'];
+function applyCloudConfigOverlay(targetCfg, cloudData) {
+  if (!cloudData || typeof cloudData !== 'object') return;
+  OVERLAY_DEVICE_FIELDS.forEach(k => { if (k in cloudData) targetCfg[k] = cloudData[k]; });
+  if (Array.isArray(cloudData.types) && cloudData.types.length > 0) {
+    targetCfg.types = cloudData.types;
+  }
+}
+
+// Extrahierte Export-Logik (1:1 aus pushConfigToCloud)
+const EXPORT_DEVICE_FIELDS = ['adminPin', 'dayBoundaryHour', 'pinClearSeconds',
+                              'autoLogoutSeconds', 'screensaverSeconds', 'zeitfensterDefaults', 'types'];
+function buildExportableConfig(cfg) {
+  const out = {};
+  EXPORT_DEVICE_FIELDS.forEach(k => { if (k in cfg) out[k] = cfg[k]; });
+  return out;
+}
+
+// checkDayBoundary (1:1 aus LifeguardClock.html, mit now-Parameter)
+let _lastKnownDay = todayISO();
+function checkDayBoundary(now = new Date()) {
+  const currentDay = todayISO(now);
+  if (currentDay === _lastKnownDay) return;
+  _lastKnownDay = currentDay;
+  const boundary   = CONFIG.dayBoundaryHour ?? 4;
+  const boundaryTs = new Date(now);
+  boundaryTs.setHours(boundary, 0, 0, 0);
+  const stopTs    = boundaryTs.toISOString();
+  const allStates = getAllStates();
+  let changed     = false;
+  USERS.forEach(user => {
+    const state = allStates[user.id];
+    if (!state) return;
+    TYPES.forEach(type => {
+      if (!state[type.key]) return;
+      const durMs = calcDurationMs(user.name, type.logType, stopTs);
+      const log   = getLog();
+      log.push({ id: Date.now() + Math.random(), nutzer: user.name, typ: type.logType,
+        aktion: 'stop', zeitstempel: stopTs, auto: true, dauer_ms: durMs });
+      saveLog(log);
+      state[type.key] = false;
+      changed = true;
+    });
+  });
+  if (changed) { saveAllStates(allStates); writeLocalBackup(); }
+}
+
+/* ── Suite 20: applyCloudConfigOverlay ────────────────────── */
+suite('applyCloudConfigOverlay (Overlay-Logik)');
+
+await test('gerätespezifische Felder werden übernommen', () => {
+  const cfg = { adminPin: '000000', dayBoundaryHour: 4, screensaverSeconds: 60 };
+  applyCloudConfigOverlay(cfg, { adminPin: '112233', dayBoundaryHour: 6, screensaverSeconds: 120 });
+  assertEqual(cfg.adminPin,         '112233', 'adminPin soll übernommen werden');
+  assertEqual(cfg.dayBoundaryHour,  6,        'dayBoundaryHour soll übernommen werden');
+  assertEqual(cfg.screensaverSeconds, 120,    'screensaverSeconds soll übernommen werden');
+});
+
+await test('defaultUsers wird NICHT übernommen', () => {
+  const cfg = { defaultUsers: [{ id: 'lokal', name: 'Lokal' }] };
+  applyCloudConfigOverlay(cfg, { defaultUsers: [{ id: 'cloud', name: 'Cloud' }] });
+  assertEqual(cfg.defaultUsers.length, 1, 'defaultUsers soll unverändert bleiben');
+  assertEqual(cfg.defaultUsers[0].id, 'lokal', 'Lokale defaultUsers sollen erhalten bleiben');
+});
+
+await test('removedUsers wird NICHT übernommen', () => {
+  const cfg = { removedUsers: ['lokal_id'] };
+  applyCloudConfigOverlay(cfg, { removedUsers: ['cloud_id'] });
+  assertEqual(cfg.removedUsers[0], 'lokal_id', 'removedUsers soll nicht aus Cloud überschrieben werden');
+});
+
+await test('cloud-Credentials werden NICHT übernommen', () => {
+  const cfg = { cloud: { url: 'lokal', user: 'u', pass: 'p' } };
+  applyCloudConfigOverlay(cfg, { cloud: { url: 'cloud-url', user: 'cu', pass: 'cp' } });
+  assertEqual(cfg.cloud.url, 'lokal', 'cloud.url soll nicht überschrieben werden');
+});
+
+await test('types werden übernommen wenn Cloud-Array nicht leer', () => {
+  const cloudTypes = [{ key: 'anwesenheit', label: 'A', logType: 'a', color: 'blue' }];
+  const cfg = { types: [] };
+  applyCloudConfigOverlay(cfg, { types: cloudTypes });
+  assertEqual(cfg.types.length, 1, 'types aus Cloud sollen übernommen werden');
+  assertEqual(cfg.types[0].key, 'anwesenheit', 'Typ-Schlüssel soll stimmen');
+});
+
+await test('lokale types bleiben wenn Cloud-Array leer ist', () => {
+  const localTypes = [{ key: 'anwesenheit', label: 'A', logType: 'a', color: 'blue' }];
+  const cfg = { types: localTypes };
+  applyCloudConfigOverlay(cfg, { types: [] });
+  assertEqual(cfg.types.length, 1, 'Lokale types sollen bei leerem Cloud-Array erhalten bleiben');
+});
+
+await test('lokale types bleiben wenn Cloud kein types-Feld hat', () => {
+  const localTypes = [{ key: 'anwesenheit', label: 'A', logType: 'a', color: 'blue' }];
+  const cfg = { types: localTypes };
+  applyCloudConfigOverlay(cfg, { adminPin: '999999' });
+  assertEqual(cfg.types.length, 1, 'Lokale types sollen erhalten bleiben wenn Cloud kein types hat');
+});
+
+await test('unbekannte Felder werden ignoriert', () => {
+  const cfg = { adminPin: '000000' };
+  applyCloudConfigOverlay(cfg, { unknownField: 'wert', anotherField: 42 });
+  assert(!('unknownField' in cfg), 'Unbekannte Felder sollen nicht übernommen werden');
+  assert(!('anotherField' in cfg), 'Unbekannte Felder sollen nicht übernommen werden');
+});
+
+await test('null als cloudData verursacht keinen Fehler', () => {
+  const cfg = { adminPin: '000000' };
+  applyCloudConfigOverlay(cfg, null);
+  assertEqual(cfg.adminPin, '000000', 'Config soll unverändert bleiben bei null');
+});
+
+/* ── Suite 21: buildExportableConfig ──────────────────────── */
+suite('buildExportableConfig (Push-Export)');
+
+await test('enthält adminPin, dayBoundaryHour, types', () => {
+  const cfg = { adminPin: '112233', dayBoundaryHour: 4, types: [{ key: 'a' }],
+    cloud: { url: 'x' }, defaultUsers: [{ id: 'u' }] };
+  const exp = buildExportableConfig(cfg);
+  assert('adminPin'        in exp, 'adminPin soll exportiert werden');
+  assert('dayBoundaryHour' in exp, 'dayBoundaryHour soll exportiert werden');
+  assert('types'           in exp, 'types soll exportiert werden');
+});
+
+await test('enthält NICHT defaultUsers', () => {
+  const cfg = { adminPin: '112233', defaultUsers: [{ id: 'geheim' }] };
+  const exp = buildExportableConfig(cfg);
+  assert(!('defaultUsers' in exp), 'defaultUsers darf nicht exportiert werden');
+});
+
+await test('enthält NICHT removedUsers', () => {
+  const cfg = { adminPin: '112233', removedUsers: ['alte_id'] };
+  const exp = buildExportableConfig(cfg);
+  assert(!('removedUsers' in exp), 'removedUsers darf nicht exportiert werden');
+});
+
+await test('enthält NICHT cloud-Zugangsdaten', () => {
+  const cfg = { adminPin: '112233', cloud: { url: 'https://cloud.example.com', pass: 'secret' } };
+  const exp = buildExportableConfig(cfg);
+  assert(!('cloud' in exp), 'cloud-Zugangsdaten dürfen nicht exportiert werden');
+});
+
+await test('fehlende Felder werden nicht als undefined exportiert', () => {
+  const cfg = { adminPin: '112233' };
+  const exp = buildExportableConfig(cfg);
+  assert(!('types' in exp), 'Nicht vorhandene Felder sollen nicht exportiert werden');
+  assert(!('screensaverSeconds' in exp), 'Nicht vorhandene Felder sollen nicht exportiert werden');
+});
+
+await test('Roundtrip: Export → Overlay → gleiche Gerätewerte', () => {
+  const original = { adminPin: '445566', dayBoundaryHour: 6, screensaverSeconds: 90,
+    types: [{ key: 'anwesenheit', label: 'A', logType: 'a', color: 'blue' }],
+    cloud: { url: 'x' }, defaultUsers: [{ id: 'u' }] };
+  const exported = buildExportableConfig(original);
+  const restored = { adminPin: '000000', dayBoundaryHour: 4, screensaverSeconds: 60,
+    types: [], cloud: { url: 'y' }, defaultUsers: [] };
+  applyCloudConfigOverlay(restored, exported);
+  assertEqual(restored.adminPin,          '445566', 'adminPin soll nach Roundtrip stimmen');
+  assertEqual(restored.dayBoundaryHour,   6,        'dayBoundaryHour soll stimmen');
+  assertEqual(restored.screensaverSeconds, 90,      'screensaverSeconds soll stimmen');
+  assertEqual(restored.types.length,      1,        'types soll stimmen');
+  assertEqual(restored.cloud.url,        'y',       'cloud.url soll NICHT überschrieben worden sein');
+  assert(restored.defaultUsers.length === 0,        'defaultUsers sollen NICHT überschrieben worden sein');
+});
+
+/* ── Suite 22: checkDayBoundary ───────────────────────────── */
+suite('checkDayBoundary (Tageswechsel-Auto-Stop)');
+
+await test('tut nichts wenn Tag sich nicht geändert hat', () => {
+  resetStore(); resetConfig(); rebuildTypes(); resetUsers();
+  _lastKnownDay = todayISO();
+  pushLog({ nutzer: 'Test User', typ: 'anwesenheit', aktion: 'start', zeitstempel: msAgo(60 * 60 * 1000) });
+  setStateActive('test_user', 'anwesenheit', true);
+  checkDayBoundary(new Date()); // gleicher Tag
+  const state = getAllStates()['test_user'];
+  assertEqual(state.anwesenheit, true, 'Anwesenheit soll noch aktiv sein wenn kein Tageswechsel');
+  assert(getLog().every(e => e.aktion !== 'stop'), 'Kein stop-Eintrag ohne Tageswechsel');
+});
+
+await test('stoppt alle aktiven Sitzungen beim Tageswechsel', () => {
+  resetStore(); resetConfig(); rebuildTypes(); resetUsers();
+  // Simuliere: gestern war der letzte Tag
+  const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1);
+  _lastKnownDay = todayISO(yesterday);
+  pushLog({ nutzer: 'Test User', typ: 'anwesenheit', aktion: 'start', zeitstempel: msAgo(3 * 60 * 60 * 1000) });
+  setStateActive('test_user', 'anwesenheit', true);
+  checkDayBoundary(new Date()); // heute → Tageswechsel
+  const state = getAllStates()['test_user'];
+  assertEqual(state.anwesenheit, false, 'Anwesenheit soll beim Tageswechsel gestoppt werden');
+  const stopEntry = getLog().find(e => e.aktion === 'stop' && e.auto);
+  assert(stopEntry !== undefined, 'auto-stop Eintrag im Log fehlt');
+});
+
+await test('stop-Zeitstempel ist exakt die Grenzuhrzeit (04:00:00)', () => {
+  resetStore(); resetConfig(); rebuildTypes(); resetUsers();
+  CONFIG.dayBoundaryHour = 4;
+  const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1);
+  _lastKnownDay = todayISO(yesterday);
+  pushLog({ nutzer: 'Test User', typ: 'anwesenheit', aktion: 'start', zeitstempel: msAgo(6 * 60 * 60 * 1000) });
+  setStateActive('test_user', 'anwesenheit', true);
+  const now = new Date();
+  checkDayBoundary(now);
+  const stopEntry = getLog().find(e => e.aktion === 'stop' && e.auto);
+  assert(stopEntry !== undefined, 'stop-Eintrag fehlt');
+  const stopDate = new Date(stopEntry.zeitstempel);
+  assertEqual(stopDate.getHours(),   4, `Stop-Stunde soll 4 sein, war ${stopDate.getHours()}`);
+  assertEqual(stopDate.getMinutes(), 0, `Stop-Minute soll 0 sein`);
+  assertEqual(stopDate.getSeconds(), 0, `Stop-Sekunde soll 0 sein`);
+});
+
+await test('stoppt alle Typen gleichzeitig beim Tageswechsel', () => {
+  resetStore(); resetConfig(); rebuildTypes(); resetUsers();
+  const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1);
+  _lastKnownDay = todayISO(yesterday);
+  pushLog({ nutzer: 'Test User', typ: 'anwesenheit',   aktion: 'start', zeitstempel: msAgo(4 * 60 * 60 * 1000) });
+  pushLog({ nutzer: 'Test User', typ: 'wachdienst',    aktion: 'start', zeitstempel: msAgo(1 * 60 * 60 * 1000) });
+  setStateActive('test_user', 'anwesenheit',  true);
+  setStateActive('test_user', 'wachdienst',   true);
+  checkDayBoundary(new Date());
+  const state = getAllStates()['test_user'];
+  assertEqual(state.anwesenheit, false, 'anwesenheit soll gestoppt sein');
+  assertEqual(state.wachdienst,  false, 'wachdienst soll gestoppt sein');
+});
+
+await test('stoppt nur aktive Sitzungen (inaktive bleiben unberührt)', () => {
+  resetStore(); resetConfig(); rebuildTypes(); resetUsers();
+  const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1);
+  _lastKnownDay = todayISO(yesterday);
+  setStateActive('test_user', 'anwesenheit', false);
+  setStateActive('test_user', 'wachdienst',  false);
+  checkDayBoundary(new Date());
+  const stops = getLog().filter(e => e.aktion === 'stop');
+  assertEqual(stops.length, 0, 'Keine stop-Einträge wenn nichts aktiv war');
+});
+
+await test('_lastKnownDay wird nach Tageswechsel aktualisiert', () => {
+  resetStore(); resetConfig(); rebuildTypes(); resetUsers();
+  const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1);
+  _lastKnownDay = todayISO(yesterday);
+  const today = todayISO();
+  checkDayBoundary(new Date());
+  assertEqual(_lastKnownDay, today, '_lastKnownDay soll auf heute gesetzt werden');
+});
+
+await test('zweiter Aufruf am gleichen Tag erzeugt keinen zweiten Stop', () => {
+  resetStore(); resetConfig(); rebuildTypes(); resetUsers();
+  const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1);
+  _lastKnownDay = todayISO(yesterday);
+  pushLog({ nutzer: 'Test User', typ: 'anwesenheit', aktion: 'start', zeitstempel: msAgo(3 * 60 * 60 * 1000) });
+  setStateActive('test_user', 'anwesenheit', true);
+  checkDayBoundary(new Date()); // Tageswechsel
+  checkDayBoundary(new Date()); // nochmal gleicher Tag → nichts
+  const stops = getLog().filter(e => e.aktion === 'stop' && e.auto);
+  assertEqual(stops.length, 1, 'Nur ein auto-stop erwartet');
+});
+
+/* ── Suite 23: Regressions-Tests (konkrete Bugs) ──────────── */
+suite('Regressions-Tests');
+
+// BUG: Kettenreaktion — Cloud hatte types:[], Overlay löschte lokale Types,
+//      pushConfigToCloud exportierte dann [], nächster Pull spielte [] zurück → keine Buttons
+await test('Kettenreaktion: leere Cloud-types überschreiben nicht → Export enthält lokale types', () => {
+  // Schritt 1: config.js hat korrekte Types (Tablet-Zustand)
+  const localCfg = {
+    adminPin: '000000', dayBoundaryHour: 4,
+    types: [{ key: 'anwesenheit', label: 'Anwesenheit', logType: 'anwesenheit', color: 'blue' }],
+    defaultUsers: [{ id: 'martin', name: 'Martin' }],
+    cloud: { url: 'https://cloud.example.com', user: 'u', pass: 'p' },
+  };
+  // Schritt 2: Cloud-Konfig hat types:[] (der alte Bug-Zustand)
+  const badCloudConfig = { adminPin: '000000', dayBoundaryHour: 4, types: [], defaultUsers: [] };
+  // Schritt 3: Overlay anwenden — types sollen NICHT gelöscht werden
+  applyCloudConfigOverlay(localCfg, badCloudConfig);
+  assertEqual(localCfg.types.length, 1, 'Lokale types sollen nach Overlay noch vorhanden sein');
+  // Schritt 4: Export für pushConfigToCloud
+  const exported = buildExportableConfig(localCfg);
+  // Schritt 5: Export muss korrekte types enthalten, NICHT []
+  assert(Array.isArray(exported.types) && exported.types.length > 0,
+    'Exportierter Config darf types nicht leer exportieren nach Overlay mit types:[]');
+  assertEqual(exported.types[0].key, 'anwesenheit', 'Exportierte types müssen die lokalen sein');
+  // Schritt 6: Neues Gerät lädt diese exportierte Config → Overlay anwenden
+  const freshCfg = { adminPin: '999999', dayBoundaryHour: 4, types: [], defaultUsers: [] };
+  applyCloudConfigOverlay(freshCfg, exported);
+  assertEqual(freshCfg.types.length, 1, 'Nach Pull der korrekten Cloud-Config sollen types vorhanden sein');
+});
+
+// BUG: defaultUsers aus Cloud-Config hat leere Liste → Nutzer weg nach Overlay
+await test('defaultUsers bleibt lokal auch wenn Cloud-Config defaultUsers enthält', () => {
+  const localCfg = {
+    adminPin: '000000',
+    defaultUsers: [{ id: 'martin', name: 'Martin', pin: '123456' }],
+    types: [],
+  };
+  const cloudConfig = { adminPin: '112233', defaultUsers: [], removedUsers: ['martin'] };
+  applyCloudConfigOverlay(localCfg, cloudConfig);
+  assertEqual(localCfg.defaultUsers.length, 1,       'defaultUsers soll erhalten bleiben');
+  assertEqual(localCfg.defaultUsers[0].id, 'martin', 'Martin soll noch da sein');
+  assert(!localCfg.removedUsers || !localCfg.removedUsers.includes('martin'),
+    'removedUsers aus Cloud soll nicht lokale Nutzerliste leeren');
+});
+
+// BUG: Anwesenheit lief durch 4-Uhr-Grenze ohne auto-stop
+await test('Anwesenheit erhält auto-stop beim Tageswechsel (der ursprüngliche 4-Uhr-Bug)', () => {
+  resetStore(); resetConfig(); rebuildTypes(); resetUsers();
+  CONFIG.dayBoundaryHour = 4;
+  const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1);
+  _lastKnownDay = todayISO(yesterday);
+  pushLog({ nutzer: 'Test User', typ: 'anwesenheit', aktion: 'start',
+    zeitstempel: msAgo(10 * 60 * 60 * 1000) });
+  setStateActive('test_user', 'anwesenheit', true);
+  checkDayBoundary(new Date());
+  assertEqual(getAllStates()['test_user'].anwesenheit, false,
+    'Anwesenheit muss beim Tageswechsel automatisch gestoppt werden');
+  const stopEntry = getLog().find(e => e.typ === 'anwesenheit' && e.aktion === 'stop' && e.auto);
+  assert(stopEntry !== undefined, 'auto-stop Eintrag für Anwesenheit fehlt im Log');
+});
+
+/* ══════════════════════════════════════════════════════════════
+   Suite 25 – TYPES disabled-Filter
+══════════════════════════════════════════════════════════════ */
+suite('TYPES disabled-Filter');
+
+await test('disabled:true → Typ nicht in TYPES', () => {
+  CONFIG.types = [
+    { key: 'anwesenheit', label: 'Anwesenheit', logType: 'anwesenheit', color: 'blue' },
+    { key: 'wachdienst',  label: 'Wachdienst',  logType: 'wachdienst',  color: 'amber', disabled: true },
+  ];
+  rebuildTypes();
+  assert(TYPES.some(t => t.key === 'anwesenheit'), 'anwesenheit (kein disabled) muss in TYPES sein');
+  assert(!TYPES.some(t => t.key === 'wachdienst'), 'wachdienst (disabled:true) darf nicht in TYPES sein');
+  resetConfig(); rebuildTypes();
+});
+
+await test('disabled:false → Typ in TYPES enthalten', () => {
+  CONFIG.types = [
+    { key: 'anwesenheit', label: 'Anwesenheit', logType: 'anwesenheit', color: 'blue', disabled: false },
+  ];
+  rebuildTypes();
+  assert(TYPES.some(t => t.key === 'anwesenheit'), 'anwesenheit (disabled:false) muss in TYPES sein');
+  resetConfig(); rebuildTypes();
+});
+
+await test('kein disabled-Feld → Typ in TYPES enthalten', () => {
+  CONFIG.types = [{ key: 'typ_x', label: 'Typ X', logType: 'typ_x', color: 'blue' }];
+  rebuildTypes();
+  assert(TYPES.some(t => t.key === 'typ_x'), 'Typ ohne disabled muss in TYPES sein');
+  resetConfig(); rebuildTypes();
+});
+
+await test('Mix: 2 disabled, 1 aktiv → TYPES enthält genau 1', () => {
+  CONFIG.types = [
+    { key: 'a', label: 'A', logType: 'a', color: 'blue',  disabled: true },
+    { key: 'b', label: 'B', logType: 'b', color: 'amber' },
+    { key: 'c', label: 'C', logType: 'c', color: 'red',   disabled: true },
+  ];
+  rebuildTypes();
+  assertEqual(TYPES.length, 1, 'Genau 1 aktiver Typ erwartet');
+  assertEqual(TYPES[0].key, 'b', 'Typ b muss der einzige sein');
+  resetConfig(); rebuildTypes();
+});
+
+/* ══════════════════════════════════════════════════════════════
+   Suite 26 – getZFDefaultForType
+══════════════════════════════════════════════════════════════ */
+suite('getZFDefaultForType');
+
+await test('Typ ohne zeitfenster → CONFIG.zeitfensterDefaults für heute', () => {
+  const window = { start: '08:00', end: '20:00' };
+  CONFIG.zeitfensterDefaults = {
+    so: window, mo: window, di: window, mi: window, do: window, fr: window, sa: window,
+  };
+  const type = { key: 'wachdienst', logType: 'wachdienst' };
+  const result = getZFDefaultForType(type);
+  assertEqual(result.start, '08:00', 'start soll aus zeitfensterDefaults kommen');
+  assertEqual(result.end, '20:00', 'end soll aus zeitfensterDefaults kommen');
+  resetConfig();
+});
+
+await test('Typ mit zeitfenster für alle Wochentage → gibt heutigen Tag zurück', () => {
+  const window = { start: '09:00', end: '17:00' };
+  const type = {
+    key: 'wachdienst', logType: 'wachdienst',
+    zeitfenster: { so: window, mo: window, di: window, mi: window, do: window, fr: window, sa: window },
+  };
+  const result = getZFDefaultForType(type);
+  assertEqual(result.start, '09:00', 'start soll aus type.zeitfenster kommen');
+  assertEqual(result.end, '17:00', 'end soll aus type.zeitfenster kommen');
+});
+
+await test('Typ mit zeitfenster ohne heutigen Wochentag → null', () => {
+  const type = { key: 'wachdienst', logType: 'wachdienst', zeitfenster: {} };
+  const result = getZFDefaultForType(type);
+  assertNull(result, 'Fehlender Wochentag soll null ergeben');
+});
+
+await test('Kein zeitfensterDefaults → Hardcode-Fallback 07:00–21:00', () => {
+  delete CONFIG.zeitfensterDefaults;
+  const type = { key: 'wachdienst', logType: 'wachdienst' };
+  const result = getZFDefaultForType(type);
+  assertEqual(result.start, '07:00', 'Fallback-Start soll 07:00 sein');
+  assertEqual(result.end,   '21:00', 'Fallback-End soll 21:00 sein');
+  resetConfig();
+});
+
+/* ══════════════════════════════════════════════════════════════
+   Suite 27 – getZeitfensterForType / saveZeitfensterForType
+══════════════════════════════════════════════════════════════ */
+suite('getZeitfensterForType / saveZeitfensterForType');
+
+await test('Kein localStorage-Eintrag → Default aus getZFDefaultForType', () => {
+  resetStore();
+  const window = { start: '06:00', end: '22:00' };
+  CONFIG.zeitfensterDefaults = {
+    so: window, mo: window, di: window, mi: window, do: window, fr: window, sa: window,
+  };
+  const type   = { key: 'wachdienst', logType: 'wachdienst' };
+  const result = getZeitfensterForType(type);
+  assertEqual(result.start, '06:00', 'Ohne Override soll Default zurückgegeben werden');
+  resetConfig(); resetStore();
+});
+
+await test('saveZeitfensterForType speichert korrekten Wert', () => {
+  resetStore();
+  const type = { key: 'wachdienst', logType: 'wachdienst' };
+  saveZeitfensterForType('wachdienst', '10:00', '16:00');
+  const result = getZeitfensterForType(type);
+  assertEqual(result.start, '10:00', 'Gespeicherter Start soll 10:00 sein');
+  assertEqual(result.end,   '16:00', 'Gespeichertes Ende soll 16:00 sein');
+  resetStore();
+});
+
+await test('Zwei verschiedene Typen unabhängig speicherbar', () => {
+  resetStore();
+  saveZeitfensterForType('wachdienst', '08:00', '14:00');
+  saveZeitfensterForType('sanitaet',   '12:00', '18:00');
+  const w = getZeitfensterForType({ key: 'wachdienst' });
+  const s = getZeitfensterForType({ key: 'sanitaet'   });
+  assertEqual(w.start, '08:00', 'Wachdienst-Start soll unverändert sein');
+  assertEqual(s.start, '12:00', 'Sanitaet-Start soll unverändert sein');
+  resetStore();
+});
+
+await test('Veraltetes Datum → neues Datum, kein alter Override', () => {
+  resetStore();
+  // Alten Eintrag mit gestern einschreiben
+  const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1);
+  const oldDate   = yesterday.toISOString().slice(0, 10);
+  localStorage.setItem('stempeluhr_zeitfenster', JSON.stringify({
+    date: oldDate, types: { wachdienst: { start: '01:00', end: '02:00' } },
+  }));
+  const window = { start: '07:00', end: '21:00' };
+  CONFIG.zeitfensterDefaults = {
+    so: window, mo: window, di: window, mi: window, do: window, fr: window, sa: window,
+  };
+  const type   = { key: 'wachdienst', logType: 'wachdienst' };
+  const result = getZeitfensterForType(type);
+  assert(result.start !== '01:00', 'Alter Override soll nicht zurückgegeben werden');
+  assertEqual(result.start, '07:00', 'Default soll nach veraltetem Eintrag gelten');
+  resetConfig(); resetStore();
+});
+
+/* ══════════════════════════════════════════════════════════════
+   Suite 28 – isWithinZeitfensterForType
+══════════════════════════════════════════════════════════════ */
+suite('isWithinZeitfensterForType');
+
+await test('null-Zeitfenster (leeres zeitfenster-Objekt) → false', () => {
+  resetStore();
+  // type.zeitfenster = {} → heutiger Tag fehlt → null
+  const type = { key: 'wachdienst', logType: 'wachdienst', zeitfenster: {} };
+  assert(!isWithinZeitfensterForType(type), 'Kein ZF-Eintrag für heute → false');
+  resetStore();
+});
+
+await test('Override 00:00–23:59 → immer true', () => {
+  resetStore();
+  saveZeitfensterForType('wachdienst', '00:00', '23:59');
+  const type = { key: 'wachdienst', logType: 'wachdienst' };
+  assert(isWithinZeitfensterForType(type), '00:00–23:59 soll immer true sein');
+  resetStore();
+});
+
+await test('Leerer Bereich start === end → false', () => {
+  resetStore();
+  saveZeitfensterForType('wachdienst', '00:00', '00:00');
+  const type = { key: 'wachdienst', logType: 'wachdienst' };
+  assert(!isWithinZeitfensterForType(type), 'start === end → leerer Bereich → false');
+  resetStore();
+});
+
+/* ══════════════════════════════════════════════════════════════
+   Suite 29 – checkZeitfensterEnd per-Typ
+══════════════════════════════════════════════════════════════ */
+suite('checkZeitfensterEnd per-Typ');
+
+await test('Typ innerhalb seines Fensters bleibt aktiv', () => {
+  resetStore(); resetConfig(); rebuildTypes(); resetUsers();
+  // wachdienst hat Zeitfenster 00:00–23:59 → immer aktiv
+  saveZeitfensterForType('wachdienst', '00:00', '23:59');
+  pushLog({ nutzer: 'Test User', typ: 'wachdienst', aktion: 'start', zeitstempel: msAgo(30 * 60 * 1000) });
+  setStateActive('test_user', 'wachdienst', true);
+  checkZeitfensterEnd();
+  assertEqual(getAllStates()['test_user'].wachdienst, true, 'wachdienst (im ZF) darf nicht gestoppt werden');
+  resetStore();
+});
+
+await test('Typ außerhalb seines Fensters wird automatisch gestoppt', () => {
+  resetStore(); resetConfig(); rebuildTypes(); resetUsers();
+  // wachdienst hat Zeitfenster 00:00–00:00 → niemals aktiv
+  saveZeitfensterForType('wachdienst', '00:00', '00:00');
+  pushLog({ nutzer: 'Test User', typ: 'wachdienst', aktion: 'start', zeitstempel: msAgo(30 * 60 * 1000) });
+  setStateActive('test_user', 'wachdienst', true);
+  checkZeitfensterEnd();
+  assertEqual(getAllStates()['test_user'].wachdienst, false, 'wachdienst (außerhalb ZF) muss gestoppt werden');
+  const stopEntry = getLog().find(e => e.typ === 'wachdienst' && e.aktion === 'stop' && e.auto);
+  assert(stopEntry !== undefined, 'auto-stop-Eintrag für wachdienst fehlt im Log');
+  resetStore();
+});
+
+await test('Zwei Typen mit unterschiedlichen Fenstern: nur der außerhalb wird gestoppt', () => {
+  resetStore(); resetConfig(); rebuildTypes(); resetUsers();
+  // wachdienst: immer aktiv; sanitaet: niemals aktiv
+  saveZeitfensterForType('wachdienst', '00:00', '23:59');
+  saveZeitfensterForType('sanitaet',   '00:00', '00:00');
+  pushLog({ nutzer: 'Test User', typ: 'wachdienst',    aktion: 'start', zeitstempel: msAgo(10 * 60 * 1000) });
+  pushLog({ nutzer: 'Test User', typ: 'sanitaetsdienst', aktion: 'start', zeitstempel: msAgo(10 * 60 * 1000) });
+  setStateActive('test_user', 'wachdienst', true);
+  setStateActive('test_user', 'sanitaet',   true);
+  checkZeitfensterEnd();
+  const states = getAllStates()['test_user'];
+  assertEqual(states.wachdienst, true,  'wachdienst (im ZF) muss aktiv bleiben');
+  assertEqual(states.sanitaet,   false, 'sanitaet (außerhalb ZF) muss gestoppt werden');
+  resetStore();
+});
+
+await test('Kein aktiver Typ → keine Log-Einträge', () => {
+  resetStore(); resetConfig(); rebuildTypes(); resetUsers();
+  saveZeitfensterForType('wachdienst', '00:00', '00:00');
+  setStateActive('test_user', 'wachdienst', false);
+  const before = getLog().length;
+  checkZeitfensterEnd();
+  assertEqual(getLog().length, before, 'Kein Log-Eintrag ohne aktive Sitzung');
+  resetStore();
+});
+
+/* ══════════════════════════════════════════════════════════════
+   Suite 30 – pearsonR (dashboard.html)
+══════════════════════════════════════════════════════════════ */
+
+// Kopie der Funktion aus dashboard.html
+function pearsonR(xs, ys) {
+  const n = xs.length;
+  if (n < 2) return null;
+  const mx = xs.reduce((a,b) => a+b, 0) / n;
+  const my = ys.reduce((a,b) => a+b, 0) / n;
+  const num = xs.reduce((s,x,i) => s + (x - mx) * (ys[i] - my), 0);
+  const dx = Math.sqrt(xs.reduce((s,x) => s + (x - mx) ** 2, 0));
+  const dy = Math.sqrt(ys.reduce((s,y) => s + (y - my) ** 2, 0));
+  if (dx === 0 || dy === 0) return null;
+  return num / (dx * dy);
+}
+
+suite('Suite 30 – pearsonR', () => {
+  // perfekte positive Korrelation
+  const r1 = pearsonR([1,2,3,4,5], [2,4,6,8,10]);
+  assertApprox(r1, 1.0, 'Perfekte positive Korrelation → r = 1');
+
+  // perfekte negative Korrelation
+  const r2 = pearsonR([1,2,3,4,5], [10,8,6,4,2]);
+  assertApprox(r2, -1.0, 'Perfekte negative Korrelation → r = -1');
+
+  // keine Korrelation (konstante Y)
+  const r3 = pearsonR([1,2,3,4,5], [5,5,5,5,5]);
+  assertEqual(r3, null, 'Konstantes Y → null (keine Varianz)');
+
+  // nur ein Datenpunkt → null
+  const r4 = pearsonR([3], [7]);
+  assertEqual(r4, null, 'Weniger als 2 Datenpunkte → null');
+
+  // realistische Werte – r zwischen -1 und 1
+  const r5 = pearsonR([10,20,15,30,25], [8,18,12,28,20]);
+  assertEqual(r5 !== null && r5 > 0.9, true, 'Realistisch hohe Korrelation (r > 0.9)');
+
+  // alle X gleich → null
+  const r6 = pearsonR([5,5,5,5], [1,2,3,4]);
+  assertEqual(r6, null, 'Konstantes X → null');
+
+  // negative Korrelation, nicht perfekt
+  const r7 = pearsonR([1,2,3,4,5], [5,3,4,2,1]);
+  assertEqual(r7 !== null && r7 < 0, true, 'Negative (unreine) Korrelation → r < 0');
+
+  // genau 2 Datenpunkte, identische X → null
+  const r8 = pearsonR([2,2], [3,7]);
+  assertEqual(r8, null, '2 gleiche X-Werte → null');
+});
+
+/* ══════════════════════════════════════════════════════════════
+   Auswertung
+══════════════════════════════════════════════════════════════ */
+const out = document.getElementById('output');
+let suiteNow = '', passCount = 0, failCount = 0;
+
+results.forEach(r => {
+  if (r.suite !== suiteNow) {
+    suiteNow = r.suite;
+    const h = document.createElement('div');
+    h.className = 'suite-title';
+    h.textContent = r.suite;
+    out.appendChild(h);
+  }
+  const d = document.createElement('div');
+  d.className = 'result ' + (r.ok ? 'pass' : 'fail');
+  d.textContent = (r.ok ? '✓ ' : '✗ ') + r.name + (r.ok ? '' : '\n  → ' + r.err);
+  d.style.whiteSpace = 'pre-wrap';
+  out.appendChild(d);
+  if (r.ok) passCount++; else failCount++;
+});
+
+const sum = document.getElementById('summary');
+sum.className = failCount === 0 ? 'all-pass' : 'has-fail';
+sum.textContent = failCount === 0
+  ? `✓ Alle ${passCount} Tests bestanden`
+  : `✗ ${failCount} von ${passCount + failCount} Tests fehlgeschlagen`;
+
+})(); // async IIFE
+</script>
+</body>
+</html>
