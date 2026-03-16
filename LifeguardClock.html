@@ -2291,8 +2291,9 @@ function calcDurationMs(userName, logType, atTs) {
   const log = getLog();
   for (let i = log.length - 1; i >= 0; i--) {
     const e = log[i];
-    if (e.nutzer === userName && e.typ === logType && e.aktion === 'start')
-      return Math.max(0, atTime - new Date(e.zeitstempel).getTime());
+    if (e.nutzer !== userName || e.typ !== logType) continue;
+    if (e.aktion === 'stop')  return 0;  // stop vor start → keine offene Sitzung
+    if (e.aktion === 'start') return Math.max(0, atTime - new Date(e.zeitstempel).getTime());
   }
   return 0;
 }

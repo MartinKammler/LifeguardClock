@@ -193,8 +193,9 @@ function calcDurationMs(userName, logType, atTs) {
   const log = getLog();
   for (let i = log.length - 1; i >= 0; i--) {
     const e = log[i];
-    if (e.nutzer === userName && e.typ === logType && e.aktion === 'start')
-      return Math.max(0, atTime - new Date(e.zeitstempel).getTime());
+    if (e.nutzer !== userName || e.typ !== logType) continue;
+    if (e.aktion === 'stop')  return 0;  // stop vor start → keine offene Sitzung
+    if (e.aktion === 'start') return Math.max(0, atTime - new Date(e.zeitstempel).getTime());
   }
   return 0;
 }
@@ -600,12 +601,19 @@ await test('ignoriert früheren Start wenn neuerer vorhanden', () => {
   assert(Math.abs(dur - 20 * 60 * 1000) < 500, `Dauer soll ~20min sein, war ${dur}ms`);
 });
 
-await test('gibt Zeit seit letztem Start zurück (auch wenn stop folgte)', () => {
+await test('stop vor start im Rückwärtsscan → 0 (keine offene Sitzung)', () => {
   resetStore();
   pushLog({ nutzer: 'Test User', typ: 'wachdienst', aktion: 'start', zeitstempel: msAgo(60 * 60 * 1000) });
   pushLog({ nutzer: 'Test User', typ: 'wachdienst', aktion: 'stop',  zeitstempel: msAgo(30 * 60 * 1000), dauer_ms: 30 * 60 * 1000 });
+  assertEqual(calcDurationMs('Test User', 'wachdienst'), 0, 'Sitzung geschlossen → 0');
+});
+
+await test('Doppel-Start (Dateninkonsistenz): findet jüngsten Start', () => {
+  resetStore();
+  pushLog({ nutzer: 'Test User', typ: 'wachdienst', aktion: 'start', zeitstempel: msAgo(90 * 60 * 1000) });
+  pushLog({ nutzer: 'Test User', typ: 'wachdienst', aktion: 'start', zeitstempel: msAgo(20 * 60 * 1000) });
   const dur = calcDurationMs('Test User', 'wachdienst');
-  assert(Math.abs(dur - 60 * 60 * 1000) < 500, `Gibt Zeit seit letztem start zurück (~1h), war ${dur}ms`);
+  assert(Math.abs(dur - 20 * 60 * 1000) < 500, `Jüngster Start soll ~20min ergeben, war ${dur}ms`);
 });
 
 /* ── Suite 6: todayISO – dayBoundaryHour ───────────────────── */
