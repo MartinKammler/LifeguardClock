@@ -650,6 +650,14 @@
     }
     .btn-clr:hover, .btn-clr:active { background: var(--red); color: #fff; }
 
+    .btn-reset {
+      background: var(--red-dim);
+      border-color: var(--red);
+      color: var(--red);
+      opacity: 0.7;
+    }
+    .btn-reset:hover, .btn-reset:active { background: var(--red); color: #fff; opacity: 1; }
+
     .btn-pins {
       background: var(--amber-dim);
       border-color: var(--amber);
@@ -676,7 +684,10 @@
 
     .admin-body {
       padding: 0 14px 36px;
+    }
+    .admin-body-scroll {
       overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
     }
 
     .log-table {
@@ -775,7 +786,7 @@
 
     @media (min-width: 768px) {
       .dash-body { padding: 28px 28px 52px; }
-      .admin-body { padding: 0 20px 52px; }
+      .admin-body { padding: 0 20px 0; }
     }
 
     /* ─── GROUP NOTICE (Zeitfenster-Hinweis) ────────────────── */
@@ -1658,6 +1669,7 @@
       <button class="btn-shutdown"      id="btn-shutdown">&#x23FB; Herunterfahren</button>
       <button class="btn-sm btn-export" id="btn-export">&#x2193; CSV</button>
       <button class="btn-sm btn-clr"    id="btn-clr">Leeren</button>
+      <button class="btn-sm btn-reset"  id="btn-reset">&#x21BA; Neustart</button>
       <button class="btn-sm btn-pins"   id="btn-pins" onclick="openEinmalpins()">&#x1F511; Einmal-PINs</button>
     </div>
   </div>
@@ -1799,10 +1811,10 @@ function getUsers() {
     .map(u => ({...u}));
 
   let stored;
-  try { stored = JSON.parse(localStorage.getItem('stempeluhr_users') || 'null'); } catch {}
+  try { stored = JSON.parse(localStorage.getItem('lgc_users') || 'null'); } catch {}
   if (!Array.isArray(stored)) {
     // Kein oder ungültiger Storage – Defaults speichern und zurückgeben
-    localStorage.setItem('stempeluhr_users', JSON.stringify(defaults));
+    localStorage.setItem('lgc_users', JSON.stringify(defaults));
     return defaults;
   }
 
@@ -1812,11 +1824,11 @@ function getUsers() {
   const storedIds = new Set(stored.map(u => u.id));
   const newUsers  = defaults.filter(u => !storedIds.has(u.id)).map(u => ({...u}));
   const result    = newUsers.length ? [...stored, ...newUsers] : stored;
-  localStorage.setItem('stempeluhr_users', JSON.stringify(result));
+  localStorage.setItem('lgc_users', JSON.stringify(result));
   return result;
 }
 function saveUsers(list) {
-  localStorage.setItem('stempeluhr_users', JSON.stringify(list));
+  localStorage.setItem('lgc_users', JSON.stringify(list));
   USERS.length = 0;
   list.forEach(u => USERS.push(u));
   scheduleUsersCloudSync();
@@ -1833,7 +1845,7 @@ function saveUsers(list) {
   const DEVICE_FIELDS = ['adminPin', 'dayBoundaryHour', 'pinClearSeconds',
                          'autoLogoutSeconds', 'screensaverSeconds', 'zeitfensterDefaults'];
   try {
-    const raw = localStorage.getItem('stempeluhr_config_cloud');
+    const raw = localStorage.getItem('lgc_config_cloud');
     if (!raw) return;
     const ov = JSON.parse(raw);
     if (!ov || typeof ov !== 'object') return;
@@ -1864,13 +1876,21 @@ function detectPlatformPrefix() {
   if (/linux/.test(pl))                      return 'linux';
   return 'geraet';
 }
+function randomHex(len) {
+  // crypto.randomUUID() ist ab Chrome 92 / Firefox 95 / Safari 15.4 verfügbar.
+  // Fallback für ältere Android WebViews: Math.random() (statistisch ausreichend
+  // für eine Geräte-ID mit wenigen Geräten).
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID().replace(/-/g, '').slice(0, len);
+  }
+  return Array.from({ length: len }, () => Math.floor(Math.random() * 16).toString(16)).join('');
+}
 function getDeviceId() {
   if (CONFIG.deviceId) return CONFIG.deviceId.trim();
-  const KEY = 'stempeluhr_device_id';
+  const KEY = 'lgc_device_id';
   let id = localStorage.getItem(KEY);
   if (!id) {
-    const suffix = crypto.randomUUID().replace(/-/g, '').slice(0, 4);
-    id = `${detectPlatformPrefix()}-${suffix}`;
+    id = `${detectPlatformPrefix()}-${randomHex(6)}`;
     localStorage.setItem(KEY, id);
   }
   return id;
@@ -1884,11 +1904,12 @@ const DEVICE_ID = getDeviceId();
 */
 const IS_PROXY = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
 
-/* ── Cloud-Konfiguration aus config.js übernehmen (nur wenn noch leer) */
-if (CONFIG.cloud?.url && !localStorage.getItem('stempeluhr_cloud')) {
-  localStorage.setItem('stempeluhr_cloud', JSON.stringify({
-    url:  CONFIG.cloud.url,
-    user: CONFIG.cloud.user || '',
+/* ── Cloud-Konfiguration aus config.js übernehmen (nur wenn noch leer)
+   Bedingung: user gesetzt (url ist im Proxy-Modus optional) */
+if (CONFIG.cloud?.user && !localStorage.getItem('lgc_cloud')) {
+  localStorage.setItem('lgc_cloud', JSON.stringify({
+    url:  CONFIG.cloud.url  || '',
+    user: CONFIG.cloud.user,
     pass: CONFIG.cloud.pass || '',
   }));
 }
@@ -1951,6 +1972,12 @@ function injectTypeCSS() {
 }
 injectTypeCSS();
 
+// Typkonfiguration in localStorage persistieren, damit Dashboard/Editor
+// die konfigurierten Farben lesen können ohne config.js zu benötigen.
+localStorage.setItem('lgc_type_config', JSON.stringify(
+  TYPES.map(t => ({ logType: t.logType, label: t.label, color: t.color }))
+));
+
 /* ── STATE ──────────────────────────────────────────────────── */
 let currentUser = null;
 let pinBuffer   = '';
@@ -1960,15 +1987,21 @@ const IDLE_SECONDS = CONFIG.autoLogoutSeconds ?? 20;
 
 /* ── STORAGE HELPERS ────────────────────────────────────────── */
 function markLocalChange() {
-  localStorage.setItem('stempeluhr_cloud_last_change', new Date().toISOString());
+  localStorage.setItem('lgc_cloud_last_change', new Date().toISOString());
 }
 
+// Log-Key trägt immer den logischen Kalendermonat → automatische Monats-Rotation.
+// Beispiel: lgc_log_2026-03.  Stempel nahe Mitternacht erhalten dank dayBoundaryHour
+// den korrekten logischen Monat (todayISO basiert auf lokaler Zeit).
+function logKey() {
+  return `lgc_log_${todayISO().slice(0, 7)}`;
+}
 function getLog() {
-  try { return JSON.parse(localStorage.getItem('stempeluhr_log') || '[]'); }
-  catch { return []; }
+  try { return JSON.parse(localStorage.getItem(logKey()) || '[]'); }
+  catch { showToast('⚠ Logdaten beschädigt – bitte Admin informieren'); return []; }
 }
 function saveLog(log) {
-  localStorage.setItem('stempeluhr_log', JSON.stringify(log));
+  localStorage.setItem(logKey(), JSON.stringify(log));
   markLocalChange();
   writeLocalBackup();    // Backup-Snapshot sofort
   scheduleCloudSync();   // Cloud-Sync verzögert (60 s Debounce)
@@ -1980,11 +2013,11 @@ function addEntry(entry) {
 }
 
 function getAllStates() {
-  try { return JSON.parse(localStorage.getItem('stempeluhr_state') || '{}'); }
-  catch { return {}; }
+  try { return JSON.parse(localStorage.getItem('lgc_state') || '{}'); }
+  catch { showToast('⚠ Zustandsdaten beschädigt – bitte Admin informieren'); return {}; }
 }
 function saveAllStates(s) {
-  localStorage.setItem('stempeluhr_state', JSON.stringify(s));
+  localStorage.setItem('lgc_state', JSON.stringify(s));
   markLocalChange();
 }
 function getUserState(uid) {
@@ -2018,7 +2051,7 @@ function getZFDefaultForType(type) {
 // Heutiges Zeitfenster für einen Typ (tages-Override aus localStorage oder Default)
 function getZeitfensterForType(type) {
   try {
-    const s = JSON.parse(localStorage.getItem('stempeluhr_zeitfenster') || 'null');
+    const s = JSON.parse(localStorage.getItem('lgc_zeitfenster') || 'null');
     if (s && s.date === todayISO() && s.types?.[type.key]) return s.types[type.key];
   } catch {}
   return getZFDefaultForType(type);
@@ -2027,24 +2060,34 @@ function getZeitfensterForType(type) {
 // Heutiges Override für einen Typ speichern
 function saveZeitfensterForType(typeKey, start, end) {
   let s = {};
-  try { s = JSON.parse(localStorage.getItem('stempeluhr_zeitfenster') || '{}'); } catch {}
+  try { s = JSON.parse(localStorage.getItem('lgc_zeitfenster') || '{}'); } catch {}
   if (s.date !== todayISO()) s = { date: todayISO(), types: {} };
   if (!s.types) s.types = {};
   s.types[typeKey] = { start, end };
-  localStorage.setItem('stempeluhr_zeitfenster', JSON.stringify(s));
+  localStorage.setItem('lgc_zeitfenster', JSON.stringify(s));
 }
 
+function timeToMin(t) {
+  const [h, m] = t.split(':').map(Number);
+  return h * 60 + m;
+}
 function isWithinZeitfensterForType(type) {
   const zf = getZeitfensterForType(type);
   if (!zf) return false;
-  const now = currentHHMM();
-  return now >= zf.start && now < zf.end;
+  const now   = timeToMin(currentHHMM());
+  const start = timeToMin(zf.start);
+  const end   = timeToMin(zf.end);
+  if (start < end)  return now >= start && now < end;   // normal:           07:00–21:00
+  if (start > end)  return now >= start || now < end;   // über Mitternacht: 22:00–02:00
+  return false;                                          // start === end → leerer Bereich
 }
 function todayISO(d = new Date()) {
   const boundary = CONFIG.dayBoundaryHour ?? 4;
   const dt = new Date(d);
   if (dt.getHours() < boundary) dt.setDate(dt.getDate() - 1);
-  return dt.toISOString().slice(0, 10);
+  // lokale Komponenten verwenden – toISOString() würde nach UTC konvertieren
+  // und kann in deutschen Zeitzonen rund um Mitternacht den falschen Tag liefern
+  return `${dt.getFullYear()}-${pad(dt.getMonth()+1)}-${pad(dt.getDate())}`;
 }
 
 function currentHHMM() {
@@ -2056,7 +2099,7 @@ function currentHHMM() {
 function writeLocalBackup() {
   const day = todayISO();
   const log = getLog();
-  localStorage.setItem(`stempeluhr_backup_${day}`, JSON.stringify({
+  localStorage.setItem(`lgc_backup_${day}`, JSON.stringify({
     ts:    new Date().toISOString(),
     count: log.length,
     log,
@@ -2248,8 +2291,9 @@ function calcDurationMs(userName, logType, atTs) {
   const log = getLog();
   for (let i = log.length - 1; i >= 0; i--) {
     const e = log[i];
-    if (e.nutzer === userName && e.typ === logType && e.aktion === 'start')
-      return Math.max(0, atTime - new Date(e.zeitstempel).getTime());
+    if (e.nutzer !== userName || e.typ !== logType) continue;
+    if (e.aktion === 'stop')  return 0;  // stop vor start → keine offene Sitzung
+    if (e.aktion === 'start') return Math.max(0, atTime - new Date(e.zeitstempel).getTime());
   }
   return 0;
 }
@@ -2394,31 +2438,38 @@ function popDigit() {
   resetPinIdleTimer();
 }
 
+let _pinSubmitting = false;
 async function submitPIN() {
-  if (pinBuffer === ADMIN_PIN) {
-    clearPIN();
-    showAdminPwPrompt();
-    return;
-  }
-  let matchedUser = null;
-  for (const u of USERS) {
-    if (await verifyPIN(pinBuffer, u)) { matchedUser = u; break; }
-  }
-  if (matchedUser) {
-    currentUser = matchedUser;
-    clearPIN();
-    if (matchedUser.mustChangePIN) {
-      showChangePINOverlay(matchedUser);
-    } else {
-      openDashboard();
+  if (_pinSubmitting) return;
+  _pinSubmitting = true;
+  try {
+    if (pinBuffer === ADMIN_PIN) {
+      clearPIN();
+      showAdminPwPrompt();
+      return;
     }
-  } else {
-    document.getElementById('pin-error').textContent = 'Ungültige PIN';
-    const dots = document.getElementById('pin-dots');
-    dots.classList.remove('shake');
-    void dots.offsetWidth; // reflow to restart animation
-    dots.classList.add('shake');
-    setTimeout(() => { dots.classList.remove('shake'); clearPIN(); }, 520);
+    let matchedUser = null;
+    for (const u of USERS) {
+      if (await verifyPIN(pinBuffer, u)) { matchedUser = u; break; }
+    }
+    if (matchedUser) {
+      currentUser = matchedUser;
+      clearPIN();
+      if (matchedUser.mustChangePIN) {
+        showChangePINOverlay(matchedUser);
+      } else {
+        openDashboard();
+      }
+    } else {
+      document.getElementById('pin-error').textContent = 'Ungültige PIN';
+      const dots = document.getElementById('pin-dots');
+      dots.classList.remove('shake');
+      void dots.offsetWidth; // reflow to restart animation
+      dots.classList.add('shake');
+      setTimeout(() => { dots.classList.remove('shake'); clearPIN(); }, 520);
+    }
+  } finally {
+    _pinSubmitting = false;
   }
 }
 
@@ -2627,7 +2678,7 @@ function renderDashboardHTML(user) {
 }
 
 function openDashboard() {
-  localStorage.setItem('stempeluhr_session', JSON.stringify({ uid: currentUser.id, date: todayISO() }));
+  localStorage.setItem('lgc_session', JSON.stringify({ uid: currentUser.id, date: todayISO() }));
   document.getElementById('hdr-name').textContent = currentUser.name;
   renderDashboardHTML(currentUser);
   syncDashboard();
@@ -2800,11 +2851,12 @@ function handleAction(key, action) {
     });
   }
 
-  // Stop von Anwesenheit → alle anderen aktiven Typen beenden
-  if (action === 'stop' && key === 'anwesenheit') {
+  // Stop eines Typs → abhängige Typen beenden (nur solche, die diesen via autoStartKeys erfordern)
+  if (action === 'stop') {
     const state = getUserState(currentUser.id);
     TYPES.forEach(t => {
       if (t.key === key || !state[t.key]) return;
+      if (!t.autoStartKeys?.includes(key)) return; // kein autoStartKeys-Bezug → keine Abhängigkeit
       const durMs = calcDurationMs(currentUser.name, t.logType);
       addEntry({ nutzer: currentUser.name, typ: t.logType, aktion: 'stop', zeitstempel: now.toISOString(), dauer_ms: durMs });
       setTypeActive(currentUser.id, t.key, false);
@@ -2855,16 +2907,15 @@ function logout(explicit) {
   stopIdleTimer();
   closeMyHours();
   currentUser = null;
-  if (explicit === true) localStorage.removeItem('stempeluhr_session');
+  if (explicit === true) localStorage.removeItem('lgc_session');
   showScreen('screen-login');
 }
 
 /* ── CLOUD SYNC – ereignisgesteuert mit Debounce ────────────── */
-// Nach jedem Stempel-Ereignis (saveLog) wird ein 60s-Timer gestartet.
-// Weitere Ereignisse innerhalb der Minute resetten den Timer (Batching).
-// Passiert nichts, wird auch nicht synchronisiert.
+// Im Proxy-Betrieb (localhost) sofort synchronisieren.
+// Im Direkt-Betrieb: 60s Debounce, damit mehrere Stempel gebündelt werden.
 let _syncDebounceTimer = null;
-const SYNC_DEBOUNCE_MS = 60 * 1000;
+const SYNC_DEBOUNCE_MS = IS_PROXY ? 0 : (CONFIG.cloudSyncDebounceSeconds ?? 60) * 1000;
 
 function scheduleCloudSync() {
   if (_syncDebounceTimer) clearTimeout(_syncDebounceTimer);
@@ -2885,11 +2936,11 @@ function scheduleUsersCloudSync() {
 
 /* ── CLOUD / NEXTCLOUD WEBDAV ───────────────────────────────── */
 function getCloudConfig() {
-  try { return JSON.parse(localStorage.getItem('stempeluhr_cloud') || 'null'); }
+  try { return JSON.parse(localStorage.getItem('lgc_cloud') || 'null'); }
   catch { return null; }
 }
 function saveCloudConfigData(cfg) {
-  localStorage.setItem('stempeluhr_cloud', JSON.stringify(cfg));
+  localStorage.setItem('lgc_cloud', JSON.stringify(cfg));
 }
 // Proxy-Modus: URL nicht erforderlich (server kennt Nextcloud-URL aus admin_config.js)
 function isCloudConfigured(cfg) {
@@ -2899,13 +2950,13 @@ function isCloudConfigured(cfg) {
 // ── Change-Tracking (hier Platzhalter – Def. bei Storage-Helpers) ──
 function getCloudLastOk() {
   // Backwards-compatible: fall back to old key name
-  return localStorage.getItem('stempeluhr_cloud_last_ok')
-      || localStorage.getItem('stempeluhr_cloud_last')
+  return localStorage.getItem('lgc_cloud_last_ok')
+      || localStorage.getItem('lgc_cloud_last')
       || null;
 }
 function hasPendingCloudData() {
   const lastOk     = getCloudLastOk();
-  const lastChange = localStorage.getItem('stempeluhr_cloud_last_change');
+  const lastChange = localStorage.getItem('lgc_cloud_last_change');
   if (!lastChange) return false;
   if (!lastOk)     return true;
   return new Date(lastChange) > new Date(lastOk);
@@ -2913,28 +2964,28 @@ function hasPendingCloudData() {
 
 // ── Error-Log ────────────────────────────────────────────────
 function getCloudErrLog() {
-  try { return JSON.parse(localStorage.getItem('stempeluhr_cloud_errors') || '[]'); }
+  try { return JSON.parse(localStorage.getItem('lgc_cloud_errors') || '[]'); }
   catch { return []; }
 }
 function addCloudErr(msg) {
   const log = getCloudErrLog();
   log.unshift({ ts: new Date().toISOString(), msg });
   if (log.length > 20) log.length = 20;
-  localStorage.setItem('stempeluhr_cloud_errors', JSON.stringify(log));
+  localStorage.setItem('lgc_cloud_errors', JSON.stringify(log));
   updateCloudStatus();
 }
 function clearCloudErrors() {
-  localStorage.removeItem('stempeluhr_cloud_errors');
+  localStorage.removeItem('lgc_cloud_errors');
   updateCloudStatus();
 }
 
 // ── WebDAV helpers ───────────────────────────────────────────
 function cloudDavBase(cfg) {
-  if (IS_PROXY) return `/remote.php/dav/files/${encodeURIComponent(cfg.user)}/Stempeluhr`;
+  if (IS_PROXY) return `/remote.php/dav/files/${encodeURIComponent(cfg.user)}/LifeguardClock`;
   let url = cfg.url.trim().replace(/\/$/, '');
   url = url.replace(/\/remote\.php\/dav.*/i, '');
   url = url.replace(/\/index\.php.*/i, '');
-  return `${url}/remote.php/dav/files/${encodeURIComponent(cfg.user)}/Stempeluhr`;
+  return `${url}/remote.php/dav/files/${encodeURIComponent(cfg.user)}/LifeguardClock`;
 }
 function cloudHeaders(cfg, extra) {
   return {
@@ -2983,14 +3034,14 @@ async function syncToCloud(silent = false) {
     const hdrs = cloudHeaders(cfg);
 
     const [r1, r2] = await Promise.all([
-      fetch(`${base}/stempeluhr_${DEVICE_ID}_${day}.json`,    { method: 'PUT', headers: hdrs, body: payload }),
-      fetch(`${base}/stempeluhr_${DEVICE_ID}_latest.json`,    { method: 'PUT', headers: hdrs, body: payload }),
+      fetch(`${base}/lgc_${DEVICE_ID}_${day}.json`,    { method: 'PUT', headers: hdrs, body: payload }),
+      fetch(`${base}/lgc_${DEVICE_ID}_latest.json`,    { method: 'PUT', headers: hdrs, body: payload }),
     ]);
 
     if (r1.ok && r2.ok) {
       const now = new Date().toISOString();
-      localStorage.setItem('stempeluhr_cloud_last_ok', now);
-      localStorage.setItem('stempeluhr_cloud_last',    now); // legacy compat
+      localStorage.setItem('lgc_cloud_last_ok', now);
+      localStorage.setItem('lgc_cloud_last',    now); // legacy compat
       clearCloudErrors();
       if (!silent) showToast('Cloud-Sync erfolgreich');
       updateCloudStatus();
@@ -3065,7 +3116,7 @@ async function restoreFromCloud() {
 
   try {
     const r = await fetch(
-      `${cloudDavBase(cfg)}/stempeluhr_${DEVICE_ID}_latest.json`,
+      `${cloudDavBase(cfg)}/lgc_${DEVICE_ID}_latest.json`,
       { headers: { 'Authorization': 'Basic ' + btoa(`${cfg.user}:${cfg.pass}`) } }
     );
     if (!r.ok) { showToast(`Fehler beim Laden: HTTP ${r.status}`); return; }
@@ -3095,7 +3146,7 @@ function exportUsersLocal() {
     count: USERS.length, users: USERS }, null, 2);
   const a = Object.assign(document.createElement('a'), {
     href:     URL.createObjectURL(new Blob([payload], { type: 'application/json' })),
-    download: `stempeluhr_users_${todayISO()}.json`,
+    download: `lgc_users_${todayISO()}.json`,
   });
   a.click();
   URL.revokeObjectURL(a.href);
@@ -3110,7 +3161,7 @@ async function backupUsersToCloud(silent = false) {
     await ensureCloudFolder(cfg);
     const payload = JSON.stringify({ version: 1, exported: new Date().toISOString(),
       count: USERS.length, users: USERS }, null, 2);
-    const r = await fetch(`${cloudDavBase(cfg)}/stempeluhr_users.json`,
+    const r = await fetch(`${cloudDavBase(cfg)}/lgc_users.json`,
       { method: 'PUT', headers: cloudHeaders(cfg), body: payload });
     if (!silent) { r.ok ? showToast('Nutzerdaten gesichert') : showToast(`Fehler: HTTP ${r.status}`); }
   } catch (e) { if (!silent) showToast('Sicherung fehlgeschlagen: ' + e.message); }
@@ -3123,7 +3174,7 @@ async function restoreUsersFromCloud() {
   const btn = document.getElementById('btn-users-down');
   if (btn) { btn.disabled = true; btn.textContent = 'Lade…'; }
   try {
-    const r = await fetch(`${cloudDavBase(cfg)}/stempeluhr_users.json`,
+    const r = await fetch(`${cloudDavBase(cfg)}/lgc_users.json`,
       { headers: { 'Authorization': 'Basic ' + btoa(`${cfg.user}:${cfg.pass}`) } });
     if (!r.ok) { showToast(`Fehler beim Laden: HTTP ${r.status}`); return; }
     const data = await r.json();
@@ -3158,7 +3209,7 @@ async function pushConfigToCloud(silent = false) {
       version: 1, exported: new Date().toISOString(), deviceId: DEVICE_ID,
       config: exportable,
     }, null, 2);
-    const r = await fetch(`${cloudDavBase(cfg)}/stempeluhr_config_${DEVICE_ID}.json`,
+    const r = await fetch(`${cloudDavBase(cfg)}/lgc_config_${DEVICE_ID}.json`,
       { method: 'PUT', headers: cloudHeaders(cfg), body: payload });
     if (!silent) r.ok ? showToast('Konfiguration hochgeladen') : showToast(`Fehler: HTTP ${r.status}`);
   } catch (e) { if (!silent) showToast('Fehler: ' + e.message); }
@@ -3171,7 +3222,7 @@ async function pullConfigFromCloud() {
   const btn = document.getElementById('btn-cfg-down');
   if (btn) { btn.disabled = true; btn.textContent = 'Lade…'; }
   try {
-    const r = await fetch(`${cloudDavBase(cfg)}/stempeluhr_config_${DEVICE_ID}.json`,
+    const r = await fetch(`${cloudDavBase(cfg)}/lgc_config_${DEVICE_ID}.json`,
       { headers: { 'Authorization': 'Basic ' + btoa(`${cfg.user}:${cfg.pass}`) } });
     if (!r.ok) { showToast(`Fehler: HTTP ${r.status}`); return; }
     const data = await r.json();
@@ -3180,7 +3231,7 @@ async function pullConfigFromCloud() {
     showConfirm(
       `Konfiguration vom ${ts} laden?\n\nDie App wird neu gestartet, um die Änderungen zu übernehmen.`,
       () => {
-        localStorage.setItem('stempeluhr_config_cloud', JSON.stringify(data.config));
+        localStorage.setItem('lgc_config_cloud', JSON.stringify(data.config));
         location.reload();
       }
     );
@@ -3195,7 +3246,7 @@ function resetConfigCloud() {
     'Die App startet danach neu und verwendet wieder die Grundkonfiguration aus config.js.\n\n' +
     'Stempeldaten und Nutzer bleiben erhalten.',
     () => {
-      localStorage.removeItem('stempeluhr_config_cloud');
+      localStorage.removeItem('lgc_config_cloud');
       location.reload();
     }
   );
@@ -3208,13 +3259,13 @@ async function syncUsersFromCloud(silent = false) {
   const cfg = getCloudConfig();
   if (!isCloudConfigured(cfg)) return false;
   try {
-    const r = await fetch(`${cloudDavBase(cfg)}/stempeluhr_users.json`, {
+    const r = await fetch(`${cloudDavBase(cfg)}/lgc_users.json`, {
       headers: { 'Authorization': 'Basic ' + btoa(`${cfg.user}:${cfg.pass}`) }
     });
     if (!r.ok) return false;
     const data = await r.json();
     if (!Array.isArray(data.users) || !data.users.length) return false;
-    localStorage.setItem('stempeluhr_users', JSON.stringify(data.users));
+    localStorage.setItem('lgc_users', JSON.stringify(data.users));
     USERS.length = 0;
     data.users.forEach(u => USERS.push(u));
     // currentUser aktualisieren falls bereits eingeloggt (Race Condition Fix)
@@ -3305,8 +3356,8 @@ function updateCloudStatus() {
     ${errBanner}
     <div class="cloud-note">
       Tipp: Verwende ein Nextcloud <strong>App-Passwort</strong> (Einstellungen &rarr; Sicherheit),
-      nicht dein Hauptpasswort. Dateien landen im Ordner <code>Stempeluhr/</code>
-      als <code>stempeluhr_${DEVICE_ID}_DATUM.json</code>.
+      nicht dein Hauptpasswort. Dateien landen im Ordner <code>LifeguardClock/</code>
+      als <code>lgc_${DEVICE_ID}_DATUM.json</code>.
     </div>`;
 }
 
@@ -3351,7 +3402,7 @@ function renderCloudSection() {
       <div class="zf-card-title">&#x1F464; Nutzerverwaltung</div>
       <div class="cloud-note" style="margin-bottom:10px">
         Nutzer zentral verwalten mit <strong>admin.html</strong> &mdash; &auml;ndert
-        <code>stempeluhr_users.json</code> in der Cloud, alle Ger&auml;te laden beim n&auml;chsten
+        <code>lgc_users.json</code> in der Cloud, alle Ger&auml;te laden beim n&auml;chsten
         Start automatisch die aktuelle Liste. Manuelles Sichern/Wiederherstellen weiterhin m&ouml;glich.
       </div>
       <div class="cloud-btns">
@@ -3364,7 +3415,7 @@ function renderCloudSection() {
       <div class="zf-card-title">&#x1F4CB; Ger&auml;tekonfiguration</div>
       <div class="cloud-note" style="margin-bottom:10px">
         Die Konfiguration dieses Ger&auml;ts (<code>${DEVICE_ID}</code>) als
-        <code>stempeluhr_config_${DEVICE_ID}.json</code> in der Cloud sichern &mdash;
+        <code>lgc_config_${DEVICE_ID}.json</code> in der Cloud sichern &mdash;
         dort bearbeiten (z.&nbsp;B. am PC) &mdash; und hier wieder einlesen.
         Cloud-Zugangsdaten und Ger&auml;te-ID werden dabei nie &uuml;berschrieben.
       </div>
@@ -3641,7 +3692,7 @@ function renderBackups() {
   const keys = [];
   for (let i = 0; i < localStorage.length; i++) {
     const k = localStorage.key(i);
-    if (k && k.startsWith('stempeluhr_backup_')) keys.push(k);
+    if (k && k.startsWith('lgc_backup_')) keys.push(k);
   }
   keys.sort().reverse();
 
@@ -3651,7 +3702,7 @@ function renderBackups() {
     try {
       const data = JSON.parse(localStorage.getItem(key) || 'null');
       if (!data) return '';
-      const date = key.replace('stempeluhr_backup_', '');
+      const date = key.replace('lgc_backup_', '');
       const ts   = new Date(data.ts).toLocaleString('de-DE');
       return `<tr>
         <td style="font-family:'JetBrains Mono',monospace">${date}</td>
@@ -3680,7 +3731,7 @@ function downloadBackup(key) {
   try {
     const data = JSON.parse(localStorage.getItem(key) || 'null');
     if (!data) { showToast('Backup nicht gefunden'); return; }
-    const date   = key.replace('stempeluhr_backup_', '');
+    const date   = key.replace('lgc_backup_', '');
     const header = 'ID;Zeitstempel;Datum;Uhrzeit;Nutzer;Typ;Aktion;Dauer\r\n';
     const rows   = data.log.map(e => {
       const d   = new Date(e.zeitstempel);
@@ -3690,7 +3741,7 @@ function downloadBackup(key) {
     const blob = new Blob(['\uFEFF' + header + rows], { type: 'text/csv;charset=utf-8;' });
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement('a');
-    a.href = url; a.download = `stempeluhr_backup_${date}.csv`;
+    a.href = url; a.download = `lgc_backup_${date}.csv`;
     document.body.appendChild(a); a.click();
     document.body.removeChild(a); URL.revokeObjectURL(url);
   } catch { showToast('Download fehlgeschlagen'); }
@@ -3731,7 +3782,7 @@ function safeShutdown() {
     stopAllActiveSessions();
     document.getElementById('shutdown-time').textContent =
       'Heruntergefahren um ' + new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }) + ' Uhr';
-    localStorage.removeItem('stempeluhr_session');
+    localStorage.removeItem('lgc_session');
     showScreen('screen-shutdown');
   });
 }
@@ -3756,7 +3807,7 @@ function openAdmin() {
 }
 
 /* ── ADMIN PASSWORD ─────────────────────────────────────────── */
-const ADMIN_PW_KEY     = 'stempeluhr_admin_pw';
+const ADMIN_PW_KEY     = 'lgc_admin_pw';
 const ADMIN_PW_DEFAULT = 'Admin1234';
 
 function getAdminPw() {
@@ -4145,7 +4196,7 @@ function renderZeitfenster() {
       const start = document.getElementById(`zf-start-${key}`).value;
       const end   = document.getElementById(`zf-end-${key}`).value;
       if (!start || !end) { showToast('Bitte beide Zeiten angeben'); return; }
-      if (start >= end)   { showToast('Startzeit muss vor Endzeit liegen'); return; }
+      if (start === end)  { showToast('Start- und Endzeit dürfen nicht identisch sein'); return; }
       saveZeitfensterForType(key, start, end);
       renderZeitfenster();
       checkZeitfensterEnd();
@@ -4208,18 +4259,20 @@ function renderAdmin() {
   }).join('');
 
   bodyEl.innerHTML = `
-    <table class="log-table">
-      <thead>
-        <tr>
-          <th>Zeitstempel</th>
-          <th>Nutzer</th>
-          <th>Typ</th>
-          <th>Aktion</th>
-          <th>Dauer</th>
-        </tr>
-      </thead>
-      <tbody>${rows}</tbody>
-    </table>`;
+    <div class="admin-body-scroll">
+      <table class="log-table">
+        <thead>
+          <tr>
+            <th>Zeitstempel</th>
+            <th>Nutzer</th>
+            <th>Typ</th>
+            <th>Aktion</th>
+            <th>Dauer</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
 }
 
 document.getElementById('btn-admin-logout').addEventListener('click', () => logout(true));
@@ -4244,7 +4297,7 @@ document.getElementById('btn-export').addEventListener('click', () => {
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement('a');
   a.href     = url;
-  a.download = `stempeluhr_${ts}.csv`;
+  a.download = `lgc_${ts}.csv`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -4258,6 +4311,34 @@ document.getElementById('btn-clr').addEventListener('click', () => {
     renderAdmin();
     showToast('Protokoll geleert');
   });
+});
+
+// Löscht alle Stempel-Daten dieses Geräts (Logs aller Jahre, Backups, Zustand, Session).
+// Konfiguration, Gerät-ID, Nutzer und Cloud-Zugangsdaten bleiben erhalten.
+function resetAllLocalData() {
+  const keep = new Set([
+    'lgc_device_id', 'lgc_cloud', 'lgc_config_cloud',
+    'lgc_users', 'lgc_zeitfenster',
+    'lgc_cloud_last_ok', 'lgc_cloud_last',
+  ]);
+  const toDelete = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (k && k.startsWith('lgc_') && !keep.has(k)) toDelete.push(k);
+  }
+  toDelete.forEach(k => localStorage.removeItem(k));
+}
+
+document.getElementById('btn-reset').addEventListener('click', () => {
+  const year = todayISO().slice(0, 4);
+  showConfirm(
+    `Gerät vollständig zurücksetzen?\n\nGelöscht werden:\n• Alle Protokolle (lgc_log_*)\n• Alle lokalen Backups\n• Aktive Stempel-Zustände\n\nErhalten bleiben:\n• Nutzer & PINs\n• Cloud-Zugangsdaten\n• Gerät-ID\n\nAktuelle Saison: ${year}`,
+    () => {
+      resetAllLocalData();
+      renderAdmin();
+      showToast('Gerät zurückgesetzt');
+    }
+  );
 });
 
 /* ── KIOSK-MODUS ────────────────────────────────────────────── */
@@ -4384,7 +4465,9 @@ function renderMyHours() {
     const ms   = d?.totalMs || 0;
     const live = d?.active   || false;
     const val  = fmtQuarterH(ms);
-    const col  = t.color || 'var(--text)';
+    const colorVars = { blue: '--blue', green: '--green', amber: '--amber', red: '--red', violet: '--violet' };
+    const _fallbackVars = ['--blue','--amber','--red','--green','--violet'];
+    const col  = `var(${colorVars[t.color] || _fallbackVars[TYPES.indexOf(t) % 5]})`;
     return `
       <div class="my-hours-row" style="border-left-color:${col}">
         <span class="my-hours-label" style="color:${col}">${escHtml(t.label)}</span>
@@ -4484,6 +4567,13 @@ function showToast(msg) {
   el.classList.add('visible');
   if (toastTimer) clearTimeout(toastTimer);
   toastTimer = setTimeout(() => el.classList.remove('visible'), 2800);
+}
+
+// ── Service Worker registrieren ───────────────────────────────
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('./sw.js').catch(err => {
+    console.warn('SW-Registrierung fehlgeschlagen:', err);
+  });
 }
 </script>
 </body>

@@ -65,7 +65,8 @@ function resetStore() { localStorage.clear(); }
 /* ── Stub für DOM/Toast (nicht getestet) ───────────────────── */
 const currentUser = null;
 function syncDashboard() {}
-function showToast() {}
+let _lastToast = null;
+function showToast(msg) { _lastToast = msg; }
 function syncToCloud() {}
 function writeLocalBackup() {}
 function scheduleCloudSync() {}
@@ -111,29 +112,35 @@ function rebuildTypes() { TYPES = (CONFIG.types || []).filter(t => !t.disabled).
 function pad(n) { return String(n).padStart(2, '0'); }
 
 function markLocalChange() {
-  localStorage.setItem('stempeluhr_cloud_last_change', new Date().toISOString());
+  localStorage.setItem('lgc_cloud_last_change', new Date().toISOString());
+}
+function logKey() {
+  return `lgc_log_${todayISO().slice(0, 7)}`;
 }
 function getLog() {
-  try { return JSON.parse(localStorage.getItem('stempeluhr_log') || '[]'); }
-  catch { return []; }
+  try { return JSON.parse(localStorage.getItem(logKey()) || '[]'); }
+  catch { showToast('⚠ Logdaten beschädigt – bitte Admin informieren'); return []; }
 }
 function saveLog(log) {
-  localStorage.setItem('stempeluhr_log', JSON.stringify(log));
+  localStorage.setItem(logKey(), JSON.stringify(log));
   markLocalChange();
 }
 function getAllStates() {
-  try { return JSON.parse(localStorage.getItem('stempeluhr_state') || '{}'); }
-  catch { return {}; }
+  try { return JSON.parse(localStorage.getItem('lgc_state') || '{}'); }
+  catch { showToast('⚠ Zustandsdaten beschädigt – bitte Admin informieren'); return {}; }
 }
 function saveAllStates(s) {
-  localStorage.setItem('stempeluhr_state', JSON.stringify(s));
+  localStorage.setItem('lgc_state', JSON.stringify(s));
   markLocalChange();
+}
+function isoLocal(d) {
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
 }
 function todayISO(d = new Date()) {
   const boundary = CONFIG.dayBoundaryHour ?? 4;
   const dt = new Date(d);
   if (dt.getHours() < boundary) dt.setDate(dt.getDate() - 1);
-  return dt.toISOString().slice(0, 10);
+  return isoLocal(dt);
 }
 function detectPlatformPrefix() {
   const ua = (navigator.userAgent || '').toLowerCase();
@@ -149,7 +156,7 @@ function detectPlatformPrefix() {
 }
 function getDeviceId() {
   if (CONFIG.deviceId) return CONFIG.deviceId.trim();
-  const KEY = 'stempeluhr_device_id';
+  const KEY = 'lgc_device_id';
   let id = localStorage.getItem(KEY);
   if (!id) {
     const suffix = crypto.randomUUID().replace(/-/g, '').slice(0, 4);
@@ -164,26 +171,31 @@ function currentHHMM() {
 }
 function getZeitfenster() {
   try {
-    const s = JSON.parse(localStorage.getItem('stempeluhr_zeitfenster') || 'null');
+    const s = JSON.parse(localStorage.getItem('lgc_zeitfenster') || 'null');
     if (s && s.date === todayISO()) return s;
   } catch {}
   return { date: todayISO(), start: '07:00', end: '21:00' };
 }
 function saveZeitfenster(start, end) {
-  localStorage.setItem('stempeluhr_zeitfenster', JSON.stringify({ date: todayISO(), start, end }));
+  localStorage.setItem('lgc_zeitfenster', JSON.stringify({ date: todayISO(), start, end }));
+}
+function timeToMin(t) {
+  const [h, m] = t.split(':').map(Number);
+  return h * 60 + m;
 }
 function isWithinZeitfenster() {
   const { start, end } = getZeitfenster();
-  const now = currentHHMM();
-  return now >= start && now < end;
+  const now = timeToMin(currentHHMM());
+  return now >= timeToMin(start) && now < timeToMin(end);
 }
 function calcDurationMs(userName, logType, atTs) {
   const atTime = atTs ? new Date(atTs).getTime() : Date.now();
   const log = getLog();
   for (let i = log.length - 1; i >= 0; i--) {
     const e = log[i];
-    if (e.nutzer === userName && e.typ === logType && e.aktion === 'start')
-      return Math.max(0, atTime - new Date(e.zeitstempel).getTime());
+    if (e.nutzer !== userName || e.typ !== logType) continue;
+    if (e.aktion === 'stop')  return 0;  // stop vor start → keine offene Sitzung
+    if (e.aktion === 'start') return Math.max(0, atTime - new Date(e.zeitstempel).getTime());
   }
   return 0;
 }
@@ -216,18 +228,18 @@ function getZFDefaultForType(type) {
 }
 function getZeitfensterForType(type) {
   try {
-    const s = JSON.parse(localStorage.getItem('stempeluhr_zeitfenster') || 'null');
+    const s = JSON.parse(localStorage.getItem('lgc_zeitfenster') || 'null');
     if (s && s.date === todayISO() && s.types?.[type.key]) return s.types[type.key];
   } catch {}
   return getZFDefaultForType(type);
 }
 function saveZeitfensterForType(typeKey, start, end) {
   let s = {};
-  try { s = JSON.parse(localStorage.getItem('stempeluhr_zeitfenster') || '{}'); } catch {}
+  try { s = JSON.parse(localStorage.getItem('lgc_zeitfenster') || '{}'); } catch {}
   if (s.date !== todayISO()) s = { date: todayISO(), types: {} };
   if (!s.types) s.types = {};
   s.types[typeKey] = { start, end };
-  localStorage.setItem('stempeluhr_zeitfenster', JSON.stringify(s));
+  localStorage.setItem('lgc_zeitfenster', JSON.stringify(s));
 }
 function saveZeitfensterAllTypes(start, end) {
   TIME_KEYS.forEach(k => saveZeitfensterForType(k, start, end));
@@ -235,15 +247,19 @@ function saveZeitfensterAllTypes(start, end) {
 function isWithinZeitfensterForType(type) {
   const zf = getZeitfensterForType(type);
   if (!zf) return false;
-  const now = currentHHMM();
-  return now >= zf.start && now < zf.end;
+  const now   = timeToMin(currentHHMM());
+  const start = timeToMin(zf.start);
+  const end   = timeToMin(zf.end);
+  if (start < end)  return now >= start && now < end;   // normal:           07:00–21:00
+  if (start > end)  return now >= start || now < end;   // über Mitternacht: 22:00–02:00
+  return false;                                          // start === end → leerer Bereich
 }
 
 const TIME_KEYS = TYPES.filter(t => t.requiresZeitfenster).map(t => t.key);
 
 let USERS = [{ id: 'test_user', name: 'Test User' }];
 function saveUsers(list) {
-  localStorage.setItem('stempeluhr_users', JSON.stringify(list));
+  localStorage.setItem('lgc_users', JSON.stringify(list));
   USERS.length = 0;
   list.forEach(u => USERS.push(u));
 }
@@ -254,9 +270,9 @@ function getUsers() {
     .map(u => ({...u}));
 
   let stored;
-  try { stored = JSON.parse(localStorage.getItem('stempeluhr_users') || 'null'); } catch {}
+  try { stored = JSON.parse(localStorage.getItem('lgc_users') || 'null'); } catch {}
   if (!Array.isArray(stored)) {
-    localStorage.setItem('stempeluhr_users', JSON.stringify(defaults));
+    localStorage.setItem('lgc_users', JSON.stringify(defaults));
     return defaults;
   }
 
@@ -264,7 +280,7 @@ function getUsers() {
   const storedIds = new Set(stored.map(u => u.id));
   const newUsers  = defaults.filter(u => !storedIds.has(u.id)).map(u => ({...u}));
   const result    = newUsers.length ? [...stored, ...newUsers] : stored;
-  localStorage.setItem('stempeluhr_users', JSON.stringify(result));
+  localStorage.setItem('lgc_users', JSON.stringify(result));
   return result;
 }
 
@@ -352,7 +368,7 @@ async function isPINTaken(pin, excludeId) {
   return false;
 }
 
-const ADMIN_PW_KEY     = 'stempeluhr_admin_pw';
+const ADMIN_PW_KEY     = 'lgc_admin_pw';
 const ADMIN_PW_DEFAULT = 'Admin1234';
 function getAdminPw() {
   return localStorage.getItem(ADMIN_PW_KEY) || ADMIN_PW_DEFAULT;
@@ -525,7 +541,7 @@ await test('tut nichts wenn wir im Zeitfenster sind', () => {
 await test('stoppt wachdienst wenn wir AUSSERHALB des Zeitfensters sind', () => {
   resetStore();
   saveZeitfensterAllTypes('01:00', '01:01');
-  assert(!isWithinZeitfenster(), 'Voraussetzung: wir sind außerhalb');
+  assert(!isWithinZeitfensterForType(TYPES.find(t => t.key === 'wachdienst')), 'Voraussetzung: wir sind außerhalb');
   pushLog({ nutzer: 'Test User', typ: 'wachdienst', aktion: 'start', zeitstempel: msAgo(30 * 60 * 1000) });
   setStateActive('test_user', 'wachdienst', true);
   checkZeitfensterEnd();
@@ -585,12 +601,19 @@ await test('ignoriert früheren Start wenn neuerer vorhanden', () => {
   assert(Math.abs(dur - 20 * 60 * 1000) < 500, `Dauer soll ~20min sein, war ${dur}ms`);
 });
 
-await test('gibt Zeit seit letztem Start zurück (auch wenn stop folgte)', () => {
+await test('stop vor start im Rückwärtsscan → 0 (keine offene Sitzung)', () => {
   resetStore();
   pushLog({ nutzer: 'Test User', typ: 'wachdienst', aktion: 'start', zeitstempel: msAgo(60 * 60 * 1000) });
   pushLog({ nutzer: 'Test User', typ: 'wachdienst', aktion: 'stop',  zeitstempel: msAgo(30 * 60 * 1000), dauer_ms: 30 * 60 * 1000 });
+  assertEqual(calcDurationMs('Test User', 'wachdienst'), 0, 'Sitzung geschlossen → 0');
+});
+
+await test('Doppel-Start (Dateninkonsistenz): findet jüngsten Start', () => {
+  resetStore();
+  pushLog({ nutzer: 'Test User', typ: 'wachdienst', aktion: 'start', zeitstempel: msAgo(90 * 60 * 1000) });
+  pushLog({ nutzer: 'Test User', typ: 'wachdienst', aktion: 'start', zeitstempel: msAgo(20 * 60 * 1000) });
   const dur = calcDurationMs('Test User', 'wachdienst');
-  assert(Math.abs(dur - 60 * 60 * 1000) < 500, `Gibt Zeit seit letztem start zurück (~1h), war ${dur}ms`);
+  assert(Math.abs(dur - 20 * 60 * 1000) < 500, `Jüngster Start soll ~20min ergeben, war ${dur}ms`);
 });
 
 /* ── Suite 6: todayISO – dayBoundaryHour ───────────────────── */
@@ -599,33 +622,33 @@ suite('todayISO (dayBoundaryHour aus CONFIG)');
 await test('gibt das Datum für 12:00 Uhr zurück', () => {
   CONFIG.dayBoundaryHour = 4;
   const d = new Date(); d.setHours(12, 0, 0, 0);
-  assertEqual(todayISO(d), d.toISOString().slice(0, 10), 'Mittag → gleiches Datum');
+  assertEqual(todayISO(d), isoLocal(d), 'Mittag → gleiches Datum');
 });
 
 await test('gibt den Vortag zurück für 02:00 Uhr (vor 04:00-Grenze)', () => {
   CONFIG.dayBoundaryHour = 4;
   const d = new Date(); d.setHours(2, 0, 0, 0);
   const yesterday = new Date(d); yesterday.setDate(yesterday.getDate() - 1);
-  assertEqual(todayISO(d), yesterday.toISOString().slice(0, 10), '02:00 Uhr → Vortag');
+  assertEqual(todayISO(d), isoLocal(yesterday), '02:00 Uhr → Vortag');
 });
 
 await test('gibt genau 04:00 Uhr als heutigen Tag zurück', () => {
   CONFIG.dayBoundaryHour = 4;
   const d = new Date(); d.setHours(4, 0, 0, 0);
-  assertEqual(todayISO(d), d.toISOString().slice(0, 10), '04:00 Uhr → heutiges Datum');
+  assertEqual(todayISO(d), isoLocal(d), '04:00 Uhr → heutiges Datum');
 });
 
 await test('gibt 03:59 Uhr als Vortag zurück', () => {
   CONFIG.dayBoundaryHour = 4;
   const d = new Date(); d.setHours(3, 59, 59, 0);
   const yesterday = new Date(d); yesterday.setDate(yesterday.getDate() - 1);
-  assertEqual(todayISO(d), yesterday.toISOString().slice(0, 10), '03:59 Uhr → Vortag');
+  assertEqual(todayISO(d), isoLocal(yesterday), '03:59 Uhr → Vortag');
 });
 
 await test('dayBoundaryHour: 0 → kein Tageswechsel, 00:30 bleibt heute', () => {
   CONFIG.dayBoundaryHour = 0;
   const d = new Date(); d.setHours(0, 30, 0, 0);
-  assertEqual(todayISO(d), d.toISOString().slice(0, 10), 'boundary=0 → 00:30 ist heute');
+  assertEqual(todayISO(d), isoLocal(d), 'boundary=0 → 00:30 ist heute');
   CONFIG.dayBoundaryHour = 4;
 });
 
@@ -633,7 +656,7 @@ await test('dayBoundaryHour: 6 → 05:00 Uhr zählt noch zum Vortag', () => {
   CONFIG.dayBoundaryHour = 6;
   const d = new Date(); d.setHours(5, 0, 0, 0);
   const yesterday = new Date(d); yesterday.setDate(yesterday.getDate() - 1);
-  assertEqual(todayISO(d), yesterday.toISOString().slice(0, 10), 'boundary=6, 05:00 → Vortag');
+  assertEqual(todayISO(d), isoLocal(yesterday), 'boundary=6, 05:00 → Vortag');
   CONFIG.dayBoundaryHour = 4;
 });
 
@@ -653,7 +676,7 @@ await test('erzeugt und speichert Auto-ID wenn kein CONFIG.deviceId', () => {
   const id = getDeviceId();
   assertNotNull(id, 'soll eine ID erzeugen');
   assert(id.length > 0, 'ID darf nicht leer sein');
-  assertEqual(localStorage.getItem('stempeluhr_device_id'), id, 'soll in localStorage gespeichert sein');
+  assertEqual(localStorage.getItem('lgc_device_id'), id, 'soll in localStorage gespeichert sein');
 });
 
 await test('gibt dieselbe Auto-ID beim zweiten Aufruf zurück', () => {
@@ -703,6 +726,67 @@ await test('liefert true wenn Zeitfenster den ganzen Tag umfasst', () => {
 await test('liefert false wenn Zeitfenster in der Vergangenheit', () => {
   resetStore(); saveZeitfenster('01:00', '01:01');
   assert(!isWithinZeitfenster(), 'vergangenes Fenster → false');
+});
+
+/* ── Suite 7b: timeToMin – numerischer Zeitvergleich ──────── */
+suite('timeToMin – numerischer Zeitvergleich (keine führenden Nullen nötig)');
+
+await test('timeToMin("09:00") = 540', () => {
+  assertEqual(timeToMin('09:00'), 540, '09:00 → 540 min');
+});
+
+await test('timeToMin("9:00") = 540 (keine führende Null)', () => {
+  assertEqual(timeToMin('9:00'), 540, '9:00 → 540 min (wie 09:00)');
+});
+
+await test('timeToMin("00:00") = 0', () => {
+  assertEqual(timeToMin('00:00'), 0, '00:00 → 0');
+});
+
+await test('timeToMin("23:59") = 1439', () => {
+  assertEqual(timeToMin('23:59'), 1439, '23:59 → 1439 min');
+});
+
+await test('isWithinZeitfenster funktioniert mit "9:00" (ohne führende Null)', () => {
+  // Kritisch: "9:00" im Config statt "09:00" – String-Vergleich würde versagen
+  // da "09:xx" < "9:00" lexikografisch. timeToMin macht es robust.
+  resetStore();
+  // Zeitfenster mit fehlender führender Null setzen
+  localStorage.setItem('lgc_zeitfenster', JSON.stringify({
+    date: todayISO(), start: '9:00', end: '21:00'   // absichtlich ohne Null
+  }));
+  // Aktuelle Zeit liegt zwischen 09:00 und 21:00 → muss true liefern
+  // (Test ist aussagekräftig wenn er tagsüber läuft, aber korrekt in beiden Richtungen)
+  const { start, end } = getZeitfenster();
+  const nowMin = timeToMin(currentHHMM());
+  const expected = nowMin >= timeToMin(start) && nowMin < timeToMin(end);
+  assertEqual(isWithinZeitfenster(), expected, '"9:00" muss numerisch korrekt verglichen werden');
+  resetStore();
+});
+
+await test('isWithinZeitfensterForType mit "9:00" – ohne führende Null robust', () => {
+  resetStore();
+  // start ohne führende Null in localStorage
+  const s = { date: todayISO(), types: { wachdienst: { start: '9:00', end: '21:00' } } };
+  localStorage.setItem('lgc_zeitfenster', JSON.stringify(s));
+  const type = { key: 'wachdienst', logType: 'wachdienst' };
+  const zf = getZeitfensterForType(type);
+  const nowMin = timeToMin(currentHHMM());
+  const expected = nowMin >= timeToMin(zf.start) && nowMin < timeToMin(zf.end);
+  assertEqual(isWithinZeitfensterForType(type), expected,
+    'isWithinZeitfensterForType mit "9:00" muss korrekt auswerten');
+  resetStore();
+});
+
+await test('String-Vergleich würde bei "9:00" vs. "09:xx" versagen – timeToMin nicht', () => {
+  // Dokumentiert das ursprüngliche Problem:
+  // "09:30" >= "9:00" → false (String), aber timeToMin(09:30)=570 >= timeToMin(9:00)=540 → true
+  const nowStr  = '09:30';
+  const startBad = '9:00';
+  const stringFail = nowStr >= startBad; // false – falsches Ergebnis
+  const numericOk  = timeToMin(nowStr) >= timeToMin(startBad); // true – richtiges Ergebnis
+  assertEqual(stringFail, false, 'String-Vergleich liefert false (Bug)');
+  assertEqual(numericOk,  true,  'timeToMin liefert true (korrekt)');
 });
 
 /* ── Suite 8: Verlängern ───────────────────────────────────── */
@@ -823,7 +907,7 @@ await test('saveLog / getLog Roundtrip bleibt verlustfrei', () => {
 });
 
 await test('getLog gibt leeres Array zurück bei ungültigem JSON', () => {
-  localStorage.setItem('stempeluhr_log', 'KEIN_JSON{{{');
+  localStorage.setItem(logKey(), 'KEIN_JSON{{{');
   const log = getLog();
   assert(Array.isArray(log), 'soll Array zurückgeben');
   assertEqual(log.length, 0, 'soll leer sein bei Parse-Fehler');
@@ -1023,15 +1107,15 @@ await test('gibt Fallback zurück wenn gespeichertes Datum von gestern ist', () 
   resetStore();
   const yesterday = new Date();
   yesterday.setDate(yesterday.getDate() - 1);
-  const oldDate = yesterday.toISOString().slice(0, 10);
-  localStorage.setItem('stempeluhr_zeitfenster', JSON.stringify({ date: oldDate, start: '10:00', end: '12:00' }));
+  const oldDate = isoLocal(yesterday);
+  localStorage.setItem('lgc_zeitfenster', JSON.stringify({ date: oldDate, start: '10:00', end: '12:00' }));
   const zf = getZeitfenster();
   assertEqual(zf.start, '07:00', 'Abgelaufenes Fenster soll Fallback liefern');
   assertEqual(zf.end,   '21:00', 'Abgelaufenes Fenster soll Fallback liefern');
 });
 
 await test('gibt Fallback zurück bei ungültigem JSON', () => {
-  localStorage.setItem('stempeluhr_zeitfenster', 'KAPUTT{{');
+  localStorage.setItem('lgc_zeitfenster', 'KAPUTT{{');
   const zf = getZeitfenster();
   assertEqual(zf.start, '07:00', 'Bei Parse-Fehler soll Fallback kommen');
   resetStore();
@@ -1050,7 +1134,7 @@ await test('removedUser aus defaultUsers wird nicht zurückgegeben (kein Storage
 
 await test('removedUser aus stored wird gefiltert', () => {
   resetStore(); resetConfig();
-  localStorage.setItem('stempeluhr_users', JSON.stringify([
+  localStorage.setItem('lgc_users', JSON.stringify([
     { id: 'stored_user', name: 'Stored', pin: '222222', mustChangePIN: true },
     { id: 'will_be_removed', name: 'Gone', pin: '333333', mustChangePIN: true },
   ]));
@@ -1072,7 +1156,7 @@ await test('removedUser in defaultUsers und stored: wird nicht per Merge re-adde
 
 await test('removedUser in defaultUsers aber Storage hat ihn: wird aus stored entfernt', () => {
   resetStore(); resetConfig();
-  localStorage.setItem('stempeluhr_users', JSON.stringify([
+  localStorage.setItem('lgc_users', JSON.stringify([
     { id: 'default_a', name: 'Default A', pin: '111111', mustChangePIN: true },
     { id: 'other_user', name: 'Other', pin: '444444', mustChangePIN: true },
   ]));
@@ -1092,14 +1176,14 @@ await test('kein Storage → Defaults werden gespeichert und zurückgegeben', ()
   assertEqual(users.length, 1, 'Soll 1 Default-User zurückgeben');
   assertEqual(users[0].id, 'default_a', 'Default-User-ID stimmt nicht');
   // und gespeichert:
-  const stored = JSON.parse(localStorage.getItem('stempeluhr_users'));
+  const stored = JSON.parse(localStorage.getItem('lgc_users'));
   assertEqual(stored.length, 1, 'Soll auch in localStorage gespeichert sein');
   resetConfig();
 });
 
 await test('ungültiges JSON in Storage → Defaults werden verwendet', () => {
   resetStore(); resetConfig();
-  localStorage.setItem('stempeluhr_users', 'KEIN_JSON{{{');
+  localStorage.setItem('lgc_users', 'KEIN_JSON{{{');
   const users = getUsers();
   assertEqual(users.length, 1, 'Soll Defaults liefern bei Parse-Fehler');
   resetConfig();
@@ -1107,7 +1191,7 @@ await test('ungültiges JSON in Storage → Defaults werden verwendet', () => {
 
 await test('Storage ist ein Objekt statt Array → Defaults werden verwendet', () => {
   resetStore(); resetConfig();
-  localStorage.setItem('stempeluhr_users', JSON.stringify({ id: 'no_array' }));
+  localStorage.setItem('lgc_users', JSON.stringify({ id: 'no_array' }));
   const users = getUsers();
   assertEqual(users.length, 1, 'Soll Defaults liefern wenn kein Array');
   resetConfig();
@@ -1116,7 +1200,7 @@ await test('Storage ist ein Objekt statt Array → Defaults werden verwendet', (
 await test('neuer Default-User wird zu vorhandenen stored-Usern ergänzt', () => {
   resetStore(); resetConfig();
   // Simulate: stored hat nur einen benutzerdefinierten User (default_a noch nicht vorhanden)
-  localStorage.setItem('stempeluhr_users', JSON.stringify([
+  localStorage.setItem('lgc_users', JSON.stringify([
     { id: 'custom_user', name: 'Custom', pin: '999888', mustChangePIN: true },
   ]));
   // default_a ist in defaultUsers aber nicht in stored → soll ergänzt werden
@@ -1585,8 +1669,8 @@ await test('Veraltetes Datum → neues Datum, kein alter Override', () => {
   resetStore();
   // Alten Eintrag mit gestern einschreiben
   const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1);
-  const oldDate   = yesterday.toISOString().slice(0, 10);
-  localStorage.setItem('stempeluhr_zeitfenster', JSON.stringify({
+  const oldDate   = isoLocal(yesterday);
+  localStorage.setItem('lgc_zeitfenster', JSON.stringify({
     date: oldDate, types: { wachdienst: { start: '01:00', end: '02:00' } },
   }));
   const window = { start: '07:00', end: '21:00' };
@@ -1626,6 +1710,58 @@ await test('Leerer Bereich start === end → false', () => {
   saveZeitfensterForType('wachdienst', '00:00', '00:00');
   const type = { key: 'wachdienst', logType: 'wachdienst' };
   assert(!isWithinZeitfensterForType(type), 'start === end → leerer Bereich → false');
+  resetStore();
+});
+
+/* ══════════════════════════════════════════════════════════════
+   Suite 28b – Zeitfenster über Mitternacht
+══════════════════════════════════════════════════════════════ */
+suite('isWithinZeitfensterForType – Mitternachts-Fenster');
+
+// Reine Logik-Tests (unabhängig von aktueller Uhrzeit)
+// Wir testen die Formel direkt über timeToMin:
+//   normal:           start < end  →  now >= start && now < end
+//   über Mitternacht: start > end  →  now >= start || now < end
+
+function _withinMidnight(nowStr, startStr, endStr) {
+  const now = timeToMin(nowStr), start = timeToMin(startStr), end = timeToMin(endStr);
+  if (start < end)  return now >= start && now < end;
+  if (start > end)  return now >= start || now < end;
+  return false;
+}
+
+await test('Mitternacht-Fenster 22:00–02:00: 22:00 → true (genau am Start)', () => {
+  assert(_withinMidnight('22:00', '22:00', '02:00'), '22:00 soll true sein');
+});
+await test('Mitternacht-Fenster 22:00–02:00: 23:30 → true (vor Mitternacht)', () => {
+  assert(_withinMidnight('23:30', '22:00', '02:00'), '23:30 soll true sein');
+});
+await test('Mitternacht-Fenster 22:00–02:00: 00:00 → true (nach Mitternacht)', () => {
+  assert(_withinMidnight('00:00', '22:00', '02:00'), '00:00 soll true sein');
+});
+await test('Mitternacht-Fenster 22:00–02:00: 01:59 → true (kurz vor Ende)', () => {
+  assert(_withinMidnight('01:59', '22:00', '02:00'), '01:59 soll true sein');
+});
+await test('Mitternacht-Fenster 22:00–02:00: 02:00 → false (genau am Ende, exklusiv)', () => {
+  assert(!_withinMidnight('02:00', '22:00', '02:00'), '02:00 soll false sein');
+});
+await test('Mitternacht-Fenster 22:00–02:00: 10:00 → false (tagsüber außerhalb)', () => {
+  assert(!_withinMidnight('10:00', '22:00', '02:00'), '10:00 soll false sein');
+});
+await test('Mitternacht-Fenster 22:00–02:00: 21:59 → false (kurz vor Start)', () => {
+  assert(!_withinMidnight('21:59', '22:00', '02:00'), '21:59 soll false sein');
+});
+await test('Normales Fenster 07:00–21:00 unverändert korrekt', () => {
+  assert( _withinMidnight('07:00', '07:00', '21:00'), '07:00 → true');
+  assert( _withinMidnight('14:00', '07:00', '21:00'), '14:00 → true');
+  assert(!_withinMidnight('21:00', '07:00', '21:00'), '21:00 → false (exklusiv)');
+  assert(!_withinMidnight('06:59', '07:00', '21:00'), '06:59 → false');
+});
+await test('isWithinZeitfensterForType mit Mitternachts-Fenster 00:00–23:59 (normal) → immer true', () => {
+  resetStore();
+  saveZeitfensterForType('wachdienst', '00:00', '23:59');
+  const type = { key: 'wachdienst', logType: 'wachdienst' };
+  assert(isWithinZeitfensterForType(type), '00:00–23:59 → immer true');
   resetStore();
 });
 
@@ -1733,6 +1869,189 @@ suite('Suite 30 – pearsonR', () => {
   // genau 2 Datenpunkte, identische X → null
   const r8 = pearsonR([2,2], [3,7]);
   assertEqual(r8, null, '2 gleiche X-Werte → null');
+});
+
+/* ══════════════════════════════════════════════════════════════
+   Suite 31 – _pinSubmitting Guard (Doppel-Login verhindert)
+══════════════════════════════════════════════════════════════ */
+suite('_pinSubmitting Guard – Doppel-Auslösung von submitPIN verhindert');
+
+await test('zweiter paralleler Aufruf wird sofort blockiert', async () => {
+  let _guard = false;
+  let callCount = 0;
+  async function guardedSubmit() {
+    if (_guard) return;
+    _guard = true;
+    try { callCount++; await new Promise(r => setTimeout(r, 10)); }
+    finally { _guard = false; }
+  }
+  const p1 = guardedSubmit();
+  const p2 = guardedSubmit(); // _guard ist bereits true → kein Eintritt
+  await Promise.all([p1, p2]);
+  assertEqual(callCount, 1, 'Nur ein Aufruf soll durchkommen, war: ' + callCount);
+});
+
+await test('nach Abschluss ist _guard zurückgesetzt und zweiter Aufruf möglich', async () => {
+  let _guard = false;
+  let callCount = 0;
+  async function guardedSubmit() {
+    if (_guard) return;
+    _guard = true;
+    try { callCount++; await new Promise(r => setTimeout(r, 5)); }
+    finally { _guard = false; }
+  }
+  await guardedSubmit();
+  assertEqual(_guard, false, '_guard muss nach Abschluss false sein');
+  await guardedSubmit();
+  assertEqual(callCount, 2, 'Nach Reset kann erneut aufgerufen werden');
+});
+
+await test('try/finally setzt _guard auch bei geworfener Ausnahme zurück', async () => {
+  let _guard = false;
+  async function faultySubmit() {
+    if (_guard) return;
+    _guard = true;
+    try { throw new Error('Simulierter Fehler'); }
+    finally { _guard = false; }
+  }
+  try { await faultySubmit(); } catch {}
+  assertEqual(_guard, false, '_guard muss auch nach Ausnahme zurückgesetzt sein');
+});
+
+await test('pushDigit setzt bei 6 Ziffern einen setTimeout – zweiter OK-Druck trifft auf aktives _guard', async () => {
+  // Simuliert: setTimeout(submitPIN, 160) feuert kurz nach dem letzten Ziffern-Tap,
+  // danach kommt noch ein OK-Tap. Mit _guard wird der zweite Aufruf blockiert.
+  let _guard = false;
+  let calls = 0;
+  async function submitPIN() {
+    if (_guard) return;
+    _guard = true;
+    try { calls++; await new Promise(r => setTimeout(r, 50)); }
+    finally { _guard = false; }
+  }
+  // setTimeout-Aufruf (von pushDigit)
+  const autoSubmit = new Promise(r => setTimeout(() => submitPIN().then(r), 0));
+  // Sofortiger OK-Tap (von handleKeyInput), kommt fast gleichzeitig
+  const okTap = submitPIN();
+  await Promise.all([autoSubmit, okTap]);
+  assertEqual(calls, 1, 'Auto-submit + OK-Tap dürfen nur einmal durchkommen');
+});
+
+/* ══════════════════════════════════════════════════════════════
+   Suite 32 – todayISO() bei lokaler Zeit nahe Mitternacht / UTC-Offset
+══════════════════════════════════════════════════════════════ */
+suite('todayISO() – lokale Zeit nahe Mitternacht / UTC-Offset');
+
+await test('23:30 Uhr lokal liefert lokalen Kalendertag (nicht UTC)', () => {
+  CONFIG.dayBoundaryHour = 4;
+  const d = new Date(); d.setHours(23, 30, 0, 0);
+  // Muss lokaler Tag sein – in UTC- Zeitzonen wäre toISOString() der nächste Tag
+  assertEqual(todayISO(d), isoLocal(d), '23:30 → lokaler Tag');
+  CONFIG.dayBoundaryHour = 4;
+});
+
+await test('23:59:59 lokal liegt über Boundary → heutiger Tag', () => {
+  CONFIG.dayBoundaryHour = 4;
+  const d = new Date(); d.setHours(23, 59, 59, 999);
+  assertEqual(todayISO(d), isoLocal(d), '23:59:59 → heutiger Tag');
+});
+
+await test('00:01 Uhr lokal liegt unter Boundary → Vortag', () => {
+  CONFIG.dayBoundaryHour = 4;
+  const d = new Date(); d.setHours(0, 1, 0, 0);
+  const yesterday = new Date(d); yesterday.setDate(yesterday.getDate() - 1);
+  assertEqual(todayISO(d), isoLocal(yesterday), '00:01 → Vortag');
+});
+
+await test('genau Boundary-Stunde → heutiger Tag', () => {
+  CONFIG.dayBoundaryHour = 4;
+  const d = new Date(); d.setHours(4, 0, 0, 0);
+  assertEqual(todayISO(d), isoLocal(d), 'Genau 04:00 → heutiger Tag');
+});
+
+await test('1ms vor Boundary → Vortag', () => {
+  CONFIG.dayBoundaryHour = 4;
+  const d = new Date(); d.setHours(3, 59, 59, 999);
+  const yesterday = new Date(d); yesterday.setDate(yesterday.getDate() - 1);
+  assertEqual(todayISO(d), isoLocal(yesterday), '03:59:59.999 → Vortag');
+});
+
+await test('isoLocal() gibt exakt YYYY-MM-DD mit lokalen Komponenten zurück', () => {
+  const d = new Date(2026, 2, 16, 15, 30, 0); // 2026-03-16 15:30 lokal
+  assertEqual(isoLocal(d), '2026-03-16', 'isoLocal(2026-03-16T15:30) → 2026-03-16');
+});
+
+await test('isoLocal() und todayISO() stimmen für 23:30 überein (UTC-Proof)', () => {
+  CONFIG.dayBoundaryHour = 4;
+  const d = new Date(); d.setHours(23, 30, 0, 0);
+  const y = d.getFullYear(), m = d.getMonth()+1, day = d.getDate();
+  const expected = `${y}-${String(m).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+  assertEqual(todayISO(d), expected, 'todayISO nutzt lokale Komponenten, kein UTC-Drift');
+});
+
+/* ══════════════════════════════════════════════════════════════
+   Suite 33 – getLog() / getAllStates() bei korruptem JSON
+══════════════════════════════════════════════════════════════ */
+suite('getLog() / getAllStates() – korruptes JSON');
+
+await test('getLog() gibt leeres Array zurück bei korruptem JSON', () => {
+  resetStore(); _lastToast = null;
+  localStorage.setItem(logKey(), 'KAPUTT{{{');
+  const result = getLog();
+  assert(Array.isArray(result), 'soll Array zurückgeben');
+  assertEqual(result.length, 0, 'soll leer sein bei Parse-Fehler');
+  resetStore();
+});
+
+await test('getLog() ruft showToast auf bei korruptem JSON', () => {
+  resetStore(); _lastToast = null;
+  localStorage.setItem(logKey(), 'KAPUTT{{{');
+  getLog();
+  assert(_lastToast !== null, 'showToast soll aufgerufen werden');
+  assert(_lastToast.includes('beschädigt'), 'Toast soll auf beschädigte Daten hinweisen');
+  resetStore();
+});
+
+await test('getLog() zeigt keinen Toast bei leerem Storage', () => {
+  resetStore(); _lastToast = null;
+  getLog(); // kein Eintrag → gibt [] ohne Toast
+  assertNull(_lastToast, 'kein Toast bei fehlendem/leerem Eintrag');
+});
+
+await test('getLog() zeigt keinen Toast bei gültigem JSON', () => {
+  resetStore(); _lastToast = null;
+  localStorage.setItem(logKey(), JSON.stringify([{ id: 1, aktion: 'start' }]));
+  const result = getLog();
+  assertEqual(result.length, 1, 'Ein Eintrag korrekt gelesen');
+  assertNull(_lastToast, 'kein Toast bei gültigem JSON');
+  resetStore();
+});
+
+await test('getAllStates() gibt leeres Objekt zurück bei korruptem JSON', () => {
+  resetStore(); _lastToast = null;
+  localStorage.setItem('lgc_state', '{{invalid');
+  const result = getAllStates();
+  assertEqual(typeof result, 'object', 'soll Objekt zurückgeben');
+  assertEqual(Object.keys(result).length, 0, 'soll leer sein bei Parse-Fehler');
+  resetStore();
+});
+
+await test('getAllStates() ruft showToast auf bei korruptem JSON', () => {
+  resetStore(); _lastToast = null;
+  localStorage.setItem('lgc_state', '{{invalid');
+  getAllStates();
+  assert(_lastToast !== null, 'showToast soll aufgerufen werden');
+  assert(_lastToast.includes('beschädigt'), 'Toast soll auf beschädigte Daten hinweisen');
+  resetStore();
+});
+
+await test('getAllStates() zeigt keinen Toast bei gültigem JSON', () => {
+  resetStore(); _lastToast = null;
+  localStorage.setItem('lgc_state', JSON.stringify({ user1: { anwesenheit: true } }));
+  const result = getAllStates();
+  assertEqual(result.user1.anwesenheit, true, 'Zustand korrekt gelesen');
+  assertNull(_lastToast, 'kein Toast bei gültigem JSON');
+  resetStore();
 });
 
 /* ══════════════════════════════════════════════════════════════

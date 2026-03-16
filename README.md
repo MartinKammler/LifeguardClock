@@ -6,7 +6,7 @@
 <p align="center"><em>Zeiterfassung für Rettungsschwimmer</em></p>
 
 <p align="center">
-  Digitale Stempeluhr für Vereine — entwickelt für die DLRG, frei konfigurierbar für jede Organisation.<br>
+  Digitale Zeiterfassung für Vereine — entwickelt für die DLRG, frei konfigurierbar für jede Organisation.<br>
   Erfasst Anwesenheit und beliebige Dienst-Typen (Wachdienst, Sanitätsdienst …) mit automatischen Regeln wie<br>
   Zeitlimits, Pflichtpausen, gegenseitiger Sperre und Berechtigungen pro Mitglied.
 </p>
@@ -28,6 +28,7 @@
 | **`einmalpins.html`** | Einmal-PIN-Übersicht für den Druck *(lokal, nicht im Repo)* |
 | **`config.js`** | Eigene Konfiguration *(nicht im Repo, aus Vorlage erstellen)* |
 | **`config.example.js`** | Vorlage mit allen Optionen und Kommentaren |
+| **`sw.js`** | Service Worker — App-Shell offline cachen |
 | **`presets/config.dlrg.js`** | Fertiges Preset für DLRG-Ortsgruppen |
 | **`presets/config.simple.js`** | Minimales Preset — nur Anwesenheit |
 
@@ -54,8 +55,9 @@ Die Haupt-App. Läuft auf Tablets im Dauerbetrieb.
 - Stempel-Typen vollständig aus `config.js` konfigurierbar
 - Automatiken: gegenseitige Sperre, Auto-Start, Zeitlimit + Pflichtpause, Zeitfenster
 - Admin-Bereich: Log, Stunden-Übersicht, Nutzer- & PIN-Verwaltung, Zeitfenster, Cloud-Sync
-- Offline-fähig, PWA-ready
+- Offline-fähig (Service Worker, App-Shell-Cache)
 - Cloud-Sync zu Nextcloud / WebDAV (gerätebasierte Dateinamen für Multi-Gerät-Betrieb)
+- Schreibt Typ-Konfiguration in `lgc_type_config` (localStorage) für Dashboard und Editor
 
 ### `dashboard.html` — Auswertung
 
@@ -65,7 +67,7 @@ Läuft lokal im Browser, liest JSON-Dateien aus dem Cloud-Sync-Ordner ein.
 - Tabs: Übersicht · Tage · Wochen · Personen · Export
 - Korrelationsanalyse Anwesenheit ↔ Wachdienst / Sanitätsdienst
 - CSV-Export (Rohdaten, Wochensummen, Gesamtsummen)
-- Unterstützt Multi-Gerät: liest alle `stempeluhr_*_DATUM.json`-Dateien zusammen
+- Unterstützt Multi-Gerät: liest alle `lgc_*_DATUM.json`-Dateien zusammen
 
 ### `editor.html` — Log-Editor
 
@@ -73,12 +75,13 @@ Werkzeug zur manuellen Pflege einzelner Tages-JSON-Dateien.
 
 - Einträge bearbeiten, löschen, hinzufügen
 - Paar-Validierung (Start ohne Stop und umgekehrt)
-- Timeline-Ansicht
+- Timeline-Ansicht mit konfigurierten Typ-Farben
 - Undo/Redo (50 Schritte)
+- Cloud-Integration im Proxy-Betrieb (☁ Cloud laden / ☁ Speichern)
 
 ### `admin.html` — Benutzerverwaltung
 
-Läuft lokal im Browser, schreibt/liest `stempeluhr_users.json` direkt auf dem WebDAV-Server.
+Läuft lokal im Browser, schreibt/liest `lgc_users.json` direkt auf dem WebDAV-Server.
 
 - Nutzer anlegen, umbenennen, löschen
 - PINs zurücksetzen (Einmal-PIN generieren)
@@ -87,19 +90,19 @@ Läuft lokal im Browser, schreibt/liest `stempeluhr_users.json` direkt auf dem W
 
 ### `einmalpins.html` — PIN-Übersicht
 
-Druckansicht aller aktiven Einmal-PINs. Wird aus dem Admin-Bereich der Stempeluhr oder aus `admin.html` geöffnet. *(Lokal erzeugt, nicht im Repo.)*
+Druckansicht aller aktiven Einmal-PINs. Wird aus dem Admin-Bereich von LifeguardClock oder aus `admin.html` geöffnet. *(Lokal erzeugt, nicht im Repo.)*
 
 ---
 
 ## Cloud-Nutzerverwaltung
 
-Nutzerdaten liegen zentral auf dem WebDAV-Server als `Stempeluhr/stempeluhr_users.json`.
+Nutzerdaten liegen zentral auf dem WebDAV-Server als `LifeguardClock/lgc_users.json`.
 Änderungen über `admin.html` → alle Geräte synchronisieren beim nächsten Start automatisch.
 
 ```
 config.js (pro Gerät)        → Cloud-Zugangsdaten, deviceId, Stempel-Typen
-stempeluhr_users.json (Cloud) → Nutzerliste, PINs, Berechtigungen (alle Geräte teilen diese)
-stempeluhr_[id]_DATUM.json   → Tages-Logdaten (pro Gerät)
+lgc_users.json (Cloud) → Nutzerliste, PINs, Berechtigungen (alle Geräte teilen diese)
+lgc_[id]_DATUM.json   → Tages-Logdaten (pro Gerät)
 ```
 
 ---
@@ -110,9 +113,10 @@ Alle Einstellungen in `config.js` — die wichtigsten:
 
 ```js
 const CONFIG = {
-  deviceId:         'steg',      // Gerätekennung (optional, sonst auto: 'ipad-3f7a')
-  dayBoundaryHour:  4,           // Tageswechsel um 04:00 Uhr
-  adminPin:         '000000',    // <-- ändern!
+  deviceId:                  'steg',  // Gerätekennung (optional, sonst auto: 'ipad-3f7a')
+  dayBoundaryHour:           4,      // Tageswechsel um 04:00 Uhr
+  adminPin:                  '000000', // <-- ändern!
+  cloudSyncDebounceSeconds:  60,     // Sync-Verzögerung in Sekunden (0 auf localhost)
 
   types: [
     { key: 'anwesenheit', label: 'Anwesenheit', logType: 'anwesenheit',
@@ -139,7 +143,7 @@ Fertige Presets: [`presets/config.dlrg.js`](presets/config.dlrg.js) · [`presets
 ## Cloud-Sync
 
 Nutzt WebDAV — kompatibel mit Nextcloud, ownCloud, Hetzner Storage Box, Strato HiDrive u. a.
-Jedes Gerät schreibt eigene Dateien (`stempeluhr_[deviceId]_DATUM.json`), das Dashboard führt sie zusammen.
+Jedes Gerät schreibt eigene Dateien (`lgc_[deviceId]_DATUM.json`), das Dashboard führt sie zusammen.
 
 ---
 

@@ -10,6 +10,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>LifeguardClock – Dashboard</title>
   <link rel="icon" type="image/png" href="Logo.png">
+  <script src="config.js"       onerror="window.CONFIG=undefined"></script>
   <script src="admin_config.js" onerror="window.ADMIN_CONFIG=undefined"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -380,7 +381,7 @@
     <div class="empty-state" id="overview-empty">
       <div class="empty-icon">&#x1F4CA;</div>
       <div class="empty-title">Keine Daten geladen</div>
-      <div class="empty-sub">Wähle einen Ordner mit <code>stempeluhr_*.json</code> Dateien aus der Nextcloud</div>
+      <div class="empty-sub">Wähle einen Ordner mit <code>lgc_*.json</code> Dateien aus der Nextcloud</div>
     </div>
     <div id="overview-data" style="display:none">
       <div class="cards" id="summary-cards"></div>
@@ -475,32 +476,54 @@
 
   <script>
     // ─── Typ-Farbpalette & bekannte Labels ───────────────────────────────────
-    const COLOR_PALETTE = [
-      { main: '#3b82f6', dim: 'rgba(59,130,246,.15)'  },   // blau
-      { main: '#f59e0b', dim: 'rgba(245,158,11,.15)'  },   // amber
-      { main: '#ef4444', dim: 'rgba(239,68,68,.15)'   },   // rot
-      { main: '#22c55e', dim: 'rgba(34,197,94,.15)'   },   // grün
-      { main: '#8b5cf6', dim: 'rgba(139,92,246,.15)'  },   // violet
-    ];
+    const COLOR_PALETTE = {
+      blue:   { main: '#3b82f6', dim: 'rgba(59,130,246,.15)'  },
+      amber:  { main: '#f59e0b', dim: 'rgba(245,158,11,.15)'  },
+      red:    { main: '#ef4444', dim: 'rgba(239,68,68,.15)'   },
+      green:  { main: '#22c55e', dim: 'rgba(34,197,94,.15)'   },
+      violet: { main: '#8b5cf6', dim: 'rgba(139,92,246,.15)'  },
+    };
+    const COLOR_FALLBACK = ['blue','amber','red','green','violet'];
+
     const KNOWN_LABELS = {
-      anwesenheit:              'Anwesenheit',
-      wachstunde_ehrenamtlich:  'Wachstunden',
-      sanitätsstunde:           'Sanitätsstunden',
-      wachdienst:               'Wachdienst',
-      sanitaetsdienst:          'Sanitätsdienst',
-      sanitätsdienst:           'Sanitätsdienst',
-      verwaltung:               'Verwaltung',
-      ausbildung:               'Ausbildung',
-      helfer:                   'Helfer',
+      anwesenheit:             'Anwesenheit',
+      wachstunde_ehrenamtlich: 'Wachstunden',
+      sanitätsstunde:          'Sanitätsstunden',
+      wachdienst:              'Wachdienst',
+      sanitaetsdienst:         'Sanitätsdienst',
+      sanitätsdienst:          'Sanitätsdienst',
+      verwaltung:              'Verwaltung',
+      ausbildung:              'Ausbildung',
+      helfer:                  'Helfer',
     };
 
     // Dynamisch aus den geladenen Daten abgeleitet
     let TYPES  = [];    // logType-Strings in Reihenfolge
     let T_INFO = {};    // logType → { label, main, dim }
 
+    // Aus lgc_type_config (localStorage, gesetzt von LifeguardClock.html) oder CONFIG.types
+    const CFG_TYPE_MAP = {};
+    function _buildCfgMap(types) {
+      types.forEach((t, i) => {
+        const c = COLOR_PALETTE[t.color] || COLOR_PALETTE[COLOR_FALLBACK[i % 5]];
+        CFG_TYPE_MAP[t.logType] = { label: t.label, main: c.main, dim: c.dim, order: i };
+      });
+    }
+    try {
+      const stored = JSON.parse(localStorage.getItem('lgc_type_config') || '[]');
+      if (stored.length > 0) _buildCfgMap(stored);
+    } catch (e) {}
+    if (Object.keys(CFG_TYPE_MAP).length === 0 &&
+        typeof CONFIG !== 'undefined' && Array.isArray(CONFIG?.types)) {
+      _buildCfgMap(CONFIG.types.filter(t => !t.disabled));
+    }
+
     function buildTypeList(typeTotals) {
-      // Reihenfolge: anwesenheit zuerst, danach nach Gesamtstunden absteigend
+      // Reihenfolge: aus CONFIG (wenn verfügbar), sonst anwesenheit zuerst dann nach Stunden
       const sorted = Object.keys(typeTotals).sort((a, b) => {
+        const oa = CFG_TYPE_MAP[a]?.order ?? 999;
+        const ob = CFG_TYPE_MAP[b]?.order ?? 999;
+        if (oa !== ob) return oa - ob;
         if (a === 'anwesenheit') return -1;
         if (b === 'anwesenheit') return 1;
         return typeTotals[b] - typeTotals[a];
@@ -508,8 +531,9 @@
       TYPES  = sorted;
       T_INFO = {};
       sorted.forEach((lt, i) => {
-        const c = COLOR_PALETTE[i % COLOR_PALETTE.length];
-        T_INFO[lt] = { label: KNOWN_LABELS[lt] || lt, main: c.main, dim: c.dim };
+        const cfg = CFG_TYPE_MAP[lt];
+        const c   = cfg || COLOR_PALETTE[COLOR_FALLBACK[i % 5]];
+        T_INFO[lt] = { label: cfg?.label || KNOWN_LABELS[lt] || lt, main: c.main, dim: c.dim };
       });
     }
 
@@ -572,8 +596,11 @@
     // ─── Laden ───────────────────────────────────────────────────────────────
     async function processFiles(fileList) {
       const entries = [];
+      const seenFiles = new Set();
       for (const file of fileList) {
-        if (!/^stempeluhr_.*\d{4}-\d{2}-\d{2}\.json$/.test(file.name)) continue;
+        if (!/^lgc_.*\d{4}-\d{2}-\d{2}\.json$/.test(file.name)) continue;
+        if (seenFiles.has(file.name)) continue;  // Duplikat überspringen
+        seenFiles.add(file.name);
         try {
           const json = JSON.parse(await file.text());
           const day = json.logicalDay || (file.name.match(/(\d{4}-\d{2}-\d{2})/)||[])[1];
@@ -581,7 +608,7 @@
         } catch { /* überspringe kaputte Datei */ }
       }
       if (entries.length === 0) {
-        alert('Keine gültigen stempeluhr_*.json Dateien gefunden.');
+        alert('Keine gültigen lgc_*.json Dateien gefunden.');
         return;
       }
       DB = buildDB(entries);
@@ -991,7 +1018,7 @@
       for (const day of DB.days)
         for (const [p, pd] of Object.entries(DB.by[day]))
           rows.push([day, p, ...TYPES.map(t => Math.round((pd[t]||0)/60000))]);
-      csvDL('stempeluhr_alle_tage.csv', rows);
+      csvDL('lgc_alle_tage.csv', rows);
     });
 
     document.getElementById('exp-weeks').addEventListener('click', () => {
@@ -1007,7 +1034,7 @@
         for (const [p, pd] of Object.entries(pw))
           rows.push([fmtWeek(wk), p, ...TYPES.map(t => Math.round((pd[t]||0)/60000))]);
       }
-      csvDL('stempeluhr_wochen.csv', rows);
+      csvDL('lgc_wochen.csv', rows);
     });
 
     document.getElementById('exp-persons').addEventListener('click', () => {
@@ -1021,28 +1048,33 @@
         }
       for (const p of DB.persons)
         rows.push([p, ...TYPES.map(t => Math.round(((pt[p]||{})[t]||0)/60000))]);
-      csvDL('stempeluhr_personen.csv', rows);
+      csvDL('lgc_personen.csv', rows);
     });
 
     // ─── Cloud-Laden ──────────────────────────────────────────────────────────
     const IS_PROXY = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
 
     function getCloudCreds() {
-      if (window.ADMIN_CONFIG?.cloud?.user && window.ADMIN_CONFIG?.cloud?.pass)
-        return window.ADMIN_CONFIG.cloud;
+      // lgc_cloud lesen; wenn leer, einmalig aus admin_config.js bootstrappen
       try {
-        const s = JSON.parse(localStorage.getItem('stempeluhr_admin_cloud') || '{}');
+        const s = JSON.parse(localStorage.getItem('lgc_cloud') || '{}');
         if (s.user && s.pass && (IS_PROXY || s.url)) return s;
       } catch {}
+      if (window.ADMIN_CONFIG?.cloud?.user && window.ADMIN_CONFIG?.cloud?.pass) {
+        const c = window.ADMIN_CONFIG.cloud;
+        const creds = { url: c.url || '', user: c.user, pass: c.pass };
+        localStorage.setItem('lgc_cloud', JSON.stringify(creds));
+        return creds;
+      }
       return null;
     }
 
     function cloudDavBase(creds) {
-      if (IS_PROXY) return `/remote.php/dav/files/${encodeURIComponent(creds.user)}/Stempeluhr`;
+      if (IS_PROXY) return `/remote.php/dav/files/${encodeURIComponent(creds.user)}/LifeguardClock`;
       let url = creds.url.trim().replace(/\/$/, '');
       url = url.replace(/\/remote\.php\/dav.*/i, '');
       url = url.replace(/\/index\.php.*/i, '');
-      return `${url}/remote.php/dav/files/${encodeURIComponent(creds.user)}/Stempeluhr`;
+      return `${url}/remote.php/dav/files/${encodeURIComponent(creds.user)}/LifeguardClock`;
     }
 
     async function _doCloudLoad(creds) {
@@ -1052,25 +1084,35 @@
       btn.disabled = true;
       btn.textContent = '⏳ Lade…';
       try {
+        // Ordner anlegen falls noch nicht vorhanden (idempotent)
+        await fetch(base, { method: 'MKCOL', headers: { Authorization: auth } }).catch(() => {});
         const res = await fetch(base, {
           method: 'PROPFIND',
           headers: { Authorization: auth, Depth: '1', 'Content-Type': 'application/xml' },
         });
+        if (res.status === 404) {
+          btn.disabled = false; btn.textContent = '☁️ Cloud laden';
+          alert('Kein LifeguardClock-Ordner in der Cloud gefunden.\nBitte erst die Hauptapp synchronisieren.');
+          return;
+        }
         if (!res.ok) throw new Error(`PROPFIND: HTTP ${res.status}`);
         const xml = await res.text();
 
         const hrefs = [...xml.matchAll(/<[^>]*:href[^>]*>([^<]+)<\/[^>]*:href>/g)]
           .map(m => decodeURIComponent(m[1].trim()))
-          .filter(h => /stempeluhr_.*\d{4}-\d{2}-\d{2}\.json$/.test(h));
+          .filter(h => /lgc_.*\d{4}-\d{2}-\d{2}\.json$/.test(h));
 
         if (hrefs.length === 0) {
           btn.disabled = false; btn.textContent = '☁️ Cloud laden';
-          alert('Keine stempeluhr_*.json Dateien in der Cloud gefunden.');
+          alert('Keine lgc_*.json Dateien in der Cloud gefunden.');
           return;
         }
 
         const entries = [];
+        const seenHrefs = new Set();
         for (const href of hrefs) {
+          if (seenHrefs.has(href)) continue;  // Duplikat überspringen
+          seenHrefs.add(href);
           const fileUrl = IS_PROXY
             ? href
             : (creds.url.replace(/\/$/, '') + (href.startsWith('/') ? href : '/' + href));
@@ -1126,7 +1168,7 @@
       }
       hint.textContent = '';
       const creds = { url, user, pass };
-      localStorage.setItem('stempeluhr_admin_cloud', JSON.stringify(creds));
+      localStorage.setItem('lgc_cloud', JSON.stringify(creds));
       document.getElementById('cloud-creds-bar').style.display = 'none';
       await _doCloudLoad(creds);
     });
