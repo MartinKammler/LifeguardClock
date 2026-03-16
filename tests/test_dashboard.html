@@ -498,6 +498,57 @@ eq('Fallback-Tag korrekt eingelesen', '2026-05-01', fallbackDB.days[0]);
 eq('Fallback Dauer korrekt', H3, fallbackDB.by['2026-05-01']['Fallback User']['anwesenheit']);
 eq('Fallback KW korrekt', '2026-W18', isoWeekKey('2026-05-01'));
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Suite 14 – buildDB: Duplikate
+// ═══════════════════════════════════════════════════════════════════════════════
+suite('Suite 14 – buildDB: Duplikate und Deduplizierung');
+
+// Zwei verschiedene Stop-Einträge im selben Log → buildDB summiert korrekt
+const twoStopsDB = buildDB([{ day:'2026-04-01', log:[
+  { aktion:'stop', nutzer:'Max', typ:'anwesenheit', dauer_ms:H2, id:1 },
+  { aktion:'stop', nutzer:'Max', typ:'anwesenheit', dauer_ms:H3, id:2 },
+]}]);
+eq('Zwei stop-Einträge in einem Log werden addiert', H2 + H3,
+   twoStopsDB.by['2026-04-01']['Max']['anwesenheit']);
+
+// Doppeltes entries-Objekt für denselben Tag (= doppelt geladene Datei)
+// buildDB selbst dedup't NICHT → Summe verdoppelt sich
+// → Beweis dass processFiles() den Dateinamen-Dedup übernehmen muss
+const dupFileDB = buildDB([
+  { day:'2026-04-02', log:[{ aktion:'stop', nutzer:'Max', typ:'anwesenheit', dauer_ms:H3, id:1 }] },
+  { day:'2026-04-02', log:[{ aktion:'stop', nutzer:'Max', typ:'anwesenheit', dauer_ms:H3, id:1 }] },
+]);
+eq('Doppelte entries für gleichen Tag: buildDB addiert (kein internes Dedup)', H3 + H3,
+   dupFileDB.by['2026-04-02']['Max']['anwesenheit']);
+
+// Verschiedene Tage, gleiche Person → kein Duplikat-Problem
+const multiDayDB = buildDB([
+  { day:'2026-04-03', log:[{ aktion:'stop', nutzer:'A', typ:'anwesenheit', dauer_ms:H1, id:1 }] },
+  { day:'2026-04-04', log:[{ aktion:'stop', nutzer:'A', typ:'anwesenheit', dauer_ms:H2, id:2 }] },
+]);
+eq('Verschiedene Tage: Tag 1 korrekt', H1, multiDayDB.by['2026-04-03']['A']['anwesenheit']);
+eq('Verschiedene Tage: Tag 2 korrekt', H2, multiDayDB.by['2026-04-04']['A']['anwesenheit']);
+eq('Verschiedene Tage: 2 Tage erzeugt', 2, multiDayDB.days.length);
+
+// Multi-Device-Normalfall: gleiches Datum, verschiedene Personen → korrekt summiert
+const multiDevDB = buildDB([
+  { day:'2026-04-05', log:[{ aktion:'stop', nutzer:'B', typ:'anwesenheit', dauer_ms:H2, id:1 }] },
+  { day:'2026-04-05', log:[{ aktion:'stop', nutzer:'C', typ:'anwesenheit', dauer_ms:H3, id:2 }] },
+]);
+eq('Multi-Device: B korrekt', H2, multiDevDB.by['2026-04-05']['B']['anwesenheit']);
+eq('Multi-Device: C korrekt', H3, multiDevDB.by['2026-04-05']['C']['anwesenheit']);
+eq('Multi-Device: beide Personen vorhanden', 2, multiDevDB.persons.length);
+eq('Multi-Device: nur ein Tag erzeugt', 1, multiDevDB.days.length);
+
+// Start-Einträge ohne dauer_ms werden ignoriert (nur stop zählt)
+const startOnlyDB = buildDB([{ day:'2026-04-06', log:[
+  { aktion:'start', nutzer:'X', typ:'anwesenheit', id:1 },
+  { aktion:'stop',  nutzer:'X', typ:'anwesenheit', dauer_ms:H1, id:2 },
+  { aktion:'start', nutzer:'X', typ:'anwesenheit', id:3 }, // weiterer Start ohne Stop → ignoriert
+]}]);
+eq('Nur stop-Einträge zählen: H1 korrekt', H1,
+   startOnlyDB.by['2026-04-06']['X']['anwesenheit']);
+
 render();
 </script>
 </body>

@@ -35,6 +35,7 @@
   <div class="sub">Funktionen aus editor.html · Render-Funktionen sind gestubbt</div>
   <div id="output"></div>
   <div class="summary" id="summary"></div>
+  <input id="inp-logical-day" type="hidden">
 
 <script>
 // ─── Test-Harness ─────────────────────────────────────────────────────────────
@@ -134,28 +135,29 @@ function findPairedStart(stopEntry) {
 }
 function pushHistory() {
   history = history.slice(0, histIdx + 1);
-  history.push(JSON.stringify(logData.log));
+  history.push(JSON.stringify({ log: logData.log, logicalDay: logData.logicalDay }));
   if (history.length > 50) history.shift();
   histIdx = history.length - 1;
   syncUndoButtons();
 }
-function undo() {
-  if (histIdx <= 0) return;
-  histIdx--;
-  logData.log = JSON.parse(history[histIdx]);
-  logData.count = logData.log.length;
+function _restoreSnap(snap) {
+  logData.log        = snap.log;
+  logData.logicalDay = snap.logicalDay;
+  logData.count      = snap.log.length;
+  document.getElementById('inp-logical-day').value = snap.logicalDay || '';
   editingId = null;
   syncUndoButtons();
   renderAll();
 }
+function undo() {
+  if (histIdx <= 0) return;
+  histIdx--;
+  _restoreSnap(JSON.parse(history[histIdx]));
+}
 function redo() {
   if (histIdx >= history.length - 1) return;
   histIdx++;
-  logData.log = JSON.parse(history[histIdx]);
-  logData.count = logData.log.length;
-  editingId = null;
-  syncUndoButtons();
-  renderAll();
+  _restoreSnap(JSON.parse(history[histIdx]));
 }
 function commit(fn) {
   fn();
@@ -549,6 +551,61 @@ eq('Stop 10:00 findet Start 08:00', 810, paired811?.id);
 eq('Stop 12:00 findet Start 11:00 (den nächstgelegenen)', 812, paired813?.id);
 eq('dauer_ms Paar 1: 2h', H2, new Date(s811.zeitstempel) - new Date(paired811.zeitstempel));
 eq('dauer_ms Paar 2: 1h', H1, new Date(s813.zeitstempel) - new Date(paired813.zeitstempel));
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Suite 12 – logicalDay: Undo / Redo
+// ═══════════════════════════════════════════════════════════════════════════════
+suite('Suite 12 – logicalDay: Undo / Redo');
+
+// Basisfall: logicalDay-Änderung rückgängig machen
+initLogData([]);  // logicalDay = '2026-01-10', histIdx = 0
+logData.logicalDay = '2026-02-15';
+pushHistory();    // histIdx = 1, snap = {log:[], logicalDay:'2026-02-15'}
+undo();           // histIdx = 0, soll logicalDay='2026-01-10' wiederherstellen
+eq('undo stellt logicalDay wieder her', '2026-01-10', logData.logicalDay);
+eq('inp-logical-day reflektiert undo', '2026-01-10', document.getElementById('inp-logical-day').value);
+
+redo();           // histIdx = 1, soll logicalDay='2026-02-15' wiederherstellen
+eq('redo stellt logicalDay wieder her', '2026-02-15', logData.logicalDay);
+eq('inp-logical-day reflektiert redo', '2026-02-15', document.getElementById('inp-logical-day').value);
+
+// logicalDay und log werden gemeinsam im Snapshot gespeichert
+initLogData([]);                          // histIdx=0, logicalDay='2026-01-10', log=[]
+addPair('A', 'anwesenheit', TS08, TS12); // histIdx=1, log=[2 Einträge]
+logData.logicalDay = '2026-03-01';
+pushHistory();                            // histIdx=2, snap={log:[2], logicalDay:'2026-03-01'}
+
+undo();  // histIdx=1, log=[2], logicalDay='2026-01-10'
+eq('undo: logicalDay auf Zustand bei histIdx=1', '2026-01-10', logData.logicalDay);
+eq('undo: log bleibt bei 2 Einträgen', 2, logData.log.length);
+
+undo();  // histIdx=0, log=[], logicalDay='2026-01-10'
+eq('2x undo: logicalDay bleibt 2026-01-10', '2026-01-10', logData.logicalDay);
+eq('2x undo: log ist leer', 0, logData.log.length);
+
+redo(); redo();  // histIdx=2
+eq('2x redo: logicalDay wiederhergestellt', '2026-03-01', logData.logicalDay);
+eq('2x redo: log hat 2 Einträge', 2, logData.log.length);
+
+// log-Änderung nach logicalDay-Änderung: beide im Stack
+initLogData([]);                           // histIdx=0, logicalDay='2026-01-10'
+logData.logicalDay = '2026-06-01';
+pushHistory();                             // histIdx=1
+addPair('X', 'anwesenheit', TS08, TS12); // histIdx=2, logicalDay bleibt '2026-06-01'
+undo();  // histIdx=1: log=[], logicalDay='2026-06-01'
+eq('undo nach addPair: logicalDay bleibt 2026-06-01', '2026-06-01', logData.logicalDay);
+eq('undo nach addPair: log ist leer', 0, logData.log.length);
+
+// Neue Mutation nach undo löscht Redo-Stack inkl. gespeichertem logicalDay
+initLogData([]);
+logData.logicalDay = '2026-09-01';
+pushHistory();                             // histIdx=1
+undo();                                    // histIdx=0
+logData.logicalDay = '2026-12-31';
+pushHistory();                             // histIdx=1, alte Redo-Einträge weg
+redo();                                    // kein Redo → histIdx bleibt 1
+eq('Nach neuer Mutation kein Redo: histIdx=1', 1, histIdx);
+eq('Nach neuer Mutation: logicalDay ist 2026-12-31', '2026-12-31', logData.logicalDay);
 
 render();
 </script>

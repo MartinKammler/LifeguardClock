@@ -645,7 +645,7 @@
           <div class="cfg-field-row">
             <label for="cfg-admin-pin">Admin-PIN</label>
             <input type="text" id="cfg-admin-pin" maxlength="6" pattern="\d{6}" placeholder="6 Ziffern" class="cfg-inp cfg-inp-mono">
-            <span class="cfg-hint">Zugang zum Admin-Bereich der Stempeluhr</span>
+            <span class="cfg-hint">Zugang zum Admin-Bereich von LifeguardClock</span>
           </div>
           <div class="cfg-field-row">
             <label for="cfg-day-boundary">Tageswechsel</label>
@@ -701,7 +701,7 @@
   let _cfgFull = null;     // vollständiges config-Objekt (für unveränderte Felder)
 
   /* ── Bekannte Geräte (localStorage) ────────────────── */
-  const DEVICES_LS_KEY = 'stempeluhr_admin_devices';
+  const DEVICES_LS_KEY = 'lgc_admin_devices';
   function getKnownDevices() {
     try { return JSON.parse(localStorage.getItem(DEVICES_LS_KEY) || '[]'); } catch { return []; }
   }
@@ -727,15 +727,21 @@
     btn.disabled = true; btn.textContent = '…';
     try {
       const base = buildWebDavBase(creds);
+      // Ordner anlegen falls noch nicht vorhanden (idempotent)
+      await fetch(base, { method: 'MKCOL', headers: { Authorization: authHeader(creds) } }).catch(() => {});
       const res = await fetch(base, {
         method: 'PROPFIND',
         headers: { Authorization: authHeader(creds), Depth: '1' },
       });
+      if (res.status === 404) {
+        toast('Noch keine Geräte-Daten in der Cloud gefunden.', 'info');
+        return;
+      }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const xml = await res.text();
       const ids = [...xml.matchAll(/<[^>]*:href[^>]*>([^<]+)<\/[^>]*:href>/g)]
         .map(m => decodeURIComponent(m[1].trim()))
-        .map(h => (h.match(/stempeluhr_config_([^/]+)\.json$/) || [])[1])
+        .map(h => (h.match(/lgc_config_([^/]+)\.json$/) || [])[1])
         .filter(Boolean);
       if (ids.length === 0) {
         toast('Keine Gerätekonfigurationen in der Cloud gefunden.', 'info');
@@ -767,17 +773,21 @@
   }
 
   /* ── Cloud helpers ─────────────────────────────────── */
-  const ADMIN_LS_KEY = 'stempeluhr_admin_cloud';
+  const ADMIN_LS_KEY = 'lgc_cloud';
 
   function getCredentials() {
-    // Reihenfolge: localStorage (manuell gespeichert) → admin_config.js
+    // Reihenfolge: localStorage → admin_config.js (bootstrappt lgc_cloud einmalig)
     const stored = localStorage.getItem(ADMIN_LS_KEY);
     if (stored) {
       try { return JSON.parse(stored); } catch (e) {}
     }
     if (window.ADMIN_CONFIG && window.ADMIN_CONFIG.cloud) {
       const c = window.ADMIN_CONFIG.cloud;
-      if (c.url && c.user && c.pass) return { url: c.url, user: c.user, pass: c.pass };
+      if (c.user && c.pass) {
+        const creds = { url: c.url || '', user: c.user, pass: c.pass };
+        localStorage.setItem(ADMIN_LS_KEY, JSON.stringify(creds));
+        return creds;
+      }
     }
     return null;
   }
@@ -788,12 +798,12 @@
 
   function buildWebDavBase(creds) {
     if (IS_PROXY) {
-      return `/remote.php/dav/files/${encodeURIComponent(creds.user)}/Stempeluhr`;
+      return `/remote.php/dav/files/${encodeURIComponent(creds.user)}/LifeguardClock`;
     }
     const base = creds.url
       .replace(/\/remote\.php\/dav.*/i, '')
       .replace(/\/index\.php.*/i, '');
-    return `${base}/remote.php/dav/files/${encodeURIComponent(creds.user)}/Stempeluhr`;
+    return `${base}/remote.php/dav/files/${encodeURIComponent(creds.user)}/LifeguardClock`;
   }
 
   function authHeader(creds) {
@@ -833,7 +843,7 @@
     }
     setStatus('gray', 'Verbinde…');
     try {
-      const url = buildWebDavBase(creds) + '/stempeluhr_users.json';
+      const url = buildWebDavBase(creds) + '/lgc_users.json';
       const res = await fetch(url, {
         method: 'GET',
         headers: { 'Authorization': authHeader(creds) }
@@ -889,7 +899,7 @@
         count: users.length,
         users: users
       };
-      const url = dirUrl + '/stempeluhr_users.json';
+      const url = dirUrl + '/lgc_users.json';
       const res = await fetch(url, {
         method: 'PUT',
         headers: {
@@ -1167,7 +1177,7 @@
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = 'stempeluhr_users_export_' + new Date().toISOString().slice(0,10) + '.json';
+    a.download = 'lgc_users_export_' + new Date().toISOString().slice(0,10) + '.json';
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
     toast('Export gestartet.', 'ok');
@@ -1260,7 +1270,7 @@
     const user = document.getElementById('inp-user').value.trim();
     const pass = document.getElementById('inp-pass').value;
     if (!user || !pass || (!IS_PROXY && !url)) { toast('Bitte alle Felder ausfüllen.', 'err'); return; }
-    localStorage.setItem('stempeluhr_admin_cloud', JSON.stringify({ url: url || 'http://localhost', user, pass }));
+    localStorage.setItem('lgc_cloud', JSON.stringify({ url: url || 'http://localhost', user, pass }));
     loadUsers(false);
   });
 
@@ -1300,7 +1310,7 @@
     const user = document.getElementById('inp-user').value.trim();
     const pass = document.getElementById('inp-pass').value;
     if (user && pass && (url || IS_PROXY)) {
-      localStorage.setItem('stempeluhr_admin_cloud', JSON.stringify({ url: url || 'http://localhost', user, pass }));
+      localStorage.setItem('lgc_cloud', JSON.stringify({ url: url || 'http://localhost', user, pass }));
     }
     loadUsers(false);
   });
@@ -1308,7 +1318,7 @@
   /* ── Startup ───────────────────────────────────────── */
   function init() {
     // Warnung wenn admin_config.js fehlt und auch kein gespeicherter Key
-    if (!window.ADMIN_CONFIG && !localStorage.getItem('stempeluhr_admin_cloud')) {
+    if (!window.ADMIN_CONFIG && !localStorage.getItem('lgc_cloud')) {
       document.getElementById('no-config-banner').style.display = '';
     }
 
@@ -1327,7 +1337,7 @@
     }
 
     // Collapse cloud card if credentials are already stored
-    const hasCreds = !!localStorage.getItem('stempeluhr_admin_cloud') ||
+    const hasCreds = !!localStorage.getItem('lgc_cloud') ||
       (window.ADMIN_CONFIG && window.ADMIN_CONFIG.cloud && window.ADMIN_CONFIG.cloud.url);
     if (hasCreds) {
       cloudCardBody.classList.add('hidden');
@@ -1491,7 +1501,7 @@
     const btn = document.getElementById('btn-cfg-load');
     btn.disabled = true; btn.textContent = 'Lade…';
     try {
-      const url = buildWebDavBase(creds) + `/stempeluhr_config_${deviceId}.json`;
+      const url = buildWebDavBase(creds) + `/lgc_config_${deviceId}.json`;
       const res = await fetch(url, { headers: { 'Authorization': authHeader(creds) } });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
@@ -1565,7 +1575,7 @@
         version: 1, exported: new Date().toISOString(), deviceId,
         config: merged,
       }, null, 2);
-      const url = buildWebDavBase(creds) + `/stempeluhr_config_${deviceId}.json`;
+      const url = buildWebDavBase(creds) + `/lgc_config_${deviceId}.json`;
       const res = await fetch(url, {
         method: 'PUT',
         headers: { 'Authorization': authHeader(creds), 'Content-Type': 'application/json' },
@@ -1586,7 +1596,7 @@
   document.getElementById('btn-cfg-reset').addEventListener('click', () => {
     if (!confirm('Gespeicherte Cloud-Konfiguration für dieses Gerät entfernen?\n(Wirkt erst nach dem nächsten Neustart der App.)')) return;
     // This only makes sense locally — for the current browser's localStorage
-    localStorage.removeItem('stempeluhr_config_cloud');
+    localStorage.removeItem('lgc_config_cloud');
     toast('Cloud-Konfiguration aus lokalem Speicher entfernt.', 'ok');
   });
 

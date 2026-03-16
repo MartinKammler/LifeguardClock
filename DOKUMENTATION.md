@@ -3,7 +3,7 @@
 ## Inhaltsverzeichnis
 
 1. [Überblick](#überblick)
-2. [Technische Grundlagen](#technische-grundlagen)
+2. [Technische Grundlagen & Service Worker](#technische-grundlagen)
 3. [Konfiguration (config.js)](#konfiguration-configjs)
 4. [Nutzer & PINs](#nutzer--pins)
 5. [Startbildschirm & Login](#startbildschirm--login)
@@ -43,8 +43,24 @@ Alle Daten werden lokal im Browser gespeichert (localStorage). Es wird kein Serv
 | Kryptographie     | WebCrypto API (SHA-256, `crypto.getRandomValues`)        |
 | Datenspeicherung  | `localStorage` des Browsers                             |
 | Externe Ressource | Google Fonts (JetBrains Mono, Inter)                    |
-| Offline-fähig     | Ja (nach erstem Laden)                                   |
+| Offline-fähig     | Ja (Service Worker + Cache)                              |
+| Service Worker    | `sw.js` — App-Shell Cache-First, config.js Network-First |
 | Zielgeräte        | Android-Tablet (Kiosk-Betrieb, Hochformat), Smartphone, Desktop |
+
+### Service Worker (`sw.js`)
+
+`LifeguardClock.html` registriert beim Laden automatisch den Service Worker `sw.js`.
+Dieser implementiert zwei Caching-Strategien:
+
+| Ressource | Strategie | Begründung |
+|---|---|---|
+| `LifeguardClock.html`, `manifest.json`, `Logo.png` | **Cache-First** | App-Shell bleibt offline verfügbar |
+| `config.js`, WebDAV-Pfade (`/remote.php/…`) | **Network-First** | Immer aktuelle Konfiguration und Cloud-Daten |
+| Alles andere | Network-First mit Cache-Fallback | |
+
+> **Hinweis:** Wird `sw.js` nach einer Änderung an `LifeguardClock.html` nicht aktualisiert,
+> kann der Browser eine veraltete Version ausliefern. Einen Hard-Reload erzwingen:
+> **DevTools → Application → Service Workers → Update** oder Seite mit `Ctrl+Shift+R` laden.
 
 > **Hinweis zur Versionskontrolle:** `config.js` enthält echte Namen und PINs und wird von
 > Git ignoriert. Als Vorlage dient `config.example.js`.
@@ -73,11 +89,15 @@ Als Einstieg empfehlen sich die fertigen Presets im Ordner `presets/`:
 
 ### Zeiteinstellungen
 
-| Schlüssel            | Beschreibung                                                        | Standard |
-|----------------------|---------------------------------------------------------------------|----------|
-| `pinClearSeconds`    | Unvollständige PIN nach X Sekunden automatisch löschen (0 = aus)   | `5`      |
-| `autoLogoutSeconds`  | Automatisches Ausloggen nach X Sekunden Inaktivität im Dashboard   | `15`     |
-| `screensaverSeconds` | Bildschirmschoner auf dem Login-Bildschirm nach X Sekunden         | `60`     |
+| Schlüssel                  | Beschreibung                                                                          | Standard |
+|----------------------------|---------------------------------------------------------------------------------------|----------|
+| `pinClearSeconds`          | Unvollständige PIN nach X Sekunden automatisch löschen (0 = aus)                     | `5`      |
+| `autoLogoutSeconds`        | Automatisches Ausloggen nach X Sekunden Inaktivität im Dashboard                     | `15`     |
+| `screensaverSeconds`       | Bildschirmschoner auf dem Login-Bildschirm nach X Sekunden                           | `60`     |
+| `cloudSyncDebounceSeconds` | Verzögerung in Sekunden vor dem Cloud-Sync nach dem letzten Stempel (Batching)       | `60`     |
+
+> **Hinweis:** Im Proxy-Betrieb (`localhost` / `127.0.0.1`) wird `cloudSyncDebounceSeconds`
+> ignoriert — der Sync erfolgt sofort nach jedem Stempel.
 
 ### Standard-Zeitfenster pro Wochentag
 
@@ -355,6 +375,10 @@ für einen Typ wird nach folgender Priorität bestimmt:
 Fehlt der aktuelle Wochentag im `zeitfenster`-Objekt eines Typs, ist der Typ an diesem
 Tag **ganztägig gesperrt** (null-Fenster).
 
+**Fenster über Mitternacht:** Wird `end` kleiner als `start` konfiguriert (z. B. `22:00`–`02:00`),
+gilt das Fenster von 22:00 Uhr bis 02:00 Uhr des Folgetages. Das ist z. B. für Nacht- oder
+Veranstaltungsdienste sinnvoll.
+
 **Beispiel für typ-eigenes Zeitfenster:**
 ```js
 {
@@ -440,7 +464,7 @@ Automatisch erzeugte Einträge erhalten einen zusätzlichen **Auto**-Badge.
 
 Tabelle mit kumulierten Gesamtzeiten pro Benutzer und Typ:
 
-- Anwesenheit (blau), Wachstunde (gelb), Sanitätsstunde (rot)
+- Spalten je Typ in der konfigurierten Farbe (aus `CONFIG.types[].color`)
 - Laufende Sitzungen werden in Echtzeit mitgezählt und mit **live**-Indikator markiert.
 - Pro Benutzer:
   - **OTP-Badge**: Wird angezeigt, wenn eine Einmal-PIN aktiv ist.
@@ -474,6 +498,7 @@ Ermöglicht das Anpassen des Zeitfensters für den **aktuellen Tag**:
 - Speichern aktualisiert das Fenster sofort.
 - Wird das Fenster verkleinert und laufen noch Sitzungen außerhalb, werden diese sofort gestoppt.
 - Statusanzeige: grün = aktuell im Fenster, rot = außerhalb.
+- **Fenster über Mitternacht** möglich: wenn „Bis" < „Von" (z. B. `22:00`–`02:00`), gilt das Fenster von 22:00 Uhr bis 02:00 Uhr des Folgetages. Start- und Endzeit dürfen nicht identisch sein.
 
 ### Backup-Übersicht
 
@@ -506,12 +531,12 @@ Nicht kompatibel (kein WebDAV): Google Drive, Dropbox, iCloud Drive, OneDrive Co
 
 ### Cloud-Sync – Log-Dateien
 
-Jedes Gerät schreibt seine eigenen Dateien in den Ordner `Stempeluhr/` auf den WebDAV-Server:
+Jedes Gerät schreibt seine eigenen Dateien in den Ordner `LifeguardClock/` auf den WebDAV-Server:
 
 | Datei                                    | Inhalt                                         |
 |------------------------------------------|------------------------------------------------|
-| `stempeluhr_[deviceId]_YYYY-MM-DD.json`  | Tages-Snapshot dieses Geräts                   |
-| `stempeluhr_[deviceId]_latest.json`      | Aktuellster Stand (wird bei jedem Sync ersetzt)|
+| `lgc_[deviceId]_YYYY-MM-DD.json`  | Tages-Snapshot dieses Geräts                   |
+| `lgc_[deviceId]_latest.json`      | Aktuellster Stand (wird bei jedem Sync ersetzt)|
 
 Die `deviceId` stammt aus `CONFIG.deviceId` (z. B. `steg`) oder wird automatisch als
 lesbarer Kurzname generiert (`ipad-3f7a`, `android-9b2c` usw.).
@@ -527,7 +552,7 @@ Im Cloud-Sync-Bereich gibt es eine zweite Karte **„Nutzerdaten sichern"** mit 
 
 | Button | Funktion |
 |--------|----------|
-| **In Cloud sichern** | Lädt `stempeluhr_users.json` in den `Stempeluhr/`-Ordner auf Nextcloud |
+| **In Cloud sichern** | Lädt `lgc_users.json` in den `LifeguardClock/`-Ordner auf Nextcloud |
 | **Aus Cloud wiederherstellen** | Holt die Datei zurück; Bestätigung erforderlich, lokale Daten werden überschrieben |
 | **Als Datei herunterladen** | Lokaler Download ohne Cloud-Konfiguration, z. B. bei Tablet-Wechsel |
 
@@ -535,7 +560,7 @@ Im Cloud-Sync-Bereich gibt es eine zweite Karte **„Nutzerdaten sichern"** mit 
 wird nach einem Debounce von 60 Sekunden automatisch still in die Cloud synchronisiert — genau wie
 der Log-Sync nach Stempel-Ereignissen.
 
-**Dateiformat** (`stempeluhr_users.json`):
+**Dateiformat** (`lgc_users.json`):
 
 ```json
 {
@@ -612,15 +637,39 @@ Dieser Vorgang sollte vor dem Ausschalten des Tablets durchgeführt werden.
 
 ### localStorage-Schlüssel
 
-| Schlüssel                       | Inhalt                                                         |
-|---------------------------------|----------------------------------------------------------------|
-| `stempeluhr_users`              | Benutzerliste mit PINs (gehashed oder OTP) und Status         |
-| `stempeluhr_log`                | Alle Protokolleinträge (Array)                                 |
-| `stempeluhr_state`              | Aktiver Stempelzustand pro Benutzer-ID                        |
-| `stempeluhr_session`            | Zuletzt eingeloggter Benutzer (nur intern, kein Auto-Login)   |
-| `stempeluhr_zeitfenster`        | Manuell gesetztes Zeitfenster für den aktuellen Tag           |
-| `stempeluhr_backup_YYYY-MM-DD`  | Tages-Backup (automatisch alle 5 Minuten)                     |
-| `stempeluhr_device_id`          | Auto-generierte Geräte-ID (nur wenn `CONFIG.deviceId` fehlt)  |
+| Schlüssel                       | Inhalt                                                                          |
+|---------------------------------|---------------------------------------------------------------------------------|
+| `lgc_users`              | Benutzerliste mit PINs (gehashed oder OTP) und Status                          |
+| `lgc_log_YYYY-MM`        | Monats-Log aller Protokolleinträge (z. B. `lgc_log_2026-03`)                   |
+| `lgc_state`              | Aktiver Stempelzustand pro Benutzer-ID                                         |
+| `lgc_session`            | Zuletzt eingeloggter Benutzer (nur intern, kein Auto-Login)                    |
+| `lgc_zeitfenster`        | Manuell gesetztes Zeitfenster für den aktuellen Tag                            |
+| `lgc_backup_YYYY-MM-DD`  | Tages-Backup (automatisch alle 5 Minuten)                                      |
+| `lgc_device_id`          | Auto-generierte Geräte-ID (nur wenn `CONFIG.deviceId` fehlt)                   |
+| `lgc_cloud`              | Cloud-Zugangsdaten (URL, Benutzername, Passwort) — wird von allen Apps geteilt |
+| `lgc_type_config`        | Typ-Konfiguration (logType, label, color) — von LifeguardClock gesetzt, von Dashboard und Editor gelesen |
+
+### Gemeinsame Datenhaltung (app-übergreifend)
+
+Zwei localStorage-Schlüssel werden von LifeguardClock gesetzt und von Dashboard sowie
+Editor gelesen. Sie ermöglichen konsistentes Verhalten ohne dass `config.js` in mehreren
+Browser-Kontexten verfügbar sein muss.
+
+**`lgc_cloud`** — Cloud-Zugangsdaten (URL, Benutzername, Passwort).
+Wird von LifeguardClock, Dashboard, Editor und admin.html gemeinsam genutzt.
+Eingaben in einer App stehen sofort in allen anderen zur Verfügung.
+
+**`lgc_type_config`** — Typ-Konfiguration für Farben und Labels.
+Wird beim Start von LifeguardClock befüllt:
+```js
+[{ logType: 'anwesenheit', label: 'Anwesenheit', color: 'blue' }, …]
+```
+Dashboard und Editor lesen diesen Schlüssel beim Laden, um Typ-Farben und
+Bezeichnungen aus der `config.js` des Stempel-Tablets zu übernehmen — auch wenn
+`config.js` im Browser des Auswertungs-PCs nicht vorhanden ist.
+
+Farbschlüssel: `'blue'` | `'green'` | `'amber'` | `'red'` | `'violet'`
+(entsprechen den CSS-Variablen `var(--blue)` usw.).
 
 ### Backup-Verhalten
 
@@ -646,7 +695,7 @@ Betroffen sind:
 
 ## Datenstruktur
 
-### Benutzer-Objekt (stempeluhr_users)
+### Benutzer-Objekt (lgc_users)
 
 Einmal-PIN (noch nicht geändert):
 ```json
@@ -683,7 +732,7 @@ Gehashte PIN (nach erster Anmeldung):
 | `auto`        | boolean | `true` bei automatisch erzeugten Stop-Einträgen                         |
 | `extend`      | boolean | `true` bei Stop-/Start-Paaren durch „Verlängern"                        |
 
-### Zustandsobjekt (stempeluhr_state)
+### Zustandsobjekt (lgc_state)
 
 Die Keys im State-Objekt entsprechen den `key`-Werten aus `CONFIG.types[]`.
 Zusätzlich enthält jeder Nutzer-State ein `cooldown`-Objekt mit ISO-Timestamps.
@@ -699,7 +748,7 @@ Zusätzlich enthält jeder Nutzer-State ein `cooldown`-Objekt mit ISO-Timestamps
 }
 ```
 
-### Zeitfenster (stempeluhr_zeitfenster)
+### Zeitfenster (lgc_zeitfenster)
 
 ```json
 {
@@ -763,11 +812,11 @@ Screen Pinning ist eine eingebaute Android-Funktion ohne zusätzliche Apps.
 2. **App-Fixierung aktivieren**
 3. Optional: „Beim Aufheben PIN verlangen" aktivieren → empfohlen
 
-**Stempeluhr fixieren:**
+**LifeguardClock fixieren:**
 
-1. Stempeluhr in Chrome öffnen (als Vollbild oder installierte PWA)
+1. LifeguardClock in Chrome öffnen (als Vollbild oder installierte PWA)
 2. **Recents-Taste** antippen
-3. App-Karte der Stempeluhr antippen und gedrückt halten oder das **Pin-Symbol** antippen
+3. App-Karte von LifeguardClock antippen und gedrückt halten oder das **Pin-Symbol** antippen
 4. „Fixieren" bestätigen
 
 **Aufheben:** Gleichzeitig Zurück-Taste und Recents-Taste gedrückt halten.
@@ -800,9 +849,9 @@ Dann Screen Pinning auf die installierte App anwenden.
 2. Geführten Zugriff **aktivieren**
 3. **Passcode-Einstellungen → Passcode für geführten Zugriff** festlegen
 
-**Stempeluhr sperren:**
+**LifeguardClock sperren:**
 
-1. Stempeluhr in Safari öffnen (als PWA vom Homescreen)
+1. LifeguardClock in Safari öffnen (als PWA vom Homescreen)
 2. **Dreimal die Seitentaste** drücken
 3. Geführten Zugriff starten → **Starten** tippen
 
@@ -882,7 +931,7 @@ Screenshots, Kontextmenü, eingehende/ausgehende Anrufe, andere Apps, Multi-Wind
 2. Fully Kiosk Browser installieren und konfigurieren (startURL = file:///storage/emulated/0/LifeguardClock.html)
 3. Kiosk-Modus aktivieren, Bildschirm-Timeout deaktivieren
 4. Tablet an Strom anschließen (Dauerbetrieb)
-5. Vor dem Ausschalten: "Sicher herunterfahren" im Admin-Bereich der Stempeluhr verwenden
+5. Vor dem Ausschalten: "Sicher herunterfahren" im Admin-Bereich von LifeguardClock verwenden
 ```
 
 **Alternativ (ohne Fully Kiosk, Android/iPad):**
@@ -905,13 +954,13 @@ Der Export (Haupt-Log oder Tages-Backup) erzeugt eine UTF-8-CSV-Datei mit BOM
 
 **Spalten:** `ID; Zeitstempel; Datum; Uhrzeit; Nutzer; Typ; Aktion; Dauer`
 
-**Dateiname:** `stempeluhr_YYYY-MM-DD.csv` bzw. `stempeluhr_backup_YYYY-MM-DD.csv`
+**Dateiname:** `lgc_YYYY-MM-DD.csv` bzw. `lgc_backup_YYYY-MM-DD.csv`
 
 ---
 
 ## Auswertungs-Dashboard (`dashboard.html`)
 
-Eigenständige Web-App zur Auswertung der von der Stempeluhr exportierten JSON-Dateien.
+Eigenständige Web-App zur Auswertung der von LifeguardClock exportierten JSON-Dateien.
 Läuft vollständig im Browser – kein Server nötig. Kann auch über `admin-server.py`
 betrieben werden und lädt die Daten dann direkt aus der Cloud.
 
@@ -923,7 +972,7 @@ Top-Listen.
 
 ### Dateiformat
 
-Erwartet Dateien nach dem Schema `stempeluhr_[deviceId]_YYYY-MM-DD.json`:
+Erwartet Dateien nach dem Schema `lgc_[deviceId]_YYYY-MM-DD.json`:
 
 ```json
 {
@@ -943,7 +992,7 @@ Erwartet Dateien nach dem Schema `stempeluhr_[deviceId]_YYYY-MM-DD.json`:
 
 > **logicalDay:** Einträge nach Mitternacht (bis zur konfigurierten `dayBoundaryHour`)
 > zählen noch zum Vortag. Das Dashboard verwendet ausschließlich `logicalDay` zur
-> Tageszuordnung. Die Grenze wird von der Stempeluhr beim Export gesetzt.
+> Tageszuordnung. Die Grenze wird von LifeguardClock beim Export gesetzt.
 
 > **Multi-Gerät:** Mehrere Geräte schreiben je eigene Dateien (`steg`, `boot`, `halle` …).
 > Das Dashboard liest alle passenden Dateien ein und führt die Logs zusammen.
@@ -952,11 +1001,12 @@ Erwartet Dateien nach dem Schema `stempeluhr_[deviceId]_YYYY-MM-DD.json`:
 
 **☁️ Cloud laden** – nur auf `localhost` (Proxy-Betrieb):
 
-Liest `admin_config.js` (oder localStorage `stempeluhr_admin_cloud`) für die
-WebDAV-Zugangsdaten. Beim ersten Klick ohne gespeicherte Zugangsdaten erscheint
-eine Eingabeleiste. Danach:
+Liest `lgc_cloud` (localStorage) für die WebDAV-Zugangsdaten.
+Beim ersten Start ohne gespeicherte Zugangsdaten wird einmalig aus `admin_config.js`
+geboostrapped. Beim ersten Klick ohne jegliche Zugangsdaten erscheint eine Eingabeleiste.
+Danach:
 
-1. PROPFIND auf den `Stempeluhr/`-Ordner → alle `stempeluhr_*_YYYY-MM-DD.json`-Dateien
+1. PROPFIND auf den `LifeguardClock/`-Ordner → alle `lgc_*_YYYY-MM-DD.json`-Dateien
 2. Jede Datei wird per GET geladen
 3. Zugangsdaten werden in `localStorage` gespeichert (für folgende Besuche)
 
@@ -968,7 +1018,7 @@ eine Eingabeleiste. Danach:
 - Als Fallback (`file://`, Firefox) ein `<input webkitdirectory>`.
 
 Es werden automatisch alle Dateien eingelesen, die dem Muster
-`stempeluhr_*_YYYY-MM-DD.json` entsprechen (mit und ohne `deviceId`-Präfix).
+`lgc_*_YYYY-MM-DD.json` entsprechen (mit und ohne `deviceId`-Präfix).
 
 ### Tabs
 
@@ -1025,8 +1075,8 @@ Stunden werden in ganzen Minuten exportiert.
 | Eigenschaft | Wert |
 |---|---|
 | Datei | `dashboard.html` |
-| Abhängigkeiten | `admin_config.js` (optional, für Cloud-Zugangsdaten) |
-| Datenhaltung | Arbeitsspeicher; Cloud-Zugangsdaten im `localStorage` (`stempeluhr_admin_cloud`) |
+| Abhängigkeiten | `admin_config.js` (optional, einmaliges Bootstrap der Cloud-Zugangsdaten) |
+| Datenhaltung | Arbeitsspeicher; Cloud-Zugangsdaten im `localStorage` (`lgc_cloud`); Typ-Config aus `lgc_type_config` |
 | Datenmodell | `by[logicalDay][nutzer][typ] = ms` — nur `stop`-Einträge mit `dauer_ms` |
 
 ---
@@ -1040,9 +1090,15 @@ oder das Bereinigen von Datenfehlern.
 ### Laden & Speichern
 
 - **Laden:** Button „Laden" oder **Drag & Drop** einer `.json`-Datei auf die Seite
+- **☁ Cloud** *(nur im Proxy-Betrieb)*: Öffnet einen Dialog mit allen
+  `lgc_*_YYYY-MM-DD.json`-Dateien aus dem Cloud-Ordner zum Auswählen.
+  Die Cloud-Zugangsdaten werden aus `lgc_cloud` (localStorage) übernommen.
 - **Neue Datei:** Legt eine leere Struktur mit dem heutigen `logicalDay` an
 - **Export:** Lädt die bearbeitete Datei herunter – `count` und `exported` werden
   automatisch auf den aktuellen Stand gesetzt
+- **☁ Speichern** *(nur im Proxy-Betrieb, nach Cloud-Laden aktiv)*: Schreibt die
+  geänderte Datei direkt zurück auf den WebDAV-Server. Der Button ist nur aktiv,
+  solange ungespeicherte Änderungen vorliegen.
 
 Der `logicalDay` der Datei ist direkt im Header editierbar.
 
@@ -1100,7 +1156,7 @@ Beim Speichern einer Bearbeitung:
 ### Timeline-Ansicht
 
 Visueller Zeitstrahl pro Person und Typ. Segmente werden als farbige Balken
-dargestellt (blau = Anwesenheit, gelb = Wachstunden, rot = Sanitätsstunden).
+dargestellt (Farben aus `lgc_type_config` bzw. `config.js`).
 Offene Segmente (Start ohne Stop) werden gestrichelt dargestellt.
 
 ### Undo / Redo
@@ -1122,8 +1178,8 @@ Bis zu 50 Schritte werden gespeichert.
 | Eigenschaft | Wert |
 |---|---|
 | Datei | `editor.html` |
-| Abhängigkeiten | `config.js` (optional, für Autocomplete) |
-| Datenhaltung | Arbeitsspeicher; kein localStorage |
+| Abhängigkeiten | `config.js` (optional, für Autocomplete und Typ-Farben); `lgc_type_config` (localStorage, bevorzugt) |
+| Datenhaltung | Arbeitsspeicher; Cloud-Zugangsdaten aus `lgc_cloud` (localStorage) |
 | Undo-Stack | Max. 50 Snapshots als JSON-Strings |
 
 ---
@@ -1135,7 +1191,7 @@ im Browser geöffnet werden – kein Build-System, kein Node.js erforderlich.
 
 | Datei | Testet |
 |---|---|
-| `tests/test_LifeguardClock.html` | Kernfunktionen der Stempeluhr – 30 Suites, 141 Tests |
+| `tests/test_LifeguardClock.html` | Kernfunktionen von LifeguardClock (34 Suites) |
 | `tests/test_dashboard.html` | Datenaggregation und Formatierung (`dashboard.html`) |
 | `tests/test_editor.html` | Validierung, Mutationen, Undo/Redo (`editor.html`) |
 
@@ -1146,6 +1202,9 @@ im Browser geöffnet werden – kein Build-System, kein Node.js erforderlich.
 Python-Skript, das einen HTTP-Server auf `http://localhost:8080` startet.
 Dient als lokale Entwicklungsumgebung und löst das CORS-Problem beim direkten
 Zugriff auf Nextcloud vom Browser aus.
+
+> **Sicherheit:** Der Server bindet ausschließlich auf `127.0.0.1` — er ist nicht
+> aus dem lokalen Netzwerk erreichbar, nur vom selben Rechner.
 
 ### Starten
 
@@ -1197,7 +1256,7 @@ Alle vier Apps erkennen den Proxy-Betrieb automatisch anhand des Hostnamens
 
 | App | IS_PROXY-Besonderheit |
 |---|---|
-| `LifeguardClock.html` | Kein Vollbild, kein `pinned`-Verhalten; relative WebDAV-URLs |
+| `LifeguardClock.html` | Kein Vollbild, kein `pinned`-Verhalten; relative WebDAV-URLs; Cloud-Sync sofort (kein Debounce) |
 | `admin.html` | URL-Feld in der Cloud-Konfiguration ausgeblendet |
 | `editor.html` | Relative WebDAV-URLs für Cloud-Lade/-Speicher |
 | `dashboard.html` | „☁️ Cloud laden"-Button aktiv; `admin_config.js` für Zugangsdaten |

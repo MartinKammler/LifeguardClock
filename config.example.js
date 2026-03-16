@@ -26,6 +26,9 @@ const CONFIG = {
   autoLogoutSeconds: 15,
   // Bildschirmschoner auf dem Login-Bildschirm nach X Sekunden Inaktivität
   screensaverSeconds: 60,
+  // Cloud-Sync-Verzögerung in Sekunden nach dem letzten Stempel (Batching)
+  // Im localhost-Betrieb (admin-server) wird dieser Wert ignoriert → sofortiger Sync
+  cloudSyncDebounceSeconds: 60,
 
   /* ── Standard-Zeitfenster pro Wochentag ───────────────────── */
   // start/end: 'HH:MM' – gilt für Typen mit requiresZeitfenster: true

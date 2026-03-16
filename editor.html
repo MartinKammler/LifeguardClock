@@ -11,6 +11,7 @@
   <title>LifeguardClock – Editor</title>
   <link rel="icon" type="image/png" href="Logo.png">
   <script src="config.js" onerror="window.CONFIG=undefined"></script>
+  <script src="admin_config.js" onerror="window.ADMIN_CONFIG=undefined"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <style>
@@ -60,6 +61,12 @@
     .btn-danger    { background: var(--c-san-dim); border-color: var(--c-san); color: var(--c-san); }
     .btn-danger:hover:not(:disabled) { background: rgba(239,68,68,.25); }
     .btn-sm { padding: 4px 10px; font-size: 12px; border-radius: 6px; }
+    .btn-success  { background: rgba(34,197,94,.12); border-color: #22c55e; color: #22c55e; }
+    .btn-success:hover:not(:disabled) { background: rgba(34,197,94,.25); }
+    .btn-success.dirty { animation: pulse-green .4s ease; }
+    @keyframes pulse-green { 0%,100%{box-shadow:0 0 0 0 rgba(34,197,94,0)} 50%{box-shadow:0 0 0 4px rgba(34,197,94,.3)} }
+    .hdr-cloud-file { font-size: 12px; color: var(--text-3); max-width: 220px;
+                      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
     /* ── Toolbar ─────────────────────────────────── */
     .toolbar { background: var(--bg2); border-bottom: 1px solid var(--border);
@@ -191,12 +198,15 @@
       </div>
       <span class="hdr-count" id="entry-count">—</span>
       <span class="v-badge" id="v-badge" style="display:none"></span>
+      <span class="hdr-cloud-file" id="hdr-cloud-file" style="display:none"></span>
     </div>
     <div class="hdr-btns">
       <button class="btn" id="btn-undo" disabled title="Rückgängig (Ctrl+Z)">↩</button>
       <button class="btn" id="btn-redo" disabled title="Wiederholen (Ctrl+Y)">↪</button>
-      <button class="btn" id="btn-load">&#x1F4C2; Laden</button>
+      <button class="btn" id="btn-load">&#x1F4C2; Lokal</button>
+      <button class="btn" id="btn-cloud-load">&#x2601; Cloud</button>
       <button class="btn" id="btn-new">+ Neue Datei</button>
+      <button class="btn btn-success" id="btn-cloud-save" disabled>&#x2601; Speichern</button>
       <button class="btn btn-primary" id="btn-export" disabled>&#x2193; Export</button>
     </div>
   </header>
@@ -281,18 +291,35 @@
     </div>
   </dialog>
 
+  <!-- ── Cloud picker modal ──────────────────────────────────────── -->
+  <dialog id="modal-cloud">
+    <div class="modal-hdr">&#x2601; Datei aus Cloud laden</div>
+    <div class="modal-body">
+      <div class="form-row">
+        <label>Datei</label>
+        <select id="cloud-file-select" style="font-family:monospace;font-size:12px"></select>
+      </div>
+    </div>
+    <div class="modal-ftr">
+      <button class="btn" id="cloud-cancel">Abbrechen</button>
+      <button class="btn btn-primary" id="cloud-confirm">Laden</button>
+    </div>
+  </dialog>
+
   <!-- Hidden inputs -->
   <input type="file" id="file-input" accept=".json" hidden>
   <datalist id="known-persons-list"></datalist>
 
 <script>
 // ─── State ────────────────────────────────────────────────────────────────────
-let logData   = null;   // { version, exported, logicalDay, count, log }
-let history   = [];     // undo stack: array of JSON strings
-let histIdx   = -1;
+let logData      = null;   // { version, exported, logicalDay, count, log }
+let history      = [];     // undo stack: array of JSON strings
+let histIdx      = -1;
 let filterPerson = null;
-let activeTab = 'table';
-let editingId = null;   // id of row currently in inline edit mode
+let activeTab    = 'table';
+let editingId    = null;   // id of row currently in inline edit mode
+let cloudFileUrl = null;   // URL der geladenen Cloud-Datei (null = lokal)
+let cloudDirty   = false;  // true wenn ungespeicherte Änderungen gegenüber Cloud
 
 // ─── Typ-Farb-Palette (passend zu LifeguardClock.html) ────────────────────────────
 const COLOR_PALETTE = {
@@ -304,6 +331,13 @@ const COLOR_PALETTE = {
 };
 const _FALLBACK_COLOR_ORDER = ['blue','amber','red','green','violet'];
 
+// Stabiler Hash-Fallback: gleicher logType → immer gleiche Farbe
+function _hashColor(str) {
+  let h = 5381;
+  for (let i = 0; i < str.length; i++) h = (h * 33 ^ str.charCodeAt(i)) >>> 0;
+  return COLOR_PALETTE[_FALLBACK_COLOR_ORDER[h % 5]];
+}
+
 // Dynamisch aus CONFIG.types aufgebaut; wird bei jedem Laden erweitert
 let _TYPES   = [];   // [{ logType, label, main, dim }, …]
 let _TYPE_MAP = {};  // logType → { logType, label, main, dim }
@@ -312,10 +346,18 @@ function buildTypeMaps() {
   const seen = new Set();
   const result = [];
 
-  // 1. Aus CONFIG.types (bevorzugt)
-  if (typeof CONFIG !== 'undefined' && Array.isArray(CONFIG?.types)) {
-    CONFIG.types.filter(t => !t.disabled).forEach((t, i) => {
-      const c = COLOR_PALETTE[t.color] || COLOR_PALETTE[_FALLBACK_COLOR_ORDER[i % 5]];
+  // 1. Aus lgc_type_config (localStorage, gesetzt von LifeguardClock.html) oder CONFIG.types
+  let _cfgTypes = null;
+  try {
+    const stored = JSON.parse(localStorage.getItem('lgc_type_config') || '[]');
+    if (stored.length > 0) _cfgTypes = stored;
+  } catch (e) {}
+  if (!_cfgTypes) {
+    try { if (Array.isArray(CONFIG?.types)) _cfgTypes = CONFIG.types.filter(t => !t.disabled); } catch(e) {}
+  }
+  if (_cfgTypes) {
+    _cfgTypes.forEach((t, i) => {
+      const c = COLOR_PALETTE[t.color] || _hashColor(t.logType);
       result.push({ logType: t.logType, label: t.label, main: c.main, dim: c.dim });
       seen.add(t.logType);
     });
@@ -323,9 +365,9 @@ function buildTypeMaps() {
 
   // 2. Typen im geladenen Log, die nicht in CONFIG stehen (Alt-Daten)
   if (logData?.log) {
-    [...new Set(logData.log.map(e => e.typ))].filter(Boolean).forEach((lt, i) => {
+    [...new Set(logData.log.map(e => e.typ))].filter(Boolean).forEach(lt => {
       if (seen.has(lt)) return;
-      const c = COLOR_PALETTE[_FALLBACK_COLOR_ORDER[(result.length + i) % 5]];
+      const c = _hashColor(lt);
       result.push({ logType: lt, label: lt, main: c.main, dim: c.dim });
       seen.add(lt);
     });
@@ -397,17 +439,162 @@ function updateDatalist() {
     getKnownPersons().map(n => `<option value="${n.replace(/"/g,'&quot;')}">`).join('');
 }
 
+// ─── Cloud: Credentials & Helpers ────────────────────────────────────────────
+const IS_PROXY = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+
+function getCloudCreds() {
+  try {
+    const s = JSON.parse(localStorage.getItem('lgc_cloud') || '{}');
+    if (s.user && s.pass && (IS_PROXY || s.url)) return s;
+  } catch {}
+  if (window.ADMIN_CONFIG?.cloud?.user && window.ADMIN_CONFIG?.cloud?.pass) {
+    const c = window.ADMIN_CONFIG.cloud;
+    const creds = { url: c.url || '', user: c.user, pass: c.pass };
+    localStorage.setItem('lgc_cloud', JSON.stringify(creds));
+    return creds;
+  }
+  return null;
+}
+
+function cloudDavBase(creds) {
+  if (IS_PROXY) return `/remote.php/dav/files/${encodeURIComponent(creds.user)}/LifeguardClock`;
+  const url = creds.url.trim().replace(/\/$/, '')
+    .replace(/\/remote\.php\/dav.*/i, '').replace(/\/index\.php.*/i, '');
+  return `${url}/remote.php/dav/files/${encodeURIComponent(creds.user)}/LifeguardClock`;
+}
+
+function cloudAuth(creds) {
+  return 'Basic ' + btoa(unescape(encodeURIComponent(creds.user + ':' + creds.pass)));
+}
+
+function syncCloudSaveBtn() {
+  const btn = document.getElementById('btn-cloud-save');
+  const ind = document.getElementById('hdr-cloud-file');
+  if (!cloudFileUrl) {
+    btn.disabled = true;
+    btn.textContent = '\u2601 Speichern';
+    btn.classList.remove('dirty');
+    ind.style.display = 'none';
+    return;
+  }
+  const name = cloudFileUrl.split('/').pop();
+  ind.textContent = '\u2601 ' + name;
+  ind.style.display = '';
+  btn.disabled = !cloudDirty;
+  if (cloudDirty) {
+    btn.textContent = '\u2601 Speichern\u2009*';
+    btn.classList.add('dirty');
+  } else {
+    btn.textContent = '\u2601 Gespeichert';
+    btn.classList.remove('dirty');
+  }
+}
+
+// ─── Cloud: Datei-Liste laden ─────────────────────────────────────────────────
+async function openCloudPicker() {
+  const creds = getCloudCreds();
+  if (!creds) {
+    alert('Keine Cloud-Zugangsdaten gefunden.\nBitte zuerst in admin.html konfigurieren.');
+    return;
+  }
+  const btn = document.getElementById('btn-cloud-load');
+  btn.disabled = true; btn.textContent = '\u23F3 Lade\u2026';
+  try {
+    const base = cloudDavBase(creds);
+    const auth = cloudAuth(creds);
+    await fetch(base, { method: 'MKCOL', headers: { Authorization: auth } }).catch(() => {});
+    const res = await fetch(base, {
+      method: 'PROPFIND',
+      headers: { Authorization: auth, Depth: '1' },
+    });
+    if (res.status === 404) {
+      alert('Kein LifeguardClock-Ordner in der Cloud.\nBitte erst die Hauptapp synchronisieren.');
+      return;
+    }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const xml = await res.text();
+    const hrefs = [...xml.matchAll(/<[^>]*:href[^>]*>([^<]+)<\/[^>]*:href>/g)]
+      .map(m => decodeURIComponent(m[1].trim()))
+      .filter(h => /lgc_.*\d{4}-\d{2}-\d{2}\.json$/.test(h))
+      .sort((a, b) => b.localeCompare(a));
+    if (hrefs.length === 0) { alert('Keine Dateien in der Cloud gefunden.'); return; }
+    const sel = document.getElementById('cloud-file-select');
+    sel.innerHTML = hrefs.map(h => {
+      const name = h.split('/').pop();
+      const m = name.match(/lgc_(.+?)_(\d{4}-\d{2}-\d{2})\.json$/);
+      const label = m ? `${m[2]}  –  ${m[1]}` : name;
+      return `<option value="${h}">${label}</option>`;
+    }).join('');
+    document.getElementById('modal-cloud').showModal();
+  } catch(e) {
+    alert('Cloud-Fehler: ' + e.message);
+  } finally {
+    btn.disabled = false; btn.textContent = '\u2601 Cloud';
+  }
+}
+
+// ─── Cloud: Datei laden ───────────────────────────────────────────────────────
+async function loadFromCloud(href) {
+  const creds = getCloudCreds();
+  if (!creds) return;
+  const auth    = cloudAuth(creds);
+  const fileUrl = IS_PROXY
+    ? href
+    : (creds.url.trim().replace(/\/$/, '') + (href.startsWith('/') ? href : '/' + href));
+  try {
+    const r = await fetch(fileUrl, { headers: { Authorization: auth } });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const json = await r.json();
+    logData = json;
+    if (!Array.isArray(logData.log)) logData.log = [];
+    cloudFileUrl = fileUrl;
+    cloudDirty   = false;
+    history = []; histIdx = -1; editingId = null; filterPerson = null;
+    buildTypeMaps();
+    populateTypSelect();
+    pushHistory();
+    renderAll();
+    syncCloudSaveBtn();
+  } catch(e) { alert('Fehler beim Laden: ' + e.message); }
+}
+
+// ─── Cloud: Speichern (PUT) ───────────────────────────────────────────────────
+async function saveToCloud() {
+  if (!cloudFileUrl || !cloudDirty) return;
+  const creds = getCloudCreds();
+  if (!creds) return;
+  const btn = document.getElementById('btn-cloud-save');
+  btn.disabled = true; btn.textContent = '\u23F3 Speichere\u2026';
+  try {
+    const out = { ...logData, exported: new Date().toISOString(), count: logData.log.length };
+    const r = await fetch(cloudFileUrl, {
+      method: 'PUT',
+      headers: { Authorization: cloudAuth(creds), 'Content-Type': 'application/json' },
+      body: JSON.stringify(out, null, 2),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    cloudDirty = false;
+    syncCloudSaveBtn();
+  } catch(e) {
+    alert('Speichern fehlgeschlagen: ' + e.message);
+    btn.disabled = false;
+    syncCloudSaveBtn();
+  }
+}
+
 // ─── Datei laden / neu ────────────────────────────────────────────────────────
 async function loadFile(file) {
   try {
     const json = JSON.parse(await file.text());
     logData = json;
     if (!Array.isArray(logData.log)) logData.log = [];
+    cloudFileUrl = null; cloudDirty = false;
     history = []; histIdx = -1; editingId = null; filterPerson = null;
-    buildTypeMaps();   // Typen aus Config + Log ableiten
+    buildTypeMaps();
     populateTypSelect();
     pushHistory();
     renderAll();
+    syncCloudSaveBtn();
   } catch(e) { alert('Ungültige JSON-Datei: ' + e.message); }
 }
 
@@ -415,38 +602,42 @@ function newFile() {
   const today = new Date().toISOString().slice(0,10);
   logData = { version: 2, exported: new Date().toISOString(),
               logicalDay: today, count: 0, log: [] };
+  cloudFileUrl = null; cloudDirty = false;
   history = []; histIdx = -1; editingId = null; filterPerson = null;
   buildTypeMaps();
   populateTypSelect();
   pushHistory();
   renderAll();
+  syncCloudSaveBtn();
 }
 
 // ─── Undo / Redo ──────────────────────────────────────────────────────────────
 function pushHistory() {
   history = history.slice(0, histIdx + 1);
-  history.push(JSON.stringify(logData.log));
+  history.push(JSON.stringify({ log: logData.log, logicalDay: logData.logicalDay }));
   if (history.length > 50) history.shift();
   histIdx = history.length - 1;
   syncUndoButtons();
 }
+function _restoreSnap(snap) {
+  logData.log        = snap.log;
+  logData.logicalDay = snap.logicalDay;
+  logData.count      = snap.log.length;
+  document.getElementById('inp-logical-day').value = snap.logicalDay || '';
+  editingId = null;
+  if (cloudFileUrl) { cloudDirty = true; syncCloudSaveBtn(); }
+  syncUndoButtons();
+  renderAll();
+}
 function undo() {
   if (histIdx <= 0) return;
   histIdx--;
-  logData.log = JSON.parse(history[histIdx]);
-  logData.count = logData.log.length;
-  editingId = null;
-  syncUndoButtons();
-  renderAll();
+  _restoreSnap(JSON.parse(history[histIdx]));
 }
 function redo() {
   if (histIdx >= history.length - 1) return;
   histIdx++;
-  logData.log = JSON.parse(history[histIdx]);
-  logData.count = logData.log.length;
-  editingId = null;
-  syncUndoButtons();
-  renderAll();
+  _restoreSnap(JSON.parse(history[histIdx]));
 }
 function syncUndoButtons() {
   document.getElementById('btn-undo').disabled = histIdx <= 0;
@@ -495,6 +686,7 @@ function commit(fn) {
   logData.log.sort((a,b) => new Date(a.zeitstempel) - new Date(b.zeitstempel));
   logData.count = logData.log.length;
   editingId = null;
+  if (cloudFileUrl) { cloudDirty = true; syncCloudSaveBtn(); }
   pushHistory();
   renderAll();
 }
@@ -544,7 +736,7 @@ function exportJSON() {
   const blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' });
   const a = Object.assign(document.createElement('a'), {
     href: URL.createObjectURL(blob),
-    download: `stempeluhr_${logData.logicalDay || 'export'}.json`,
+    download: `lgc_${logData.logicalDay || 'export'}.json`,
   });
   a.click();
   URL.revokeObjectURL(a.href);
@@ -765,8 +957,18 @@ document.getElementById('btn-export').addEventListener('click', exportJSON);
 document.getElementById('btn-undo').addEventListener('click', undo);
 document.getElementById('btn-redo').addEventListener('click', redo);
 
+document.getElementById('btn-cloud-load').addEventListener('click', openCloudPicker);
+document.getElementById('btn-cloud-save').addEventListener('click', saveToCloud);
+document.getElementById('cloud-cancel').addEventListener('click', () =>
+  document.getElementById('modal-cloud').close());
+document.getElementById('cloud-confirm').addEventListener('click', () => {
+  const href = document.getElementById('cloud-file-select').value;
+  document.getElementById('modal-cloud').close();
+  if (href) loadFromCloud(href);
+});
+
 document.getElementById('inp-logical-day').addEventListener('change', e => {
-  if (logData) { logData.logicalDay = e.target.value; }
+  if (logData) { logData.logicalDay = e.target.value; pushHistory(); }
 });
 
 // Tabs

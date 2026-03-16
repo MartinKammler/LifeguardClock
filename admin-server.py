@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 admin-server.py  –  Lokaler Webserver mit Nextcloud-Proxy fuer admin.html
-Stempeluhr | Copyright (C) 2026 Martin Kammler | GPL v3
+LifeguardClock | Copyright (C) 2026 Martin Kammler | GPL v3
 
 Startet einen HTTP-Server auf localhost:8080.
 Lokale Dateien werden direkt ausgeliefert.
@@ -43,7 +43,7 @@ NC_URL = read_nextcloud_url()
 class ProxyHandler(http.server.SimpleHTTPRequestHandler):
 
     def _cors_headers(self):
-        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Origin', f'http://localhost:{PORT}')
         self.send_header('Access-Control-Allow-Methods',
                          'GET, PUT, DELETE, PROPFIND, MKCOL, OPTIONS')
         self.send_header('Access-Control-Allow-Headers',
@@ -84,23 +84,31 @@ class ProxyHandler(http.server.SimpleHTTPRequestHandler):
             req = urllib.request.Request(target, data=body,
                                          headers=fwd, method=method)
             with urllib.request.urlopen(req, context=ctx) as resp:
+                data = resp.read()
                 self.send_response(resp.status)
                 for k, v in resp.headers.items():
-                    if k.lower() not in ('transfer-encoding', 'connection'):
+                    if k.lower() not in ('transfer-encoding', 'connection',
+                                         'content-length'):
                         self.send_header(k, v)
                 self._cors_headers()
+                self.send_header('Content-Length', str(len(data)))
                 self.end_headers()
-                self.wfile.write(resp.read())
+                self.wfile.write(data)
 
         except urllib.error.HTTPError as e:
             body_err = e.read() or b''
             self.send_response(e.code)
+            # Wichtige Antwort-Header weiterleiten (z. B. WWW-Authenticate bei 401)
+            for k, v in e.headers.items():
+                if k.lower() not in ('transfer-encoding', 'connection'):
+                    self.send_header(k, v)
             self._cors_headers()
+            self.send_header('Content-Length', str(len(body_err)))
             self.end_headers()
             self.wfile.write(body_err)
 
         except Exception as e:
-            print(f'  Proxy-Fehler: {e}')
+            print(f'  Proxy-Fehler [{method} {self.path}]: {e}')
             self.send_error(502, f'Proxy-Fehler: {e}')
 
     def do_GET(self):
@@ -108,6 +116,12 @@ class ProxyHandler(http.server.SimpleHTTPRequestHandler):
             super().do_GET()
         else:
             self._proxy('GET')
+
+    def do_HEAD(self):
+        if self._is_local():
+            super().do_HEAD()
+        else:
+            self._proxy('HEAD')
 
     def do_PUT(self):
         self._proxy('PUT')
@@ -148,7 +162,7 @@ if __name__ == '__main__':
     print('  Beenden       : Strg+C')
     print()
 
-    server = http.server.HTTPServer(('', PORT), ProxyHandler)
+    server = http.server.HTTPServer(('127.0.0.1', PORT), ProxyHandler)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
