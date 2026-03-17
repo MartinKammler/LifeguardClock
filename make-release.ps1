@@ -19,6 +19,7 @@ $include = @(
     "sw.js",
     "manifest.json",
     "Logo.png",
+    "Logo-icon.png",
     "config.example.js",
     "admin_config.example.js",
     "admin-server.py",

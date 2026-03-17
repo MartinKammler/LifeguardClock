@@ -1700,6 +1700,19 @@
     ::-webkit-scrollbar { width: 4px; height: 4px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 4px; }
+
+    /* Portrait-Erzwingung via CSS (Fallback wenn Manifest-Orientation ignoriert wird) */
+    @media screen and (orientation: landscape) {
+      body::before {
+        content: 'Bitte Gerät drehen';
+        position: fixed; inset: 0; z-index: 99999;
+        display: flex; align-items: center; justify-content: center;
+        background: #0f172a; color: #94a3b8;
+        font-family: system-ui, sans-serif; font-size: 1.2rem;
+        letter-spacing: .02em;
+      }
+      body > * { display: none !important; }
+    }
   </style>
 </head>
 <body>
@@ -4900,6 +4913,11 @@ function handleQrResult(raw) {
   checkCloudSetupButton();
   showToast('☁ Cloud konfiguriert');
   syncUsersFromCloud(true);
+}
+
+// ── Portrait-Lock (Screen Orientation API) ─────────────────────
+if (screen.orientation && screen.orientation.lock) {
+  screen.orientation.lock('portrait').catch(() => {});
 }
 
 // ── Service Worker registrieren ───────────────────────────────
