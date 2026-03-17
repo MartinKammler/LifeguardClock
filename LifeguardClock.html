@@ -1798,6 +1798,19 @@
 <!-- ═══════════════════════════════════════════════════════════
      JAVASCRIPT
 ═══════════════════════════════════════════════════════════ -->
+<script>
+/* Minimaler Fallback – wird von config.js überschrieben wenn vorhanden */
+const CONFIG = {
+  adminPin:     '000000',
+  types: [
+    { key: 'anwesenheit', label: 'Anwesenheit', logType: 'anwesenheit',
+      color: 'blue', pinned: true }
+  ],
+  defaultUsers: [],
+  removedUsers: [],
+  cloud: { url: '', user: '', pass: '' },
+};
+</script>
 <script src="config.js"></script>
 <script>
 'use strict';

@@ -29,6 +29,7 @@
 | **`config.js`** | Eigene Konfiguration *(nicht im Repo, aus Vorlage erstellen)* |
 | **`config.example.js`** | Vorlage mit allen Optionen und Kommentaren |
 | **`sw.js`** | Service Worker — App-Shell offline cachen |
+| **`make-release.ps1`** | Release-ZIP erzeugen (ohne sensible Dateien) |
 | **`presets/config.dlrg.js`** | Fertiges Preset für DLRG-Ortsgruppen |
 | **`presets/config.simple.js`** | Minimales Preset — nur Anwesenheit |
 
@@ -42,6 +43,32 @@
 ```
 
 Kein Build-System, kein Node.js, keine Abhängigkeiten.
+
+---
+
+## Hosting / Installation
+
+### GitHub Pages (PWA, empfohlen)
+
+Das Repo ist direkt über GitHub Pages hostbar — ohne eigenen Server:
+
+1. Repo → **Settings → Pages** → Branch: `main`, Folder: `/` → **Save**
+2. App ist erreichbar unter `https://[username].github.io/LifeguardClock/LifeguardClock.html`
+3. Im Browser: *"Zum Startbildschirm hinzufügen"* → App als PWA installieren
+
+`config.js` ist nicht im Repo (sensible Daten). Fehlt sie, startet die App automatisch mit
+einem Minimal-Fallback (nur Typ Anwesenheit, Admin-PIN `000000`). Nach dem ersten Login
+Cloud-Zugangsdaten eintragen — Nutzer werden dann aus der Cloud geladen.
+
+### Tablet (Kiosk-Betrieb)
+
+- **Fully Kiosk Browser** (Android): URL eintragen, Gerät auf die App sperren
+- **PWA**: Im Chrome / Edge „Zum Startbildschirm hinzufügen" — läuft ohne Browser-Leiste
+
+### Lokal (Windows)
+
+- `admin-server.bat` starten → `http://localhost:PORT/LifeguardClock.html` im Browser öffnen
+- Oder: `LifeguardClock.html` direkt öffnen (Service Worker läuft dann nicht)
 
 ---
 
@@ -151,11 +178,22 @@ Jedes Gerät schreibt eigene Dateien (`lgc_[deviceId]_DATUM.json`), das Dashboar
 
 ```
 tests/test_LifeguardClock.html   → Kernlogik (im Browser öffnen)
-tests/test_dashboard.html    → Datenaggregation
-tests/test_editor.html       → Validierung, Undo/Redo
+tests/test_dashboard.html        → Datenaggregation
+tests/test_editor.html           → Validierung, Undo/Redo
 ```
 
 Kein Test-Runner nötig — direkt als HTML-Datei öffnen.
+
+---
+
+## Release
+
+```powershell
+.\make-release.ps1 -Version "0.3"
+```
+
+Erzeugt `LifeguardClock-v0.3.zip` ohne `config.js` / `admin_config.js`.
+Vor dem Release `CACHE_NAME` in `sw.js` bumpen (`lgc-shell-v3` usw.).
 
 ---
 
