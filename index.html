@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LifeguardClock</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      min-height: 100dvh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #0f172a;
+      color: #f1f5f9;
+      font-family: system-ui, sans-serif;
+      padding: 2rem;
+    }
+
+    .card {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 1.25rem;
+      padding: 2.5rem 2rem;
+      max-width: 360px;
+      width: 100%;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1.5rem;
+    }
+
+    .logo { width: 72px; height: 72px; border-radius: .75rem; }
+
+    h1 { font-size: 1.5rem; font-weight: 700; letter-spacing: -.02em; }
+    p  { font-size: .9rem; color: #94a3b8; line-height: 1.5; }
+
+    #qr-wrap {
+      background: #fff;
+      padding: .75rem;
+      border-radius: .75rem;
+      display: inline-block;
+      line-height: 0;
+    }
+
+    .instruction {
+      font-size: .8rem;
+      color: #64748b;
+    }
+
+    .btn {
+      display: inline-block;
+      background: #3b82f6;
+      color: #fff;
+      text-decoration: none;
+      font-weight: 600;
+      font-size: .95rem;
+      padding: .75rem 2rem;
+      border-radius: .625rem;
+      transition: background .15s;
+      width: 100%;
+    }
+    .btn:hover { background: #2563eb; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <img class="logo" src="Logo.png" alt="LifeguardClock">
+    <div>
+      <h1>LifeguardClock</h1>
+      <p style="margin-top:.5rem">Zeiterfassung für Rettungsschwimmer</p>
+    </div>
+
+    <div id="qr-wrap">
+      <canvas id="qr"></canvas>
+    </div>
+    <p class="instruction">QR-Code scannen → App auf dem Smartphone installieren</p>
+
+    <a id="app-link" class="btn" href="LifeguardClock.html">App öffnen</a>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
+  <script>
+    const appUrl = new URL('LifeguardClock.html', location.href).href;
+    document.getElementById('app-link').href = appUrl;
+    QRCode.toCanvas(document.getElementById('qr'), appUrl, {
+      width: 220,
+      margin: 0,
+      color: { dark: '#0f172a', light: '#ffffff' }
+    });
+  </script>
+</body>
+</html>

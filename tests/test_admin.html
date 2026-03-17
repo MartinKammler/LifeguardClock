@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <title>admin.html – Unit Tests</title>
+  <style>
+    body { font-family: monospace; background: #0d0d12; color: #ccc; margin: 0; padding: 20px; }
+    h1   { color: #fff; font-size: 1.1rem; margin-bottom: 16px; }
+    .suite { margin-bottom: 20px; }
+    .suite-title { color: #7eb8f7; font-size: .9rem; margin-bottom: 6px; font-weight: bold; }
+    .pass { color: #4caf7d; }
+    .fail { color: #f76e6e; }
+    .result { font-size: .82rem; margin: 2px 0 2px 12px; }
+    #summary { margin-top: 24px; font-size: 1rem; font-weight: bold; padding: 10px; border-radius: 6px; }
+    .all-pass { background: #1a3a28; color: #4caf7d; }
+    .has-fail { background: #3a1a1a; color: #f76e6e; }
+  </style>
+</head>
+<body>
+<h1>admin.html – Unit Tests</h1>
+<div id="output"></div>
+<div id="summary"></div>
+
+<script>
+/* ── Mini Test-Runner ─────────────────────────────────────────── */
+const results = [];
+let currentSuite = '';
+
+function suite(name) { currentSuite = name; }
+
+async function test(name, fn) {
+  try {
+    await fn();
+    results.push({ suite: currentSuite, name, ok: true });
+  } catch (e) {
+    results.push({ suite: currentSuite, name, ok: false, err: e.message });
+  }
+}
+function assert(cond, msg) { if (!cond) throw new Error(msg || 'Assertion failed'); }
+function assertEqual(a, b, msg) {
+  if (a !== b) throw new Error(msg || `Expected ${JSON.stringify(b)}, got ${JSON.stringify(a)}`);
+}
+
+/* ── Functions under test (extracted from admin.html) ─────────── */
+function genOtp() {
+  return String(Math.floor(100000 + Math.random() * 900000));
+}
+
+function genId() {
+  return 'u' + Date.now();
+}
+
+function escHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function otpUsers(users) {
+  return users.filter(u => u.mustChangePIN === true && !u.salt);
+}
+
+function authHeader(creds) {
+  return 'Basic ' + btoa(creds.user + ':' + creds.pass);
+}
+
+/* ═══════════════════════════════════════════════════════════════ */
+/*  TESTS                                                          */
+/* ═══════════════════════════════════════════════════════════════ */
+
+(async () => {
+
+/* ── Suite 1: genOtp ──────────────────────────────────────────── */
+suite('genOtp – Einmal-PIN Erzeugung');
+
+await test('erzeugt 6-stellige PIN', () => {
+  const pin = genOtp();
+  assertEqual(pin.length, 6, 'PIN soll 6 Stellen haben');
+});
+
+await test('PIN besteht nur aus Ziffern', () => {
+  for (let i = 0; i < 50; i++) {
+    const pin = genOtp();
+    assert(/^\d{6}$/.test(pin), `PIN "${pin}" enthält ungültige Zeichen`);
+  }
+});
+
+await test('PIN ist mindestens 100000', () => {
+  for (let i = 0; i < 50; i++) {
+    const pin = genOtp();
+    assert(parseInt(pin) >= 100000, `PIN ${pin} kleiner als 100000`);
+  }
+});
+
+await test('PINs sind nicht alle gleich (Zufälligkeit)', () => {
+  const pins = new Set();
+  for (let i = 0; i < 20; i++) pins.add(genOtp());
+  assert(pins.size > 1, 'Alle 20 PINs sind identisch');
+});
+
+/* ── Suite 2: genId ───────────────────────────────────────────── */
+suite('genId – Benutzer-ID Erzeugung');
+
+await test('beginnt mit u', () => {
+  assert(genId().startsWith('u'), 'ID soll mit u beginnen');
+});
+
+await test('enthält Zeitstempel', () => {
+  const id = genId();
+  const num = parseInt(id.slice(1));
+  const now = Date.now();
+  assert(num > now - 1000 && num <= now, 'Zeitstempel soll nahe an Date.now() sein');
+});
+
+await test('ist bei aufeinanderfolgenden Aufrufen unterschiedlich', async () => {
+  const a = genId();
+  await new Promise(r => setTimeout(r, 2));
+  const b = genId();
+  assert(a !== b, 'Zwei IDs sollen unterschiedlich sein');
+});
+
+/* ── Suite 3: escHtml ─────────────────────────────────────────── */
+suite('escHtml – HTML-Escaping');
+
+await test('escaped &', () => {
+  assertEqual(escHtml('A & B'), 'A &amp; B');
+});
+
+await test('escaped <>', () => {
+  assertEqual(escHtml('<script>'), '&lt;script&gt;');
+});
+
+await test('escaped Anführungszeichen', () => {
+  assertEqual(escHtml('"test"'), '&quot;test&quot;');
+});
+
+await test('verhindert XSS-Payload', () => {
+  const payload = '<img src=x onerror="alert(1)">';
+  const escaped = escHtml(payload);
+  assert(!escaped.includes('<'), 'Soll kein unescaptes < enthalten');
+  assert(!escaped.includes('>'), 'Soll kein unescaptes > enthalten');
+});
+
+await test('konvertiert Zahlen zu String', () => {
+  assertEqual(escHtml(42), '42');
+});
+
+await test('normaler Text bleibt unverändert', () => {
+  assertEqual(escHtml('Max Mustermann'), 'Max Mustermann');
+});
+
+/* ── Suite 4: otpUsers ────────────────────────────────────────── */
+suite('otpUsers – Einmal-PIN Filter');
+
+await test('filtert Nutzer mit mustChangePIN', () => {
+  const users = [
+    { id: 'a', name: 'A', pin: '123456', mustChangePIN: true },
+    { id: 'b', name: 'B', pin: 'hash', salt: 'abc', mustChangePIN: false },
+    { id: 'c', name: 'C', pin: '654321', mustChangePIN: true },
+  ];
+  const otp = otpUsers(users);
+  assertEqual(otp.length, 2, 'Soll 2 OTP-User finden');
+});
+
+await test('ignoriert gehashte PINs mit mustChangePIN + salt', () => {
+  const users = [
+    { id: 'a', name: 'A', pin: 'hash', salt: 'x', mustChangePIN: true },
+  ];
+  const otp = otpUsers(users);
+  assertEqual(otp.length, 0, 'Nutzer mit Salt soll nicht als OTP gelten');
+});
+
+await test('leere Liste ergibt leeres Ergebnis', () => {
+  assertEqual(otpUsers([]).length, 0);
+});
+
+/* ── Suite 5: authHeader ──────────────────────────────────────── */
+suite('authHeader – Basic Auth');
+
+await test('erzeugt korrekten Basic Auth Header', () => {
+  const header = authHeader({ user: 'admin', pass: 'secret' });
+  assertEqual(header, 'Basic ' + btoa('admin:secret'));
+});
+
+await test('behandelt Sonderzeichen korrekt', () => {
+  const header = authHeader({ user: 'usr@domain', pass: 'p@ss:w0rd' });
+  const decoded = atob(header.replace('Basic ', ''));
+  assertEqual(decoded, 'usr@domain:p@ss:w0rd');
+});
+
+/* ── Suite 6: User-Verwaltung Logik ───────────────────────────── */
+suite('User-Verwaltung Logik');
+
+await test('Nutzer hinzufügen', () => {
+  const users = [];
+  const newUser = { id: genId(), name: 'Test User', pin: genOtp(), mustChangePIN: true };
+  users.push(newUser);
+  assertEqual(users.length, 1);
+  assertEqual(users[0].name, 'Test User');
+  assert(users[0].mustChangePIN, 'Neuer Nutzer soll Einmal-PIN haben');
+});
+
+await test('Nutzer löschen', () => {
+  let users = [
+    { id: 'u1', name: 'A' },
+    { id: 'u2', name: 'B' },
+    { id: 'u3', name: 'C' },
+  ];
+  users = users.filter(u => u.id !== 'u2');
+  assertEqual(users.length, 2);
+  assert(!users.find(u => u.id === 'u2'), 'u2 soll entfernt sein');
+});
+
+await test('PIN zurücksetzen', () => {
+  const user = { id: 'u1', name: 'A', pin: 'hashed', salt: 'salt123', mustChangePIN: false };
+  user.pin = genOtp();
+  user.mustChangePIN = true;
+  delete user.salt;
+  assert(user.mustChangePIN, 'mustChangePIN soll true sein');
+  assert(!user.salt, 'Salt soll entfernt sein');
+  assert(/^\d{6}$/.test(user.pin), 'Neue PIN soll 6-stellig sein');
+});
+
+await test('Berechtigungen umschalten', () => {
+  const user = { id: 'u1', permissions: ['wachdienst'] };
+  // Add permission
+  if (!user.permissions.includes('sanitaet')) user.permissions.push('sanitaet');
+  assert(user.permissions.includes('sanitaet'), 'sanitaet soll hinzugefügt sein');
+  // Remove permission
+  user.permissions = user.permissions.filter(p => p !== 'wachdienst');
+  assert(!user.permissions.includes('wachdienst'), 'wachdienst soll entfernt sein');
+  assertEqual(user.permissions.length, 1);
+});
+
+await test('Name umbenennen', () => {
+  const user = { id: 'u1', name: 'Alt' };
+  const newName = 'Neu Umbenannt';
+  user.name = newName;
+  assertEqual(user.name, newName);
+});
+
+/* ── Render ───────────────────────────────────────────────────── */
+const out  = document.getElementById('output');
+const sum  = document.getElementById('summary');
+let lastSuite = '';
+let passed = 0, failed = 0;
+
+results.forEach(r => {
+  if (r.suite !== lastSuite) {
+    lastSuite = r.suite;
+    const d = document.createElement('div');
+    d.className = 'suite';
+    d.innerHTML = `<div class="suite-title">${escHtml(r.suite)}</div>`;
+    out.appendChild(d);
+  }
+  const d = document.createElement('div');
+  d.className = `result ${r.ok ? 'pass' : 'fail'}`;
+  d.textContent = `${r.ok ? '✓' : '✗'} ${r.name}${r.err ? ' — ' + r.err : ''}`;
+  out.lastChild.appendChild(d);
+  r.ok ? passed++ : failed++;
+});
+
+sum.className = failed === 0 ? 'all-pass' : 'has-fail';
+sum.textContent = `${passed} passed, ${failed} failed — ${passed + failed} total`;
+
+})();
+</script>
+</body>
+</html>

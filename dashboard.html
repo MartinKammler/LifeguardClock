@@ -475,6 +475,11 @@
   </section>
 
   <script>
+    // ─── HTML-Escape ─────────────────────────────────────────────────────────
+    function escHtml(s) {
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
     // ─── Typ-Farbpalette & bekannte Labels ───────────────────────────────────
     const COLOR_PALETTE = {
       blue:   { main: '#3b82f6', dim: 'rgba(59,130,246,.15)'  },
@@ -734,7 +739,7 @@
               : top.map(([name, d], i) => `
                   <div class="top-item">
                     <div class="top-rank ${rankCls[i]}">${i+1}</div>
-                    <div class="top-name">${name}</div>
+                    <div class="top-name">${escHtml(name)}</div>
                     <div class="top-val" style="${tStyle(typ)}">${fmtH(d[typ])} h</div>
                   </div>`).join('')}
           </div>`;
@@ -935,7 +940,7 @@
     function renderPersonFilter() {
       document.getElementById('person-filter').innerHTML = DB.persons.map(p => `
         <button class="person-btn${p === activePerson ? ' active' : ''}"
-          data-person="${p.replace(/"/g,'&quot;')}">${p}</button>
+          data-person="${escHtml(p)}">${escHtml(p)}</button>
       `).join('');
       document.getElementById('person-filter').addEventListener('click', e => {
         const btn = e.target.closest('.person-btn');
@@ -965,7 +970,7 @@
       }
 
       document.getElementById('person-detail').innerHTML = `
-        <div class="person-name-heading">${activePerson}</div>
+        <div class="person-name-heading">${escHtml(activePerson)}</div>
         <div class="cards" style="margin-bottom:20px">
           ${TYPES.map(typ => {
             const anwMs = totals['anwesenheit'];

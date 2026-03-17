@@ -368,13 +368,30 @@ async function isPINTaken(pin, excludeId) {
   return false;
 }
 
-const ADMIN_PW_KEY     = 'lgc_admin_pw';
-const ADMIN_PW_DEFAULT = 'Admin1234';
-function getAdminPw() {
-  return localStorage.getItem(ADMIN_PW_KEY) || ADMIN_PW_DEFAULT;
+const ADMIN_PW_KEY      = 'lgc_admin_pw';
+const ADMIN_PW_SALT_KEY = 'lgc_admin_pw_salt';
+const ADMIN_PW_DEFAULT  = 'Admin19101913';
+
+async function hashAdminPw(pw, salt) {
+  const data = new TextEncoder().encode(salt + ':' + pw);
+  const buf  = await crypto.subtle.digest('SHA-256', data);
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
-function saveAdminPw(pw) {
-  localStorage.setItem(ADMIN_PW_KEY, pw);
+function genAdminSalt() {
+  return crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2);
+}
+async function verifyAdminPw(entered) {
+  const stored = localStorage.getItem(ADMIN_PW_KEY);
+  const salt   = localStorage.getItem(ADMIN_PW_SALT_KEY);
+  if (!stored || !salt) return entered === ADMIN_PW_DEFAULT;
+  const hash = await hashAdminPw(entered, salt);
+  return hash === stored;
+}
+async function saveAdminPw(pw) {
+  const salt = genAdminSalt();
+  const hash = await hashAdminPw(pw, salt);
+  localStorage.setItem(ADMIN_PW_SALT_KEY, salt);
+  localStorage.setItem(ADMIN_PW_KEY, hash);
 }
 
 /* ═══════════════════════════════════════════════════════════ */
@@ -1065,24 +1082,36 @@ await test('gibt false wenn gehashter Nutzer andere PIN hat', async () => {
   resetUsers();
 });
 
-/* ── Suite 16: getAdminPw / saveAdminPw ────────────────────── */
-suite('getAdminPw (Fallback Admin1234)');
+/* ── Suite 16: Admin-Passwort (SHA-256 hashed) ────────────── */
+suite('verifyAdminPw / saveAdminPw (SHA-256)');
 
-await test('gibt Admin1234 zurück wenn kein gespeicherter Wert', () => {
+await test('Default-Passwort wird akzeptiert wenn nichts gespeichert', async () => {
   resetStore();
-  assertEqual(getAdminPw(), ADMIN_PW_DEFAULT, 'Soll Admin1234 zurückgeben ohne gespeicherten Wert');
+  assert(await verifyAdminPw(ADMIN_PW_DEFAULT), 'Default-PW soll akzeptiert werden');
 });
 
-await test('gibt gespeicherten Wert zurück nach saveAdminPw', () => {
+await test('falsches Passwort wird abgelehnt bei Default', async () => {
   resetStore();
-  saveAdminPw('MeinNeuesPasswort');
-  assertEqual(getAdminPw(), 'MeinNeuesPasswort', 'Soll gespeichertes Passwort zurückgeben');
+  assert(!(await verifyAdminPw('FalschesPasswort')), 'Falsches PW soll abgelehnt werden');
+});
+
+await test('gespeichertes Passwort wird korrekt verifiziert', async () => {
+  resetStore();
+  await saveAdminPw('MeinNeuesPasswort');
+  assert(await verifyAdminPw('MeinNeuesPasswort'), 'Neues PW soll akzeptiert werden');
+  assert(!(await verifyAdminPw(ADMIN_PW_DEFAULT)), 'Default soll nach Änderung abgelehnt werden');
+  assert(!(await verifyAdminPw('AnderesPasswort')), 'Anderes PW soll abgelehnt werden');
   resetStore();
 });
 
-await test('Admin1234 ist der Default (nicht leer)', () => {
-  assert(ADMIN_PW_DEFAULT.length > 0, 'Default-Passwort soll nicht leer sein');
-  assertEqual(ADMIN_PW_DEFAULT, 'Admin1234', 'Default soll Admin1234 sein');
+await test('Passwort wird gehasht gespeichert (nicht Klartext)', async () => {
+  resetStore();
+  await saveAdminPw('GeheimerTest');
+  const stored = localStorage.getItem(ADMIN_PW_KEY);
+  assert(stored !== 'GeheimerTest', 'Gespeicherter Wert soll nicht Klartext sein');
+  assert(stored && stored.length === 64, 'Gespeicherter Wert soll SHA-256 Hash sein (64 hex chars)');
+  assert(localStorage.getItem(ADMIN_PW_SALT_KEY), 'Salt soll gespeichert sein');
+  resetStore();
 });
 
 /* ── Suite 17: getZeitfenster – Ablauf ─────────────────────── */
