@@ -73,6 +73,30 @@ Alle betreiberspezifischen Einstellungen befinden sich in `config.js`. Diese Dat
 Laden der App vor dem Hauptskript ausgeführt und stellt das globale Objekt `CONFIG` bereit.
 Änderungen werden beim nächsten Neuladen der Seite aktiv.
 
+`config.js` ist optional. Fehlt sie (z. B. bei Hosting über GitHub Pages), greift automatisch
+ein Minimal-Fallback:
+
+```js
+// Automatischer Fallback wenn config.js nicht gefunden wird
+const CONFIG = {
+  adminPin:     '000000',
+  types: [
+    { key: 'anwesenheit', label: 'Anwesenheit', logType: 'anwesenheit',
+      color: 'blue', pinned: true }
+  ],
+  defaultUsers: [],
+  removedUsers: [],
+  cloud: { url: '', user: '', pass: '' },
+};
+```
+
+Alle anderen Werte (`dayBoundaryHour`, `pinClearSeconds` usw.) greifen auf ihre eingebauten
+Standardwerte zurück. Cloud-Zugangsdaten und Nutzer können danach im Admin-Bereich eingetragen
+bzw. aus der Cloud geladen werden.
+
+> **Sicherheitshinweis:** Der Fallback-Admin-PIN `000000` sollte im laufenden Betrieb durch
+> eine echte `config.js` mit eigenem PIN ersetzt werden.
+
 Als Einstieg empfehlen sich die fertigen Presets im Ordner `presets/`:
 
 | Datei                    | Beschreibung                                              |
@@ -1191,7 +1215,7 @@ im Browser geöffnet werden – kein Build-System, kein Node.js erforderlich.
 
 | Datei | Testet |
 |---|---|
-| `tests/test_LifeguardClock.html` | Kernfunktionen von LifeguardClock (34 Suites) |
+| `tests/test_LifeguardClock.html` | Kernfunktionen von LifeguardClock (35 Suites) |
 | `tests/test_dashboard.html` | Datenaggregation und Formatierung (`dashboard.html`) |
 | `tests/test_editor.html` | Validierung, Mutationen, Undo/Redo (`editor.html`) |
 
@@ -1265,4 +1289,25 @@ Alle vier Apps erkennen den Proxy-Betrieb automatisch anhand des Hostnamens
 
 - Python 3.6+, keine externen Pakete
 - `admin_config.js` mit Nextcloud-Zugangsdaten im gleichen Verzeichnis
+
+---
+
+## Release-Paket (`make-release.ps1`)
+
+PowerShell-Skript, das ein ZIP-Archiv mit allen Dateien für eine Weitergabe erzeugt.
+Sensible Dateien (`config.js`, `admin_config.js`) werden bewusst ausgelassen.
+
+```powershell
+.\make-release.ps1 -Version "0.3"
+```
+
+Erzeugt `LifeguardClock-v0.3.zip` mit:
+
+- Allen HTML-Apps, `sw.js`, `manifest.json`, `Logo.png`
+- `config.example.js`, `admin_config.example.js`, Presets
+- `admin-server.py`, `admin-server.bat`, `fully-settings.json`
+- `README.md`, `DOKUMENTATION.md`, `LICENSE`
+
+> **Hinweis:** `CACHE_NAME` in `sw.js` vor einem Release auf die neue Version bumpen
+> (z. B. `lgc-shell-v3`), damit Nutzer nicht die gecachte alte Version erhalten.
 
