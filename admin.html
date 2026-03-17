@@ -567,6 +567,42 @@
     </div>
   </div>
 
+  <!-- Einrichtungs-QR card -->
+  <div class="card" id="qr-card">
+    <div class="card-header" id="qr-card-toggle">
+      <h2>&#128241; Einrichtungs-QR f&uuml;r Mitglieder</h2>
+      <span class="toggle-icon" id="qr-toggle-icon">&#9660;</span>
+    </div>
+    <div class="card-body" id="qr-card-body">
+      <p class="tip" style="margin-bottom:12px">
+        Zugangsdaten des Cloud-Sync-Nutzers (z.&nbsp;B. <code>lgc-sync</code>) eingeben.
+        Mitglieder scannen den QR-Code in der App &rarr; Cloud wird automatisch eingerichtet &mdash; ohne Admin-Zugang.
+      </p>
+      <div class="form-grid">
+        <div class="form-group">
+          <label for="qr-url">Nextcloud-URL</label>
+          <input type="url" id="qr-url" placeholder="https://cloud.example.com">
+        </div>
+        <div class="form-group">
+          <label for="qr-user">Benutzername (Sync-Nutzer)</label>
+          <input type="text" id="qr-user" placeholder="lgc-sync" autocomplete="off">
+        </div>
+        <div class="form-group">
+          <label for="qr-pass">App-Passwort</label>
+          <input type="password" id="qr-pass" placeholder="xxxx-xxxx-xxxx-xxxx" autocomplete="new-password">
+        </div>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-primary" id="btn-gen-qr">QR-Code erzeugen</button>
+        <button class="btn btn-ghost" id="btn-fill-qr">Aus Cloud-Verbindung &uuml;bernehmen</button>
+      </div>
+      <div id="qr-output" style="display:none; text-align:center; padding:16px 0 4px">
+        <canvas id="qr-canvas" style="border-radius:8px"></canvas>
+        <p class="tip" style="margin-top:8px">Screenshot erstellen und an Mitglieder senden.</p>
+      </div>
+    </div>
+  </div>
+
   <!-- Action bar -->
   <div class="action-bar">
     <button class="btn btn-primary" id="btn-add-user">+ Nutzer hinzuf&uuml;gen</button>
@@ -625,7 +661,7 @@
       <p class="note">Lade die Konfiguration eines Geräts, bearbeite sie und speichere sie zurück. Das Gerät übernimmt sie beim nächsten &bdquo;Konfig aktualisieren&ldquo;. <strong>cloud.*</strong> und <strong>deviceId</strong> werden niemals &uuml;berschrieben.</p>
       <div class="cfg-row">
         <label>Geräte-ID</label>
-        <select id="cfg-device-select" style="display:none;padding:7px 10px;border-radius:6px;border:1px solid var(--border);background:rgba(255,255,255,0.05);color:var(--text);font-size:0.88rem;font-family:inherit;min-width:200px"></select>
+        <select id="cfg-device-select" style="display:none;padding:7px 10px;border-radius:6px;border:1px solid var(--border);background:#1e293b;color:#f1f5f9;font-size:0.88rem;font-family:inherit;min-width:200px"></select>
         <input type="text" id="cfg-device-id" placeholder="z. B. ipad-3f7a" style="width:200px">
         <button class="btn btn-ghost" id="btn-cfg-discover">&#x1F50D; Suchen</button>
         <button class="btn btn-ghost" id="btn-cfg-load">Laden</button>
@@ -1600,7 +1636,44 @@
     toast('Cloud-Konfiguration aus lokalem Speicher entfernt.', 'ok');
   });
 
+  /* ── Einrichtungs-QR ───────────────────────────────── */
+  // Karte aufklappen/zuklappen
+  document.getElementById('qr-card-toggle').addEventListener('click', () => {
+    const body = document.getElementById('qr-card-body');
+    const icon = document.getElementById('qr-toggle-icon');
+    const hidden = body.style.display === 'none';
+    body.style.display = hidden ? '' : 'none';
+    icon.innerHTML = hidden ? '&#9660;' : '&#9654;';
+  });
+
+  // Aus Cloud-Verbindung übernehmen
+  document.getElementById('btn-fill-qr').addEventListener('click', () => {
+    const url  = document.getElementById('inp-url').value.trim();
+    const user = document.getElementById('inp-user').value.trim();
+    const pass = document.getElementById('inp-pass').value.trim();
+    if (!url || !user || !pass) { toast('Bitte zuerst Cloud-Verbindung ausfüllen.', 'warn'); return; }
+    document.getElementById('qr-url').value  = url;
+    document.getElementById('qr-user').value = user;
+    document.getElementById('qr-pass').value = pass;
+  });
+
+  // QR erzeugen
+  document.getElementById('btn-gen-qr').addEventListener('click', () => {
+    const url  = document.getElementById('qr-url').value.trim();
+    const user = document.getElementById('qr-user').value.trim();
+    const pass = document.getElementById('qr-pass').value.trim();
+    if (!url || !user || !pass) { toast('Bitte alle drei Felder ausfüllen.', 'warn'); return; }
+    if (typeof QRCode === 'undefined') { toast('QR-Bibliothek lädt noch – kurz warten.', 'warn'); return; }
+    const data = `lgc://cloud?url=${encodeURIComponent(url)}&user=${encodeURIComponent(user)}&pass=${encodeURIComponent(pass)}`;
+    document.getElementById('qr-output').style.display = 'block';
+    QRCode.toCanvas(document.getElementById('qr-canvas'), data, {
+      width: 240, margin: 2,
+      color: { dark: '#0f172a', light: '#ffffff' }
+    }, err => { if (err) toast('QR-Fehler: ' + err.message, 'err'); });
+  });
+
 })();
 </script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode/build/qrcode.min.js"></script>
 </body>
 </html>

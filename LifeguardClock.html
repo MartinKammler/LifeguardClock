@@ -112,8 +112,80 @@
       gap: 6px;
       padding: 10px 12px 0;
       background: var(--bg);
+      overflow: auto;
+    }
+
+    /* ── Cloud Setup Button ── */
+    .btn-setup-cloud {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 9px 20px;
+      border: 1px solid var(--border);
+      border-radius: var(--r-s);
+      background: transparent;
+      color: var(--text-2);
+      font-family: 'Inter', sans-serif;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .btn-setup-cloud:hover, .btn-setup-cloud:active {
+      background: var(--surface);
+      border-color: var(--blue);
+      color: var(--blue);
+    }
+
+    /* ── QR Scanner Overlay ── */
+    #cloud-setup-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      background: rgba(0,0,0,0.82);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s;
+      padding: 20px;
+    }
+    #cloud-setup-overlay.visible { opacity: 1; pointer-events: all; }
+
+    .qr-scan-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 1rem;
+      width: 100%;
+      max-width: 340px;
       overflow: hidden;
     }
+    .qr-scan-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--text);
+      padding: 14px 16px 10px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    #qr-video {
+      width: 100%;
+      display: block;
+      background: #000;
+      max-height: 260px;
+      object-fit: cover;
+    }
+    #qr-scan-status {
+      text-align: center;
+      padding: 10px 16px 14px;
+      font-size: 12px;
+      color: var(--text-2);
+      line-height: 1.5;
+    }
+
 
     .app-brand { display:flex; align-items:center; justify-content:center; gap:8px; margin-bottom:4px; }
     .app-brand img { height:32px; width:32px; object-fit:contain; border-radius:7px; }
@@ -688,6 +760,49 @@
     .admin-body-scroll {
       overflow-x: auto;
       -webkit-overflow-scrolling: touch;
+    }
+
+    /* ── Admin Tabs ── */
+    .admin-tabs {
+      display: flex;
+      gap: 6px;
+      overflow-x: auto;
+      scrollbar-width: none;
+      padding-bottom: 2px;
+    }
+    .admin-tabs::-webkit-scrollbar { display: none; }
+
+    .admin-tab {
+      height: 34px;
+      padding: 0 14px;
+      border-radius: var(--r-s);
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--text-2);
+      font-family: 'Inter', sans-serif;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.15s;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .admin-tab:hover { color: var(--text); border-color: var(--text-2); }
+    .admin-tab.active {
+      background: var(--amber-dim);
+      border-color: var(--amber);
+      color: var(--amber);
+    }
+
+    .admin-tab-content { display: none; }
+    .admin-tab-content.active { display: block; }
+
+    .tab-toolbar {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      padding: 10px 14px 0;
+      flex-wrap: wrap;
     }
 
     .log-table {
@@ -1624,6 +1739,19 @@
     <button class="key" data-digit="0" style="grid-column: 2 / span 2">0</button>
   </div>
 
+
+</div>
+
+<!-- Cloud Setup QR-Scanner Overlay -->
+<div id="cloud-setup-overlay">
+  <div class="qr-scan-card">
+    <div class="qr-scan-title">
+      &#x2601; Cloud einrichten
+      <button class="modal-x" onclick="closeCloudSetup()">&#x2715;</button>
+    </div>
+    <video id="qr-video" autoplay playsinline muted></video>
+    <div id="qr-scan-status">Kamera wird gestartet…</div>
+  </div>
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════
@@ -1664,25 +1792,55 @@
       <button class="btn-logout" id="btn-admin-logout">Abmelden</button>
     </div>
     <div class="admin-actions">
-      <button class="btn-kiosk-exit"   id="btn-kiosk-exit" onclick="exitKioskMode()">&#x26F6; Vollbild beenden</button>
-      <button class="btn-stopall"       id="btn-stopall">&#x23F9; Alle ausstempeln</button>
-      <button class="btn-shutdown"      id="btn-shutdown">&#x23FB; Herunterfahren</button>
-      <button class="btn-sm btn-export" id="btn-export">&#x2193; CSV</button>
-      <button class="btn-sm btn-clr"    id="btn-clr">Leeren</button>
-      <button class="btn-sm btn-reset"  id="btn-reset">&#x21BA; Neustart</button>
-      <button class="btn-sm btn-pins"   id="btn-pins" onclick="openEinmalpins()">&#x1F511; Einmal-PINs</button>
+      <button class="btn-kiosk-exit" id="btn-kiosk-exit" onclick="exitKioskMode()">&#x26F6; Vollbild beenden</button>
+      <button class="btn-stopall"    id="btn-stopall">&#x23F9; Alle ausstempeln</button>
+      <button class="btn-shutdown"   id="btn-shutdown">&#x23FB; Herunterfahren</button>
+    </div>
+    <div class="admin-tabs">
+      <button class="admin-tab" data-tab="protokoll"   onclick="switchAdminTab('protokoll')">Protokoll</button>
+      <button class="admin-tab" data-tab="stunden"     onclick="switchAdminTab('stunden')">Stunden</button>
+      <button class="admin-tab" data-tab="nutzer"      onclick="switchAdminTab('nutzer')">Nutzer</button>
+      <button class="admin-tab" data-tab="zeitfenster" onclick="switchAdminTab('zeitfenster')">Zeitfenster</button>
+      <button class="admin-tab" data-tab="cloud"       onclick="switchAdminTab('cloud')">Cloud &amp; Ger&auml;t</button>
     </div>
   </div>
 
-  <div class="admin-stats"    id="admin-stats"></div>
-  <div class="admin-body"     id="admin-body"></div>
-  <div class="ov-section"     id="ov-section"></div>
-  <div class="users-section"  id="users-section"></div>
-  <div class="cloud-section"  id="cloud-section"></div>
-  <div class="backup-section" id="backup-section"></div>
+  <!-- Tab: Protokoll -->
+  <div class="admin-tab-content" id="tab-protokoll">
+    <div class="tab-toolbar">
+      <button class="btn-sm btn-export" id="btn-export">&#x2193; CSV</button>
+      <button class="btn-sm btn-clr"    id="btn-clr">Leeren</button>
+    </div>
+    <div class="admin-stats" id="admin-stats"></div>
+    <div class="admin-body"  id="admin-body"></div>
+  </div>
 
-  <div class="zf-section" id="zf-section"></div>
+  <!-- Tab: Stunden -->
+  <div class="admin-tab-content" id="tab-stunden">
+    <div class="ov-section"     id="ov-section"></div>
+    <div class="backup-section" id="backup-section"></div>
+  </div>
 
+  <!-- Tab: Nutzer -->
+  <div class="admin-tab-content" id="tab-nutzer">
+    <div class="tab-toolbar">
+      <button class="btn-sm btn-pins" id="btn-pins" onclick="openEinmalpins()">&#x1F511; Einmal-PINs</button>
+    </div>
+    <div class="users-section" id="users-section"></div>
+  </div>
+
+  <!-- Tab: Zeitfenster -->
+  <div class="admin-tab-content" id="tab-zeitfenster">
+    <div class="zf-section" id="zf-section"></div>
+  </div>
+
+  <!-- Tab: Cloud & Gerät -->
+  <div class="admin-tab-content" id="tab-cloud">
+    <div class="tab-toolbar">
+      <button class="btn-sm btn-reset" id="btn-reset">&#x21BA; Neustart</button>
+    </div>
+    <div class="cloud-section" id="cloud-section"></div>
+  </div>
 
 </div>
 
@@ -1737,6 +1895,7 @@
       <button class="btn-usr-cancel" style="flex:1"  onclick="cancelAdminPw()">Abbrechen</button>
       <button class="btn-usr-save"   style="flex:2"  onclick="submitAdminPw()">&#x2713; Best&auml;tigen</button>
     </div>
+    <button class="btn-setup-cloud" style="margin-top:12px;width:100%" onclick="cancelAdminPw(); openCloudSetup();">&#x2601; Cloud einrichten</button>
   </div>
 </div>
 
@@ -1799,8 +1958,9 @@
      JAVASCRIPT
 ═══════════════════════════════════════════════════════════ -->
 <script>
-/* Minimaler Fallback – wird von config.js überschrieben wenn vorhanden */
-const CONFIG = {
+/* Minimaler Fallback – wird von config.js überschrieben wenn vorhanden.
+   window.CONFIG statt const, damit config.js const CONFIG neu deklarieren kann. */
+window.CONFIG = {
   adminPin:     '000000',
   types: [
     { key: 'anwesenheit', label: 'Anwesenheit', logType: 'anwesenheit',
@@ -3809,14 +3969,26 @@ document.getElementById('btn-stopall').addEventListener('click', () => {
   showConfirm('Alle aktiven Sitzungen jetzt beenden?', stopAllActiveSessions);
 });
 
+let _adminActiveTab = 'protokoll';
+
+function switchAdminTab(tabId) {
+  _adminActiveTab = tabId;
+  document.querySelectorAll('.admin-tab').forEach(b =>
+    b.classList.toggle('active', b.dataset.tab === tabId)
+  );
+  document.querySelectorAll('.admin-tab-content').forEach(c =>
+    c.classList.toggle('active', c.id === 'tab-' + tabId)
+  );
+  if (tabId === 'protokoll')   { renderAdmin(); }
+  if (tabId === 'stunden')     { renderStundenOverview(); renderBackups(); }
+  if (tabId === 'nutzer')      { renderUsersSection(); }
+  if (tabId === 'zeitfenster') { renderZeitfenster(); }
+  if (tabId === 'cloud')       { renderCloudSection(); }
+}
+
 function openAdmin() {
-  renderAdmin();
-  renderStundenOverview();
-  renderUsersSection();
-  renderCloudSection();
-  renderZeitfenster();
-  renderBackups();
   showScreen('screen-admin');
+  switchAdminTab(_adminActiveTab);
 }
 
 /* ── ADMIN PASSWORD ─────────────────────────────────────────── */
@@ -3834,8 +4006,7 @@ function showAdminPwPrompt() {
   const isDefault = !localStorage.getItem(ADMIN_PW_KEY);
   document.getElementById('admin-pw-input').value = '';
   document.getElementById('admin-pw-err').textContent  = '';
-  document.getElementById('admin-pw-hint').textContent =
-    isDefault ? 'Standard-Passwort aktiv: Admin1234' : '';
+  document.getElementById('admin-pw-hint').textContent = '';
   document.getElementById('admin-pw-overlay').classList.add('visible');
   setTimeout(() => document.getElementById('admin-pw-input').focus(), 120);
 }
@@ -4569,6 +4740,8 @@ syncUsersFromCloud(true).then(ok => {
   }
 });
 
+// Cloud-Setup-Button ist jetzt im Admin-Passwort-Dialog (immer sichtbar)
+
 // Session-Wiederherstellung ohne PIN wurde entfernt (Sicherheit: Shared-Tablet).
 // Crash-Recovery für Wachstunde läuft nach PIN-Login in openDashboard().
 
@@ -4580,6 +4753,86 @@ function showToast(msg) {
   el.classList.add('visible');
   if (toastTimer) clearTimeout(toastTimer);
   toastTimer = setTimeout(() => el.classList.remove('visible'), 2800);
+}
+
+/* ── CLOUD SETUP QR ──────────────────────────────────────────── */
+let _qrStream   = null;
+let _qrScanning = false;
+
+function openCloudSetup() {
+  document.getElementById('cloud-setup-overlay').classList.add('visible');
+  startQrScanner();
+}
+
+function closeCloudSetup() {
+  document.getElementById('cloud-setup-overlay').classList.remove('visible');
+  stopQrScanner();
+}
+
+function stopQrScanner() {
+  _qrScanning = false;
+  if (_qrStream) { _qrStream.getTracks().forEach(t => t.stop()); _qrStream = null; }
+  const v = document.getElementById('qr-video');
+  if (v) v.srcObject = null;
+}
+
+async function startQrScanner() {
+  const video  = document.getElementById('qr-video');
+  const status = document.getElementById('qr-scan-status');
+  if (!video || !status) return;
+  status.textContent = 'Kamera wird gestartet…';
+
+  if (!navigator.mediaDevices?.getUserMedia) {
+    status.textContent = 'Kamera nicht verfügbar. Cloud manuell im Admin-Bereich konfigurieren.';
+    return;
+  }
+  try {
+    _qrStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    video.srcObject = _qrStream;
+  } catch {
+    status.textContent = 'Kamera-Zugriff verweigert. Bitte in den Browser-Einstellungen erlauben.';
+    return;
+  }
+  if (!('BarcodeDetector' in window)) {
+    status.textContent = 'QR-Scanner nicht unterstützt. Bitte Chrome oder Edge verwenden.';
+    return;
+  }
+  const detector = new BarcodeDetector({ formats: ['qr_code'] });
+  _qrScanning = true;
+  status.textContent = 'QR-Code in Kamera halten…';
+
+  const scan = async () => {
+    if (!_qrScanning) return;
+    try {
+      const codes = await detector.detect(video);
+      if (codes.length > 0) { handleQrResult(codes[0].rawValue); return; }
+    } catch {}
+    requestAnimationFrame(scan);
+  };
+  video.addEventListener('loadedmetadata', scan, { once: true });
+}
+
+function handleQrResult(raw) {
+  const PREFIX = 'lgc://cloud?';
+  const status = document.getElementById('qr-scan-status');
+  if (!raw.startsWith(PREFIX)) {
+    if (status) status.textContent = 'Ungültiger QR-Code. Bitte Einrichtungs-QR vom Admin scannen.';
+    stopQrScanner();
+    setTimeout(startQrScanner, 2000);
+    return;
+  }
+  const p   = new URLSearchParams(raw.slice(PREFIX.length));
+  const cfg = { url: p.get('url') || '', user: p.get('user') || '', pass: p.get('pass') || '' };
+  if (!cfg.url || !cfg.user || !cfg.pass) {
+    if (status) status.textContent = 'QR-Code unvollständig. Neuen QR beim Admin anfordern.';
+    stopQrScanner();
+    setTimeout(startQrScanner, 2000);
+    return;
+  }
+  localStorage.setItem('lgc_cloud', JSON.stringify(cfg));
+  closeCloudSetup();
+  showToast('☁ Cloud konfiguriert');
+  syncUsersFromCloud(true);
 }
 
 // ── Service Worker registrieren ───────────────────────────────
