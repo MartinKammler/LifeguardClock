@@ -1,8 +1,8 @@
 # LifeguardClock – Release-Paket erstellen
-# Aufruf: .\make-release.ps1 [-Version "0.3"]
+# Aufruf: .\make-release.ps1 [-Version "0.4"]
 
 param(
-    [string]$Version = "0.3"
+    [string]$Version = "0.4"
 )
 
 $ErrorActionPreference = 'Stop'

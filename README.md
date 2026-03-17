@@ -180,6 +180,8 @@ Jedes Gerät schreibt eigene Dateien (`lgc_[deviceId]_DATUM.json`), das Dashboar
 tests/test_LifeguardClock.html   → Kernlogik (im Browser öffnen)
 tests/test_dashboard.html        → Datenaggregation
 tests/test_editor.html           → Validierung, Undo/Redo
+tests/test_admin.html            → Admin-Logik (OTP, Escaping, Nutzerverwaltung)
+tests/test_sw.html               → Service Worker (Routing, Cache-Strategie)
 ```
 
 Kein Test-Runner nötig — direkt als HTML-Datei öffnen.

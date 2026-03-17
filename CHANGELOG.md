@@ -4,7 +4,7 @@ Alle relevanten Änderungen pro Release. Format orientiert sich an [Keep a Chang
 
 ---
 
-## [0.3] – 2026-03-17
+## [0.4] – 2026-03-17
 
 ### Hinzugefügt
 
@@ -20,6 +20,16 @@ Alle relevanten Änderungen pro Release. Format orientiert sich an [Keep a Chang
 - **Default Admin-Passwort**: `Admin1234` → `Admin19101913`
 - **Nutzerverwaltung**: Aus dem Stempeluhr-Admin entfernt — erfolgt jetzt ausschließlich über `admin.html`
 - **Cloud & Gerät**: „In Cloud sichern" und „Als Datei herunterladen" für Nutzerdaten entfernt (Verwaltung über `admin.html`)
+
+### Sicherheit
+
+- **XSS-Härtung**: Alle innerHTML-Stellen mit dynamischen Nutzerdaten (Namen, PINs, Labels) konsequent mit `escHtml()` escaped — betrifft LifeguardClock.html, dashboard.html und editor.html
+- **Admin-Passwort gehasht**: Admin-Passwort wird per SHA-256 + Salt in localStorage gespeichert statt im Klartext; Migration von Altbestand automatisch
+
+### Tests
+
+- **test_admin.html**: Neue Testsuite für admin.html-Kernlogik (OTP-Erzeugung, ID-Generierung, HTML-Escaping, Nutzerverwaltung, Auth-Header)
+- **test_sw.html**: Neue Testsuite für Service Worker (Request-Routing, APP_SHELL-Konfiguration, Edge Cases)
 
 ---
 
