@@ -53,7 +53,7 @@ Kein Build-System, kein Node.js, keine Abhängigkeiten.
 Das Repo ist direkt über GitHub Pages hostbar — ohne eigenen Server:
 
 1. Repo → **Settings → Pages** → Branch: `main`, Folder: `/` → **Save**
-2. App ist erreichbar unter `https://[username].github.io/LifeguardClock/LifeguardClock.html`
+2. App ist erreichbar unter `https://MartinKammler.github.io/LifeguardClock/LifeguardClock.html`
 3. Im Browser: *"Zum Startbildschirm hinzufügen"* → App als PWA installieren
 
 `config.js` ist nicht im Repo (sensible Daten). Fehlt sie, startet die App automatisch mit
@@ -81,7 +81,7 @@ Die Haupt-App. Läuft auf Tablets im Dauerbetrieb.
 - PIN-Login (6 Stellen, SHA-256-gehashed)
 - Stempel-Typen vollständig aus `config.js` konfigurierbar
 - Automatiken: gegenseitige Sperre, Auto-Start, Zeitlimit + Pflichtpause, Zeitfenster
-- Admin-Bereich: Log, Stunden-Übersicht, Nutzer- & PIN-Verwaltung, Zeitfenster, Cloud-Sync
+- Admin-Bereich: Log, Stunden-Übersicht, Passwort, Zeitfenster, Cloud-Sync (Tabs)
 - Offline-fähig (Service Worker, App-Shell-Cache)
 - Cloud-Sync zu Nextcloud / WebDAV (gerätebasierte Dateinamen für Multi-Gerät-Betrieb)
 - Schreibt Typ-Konfiguration in `lgc_type_config` (localStorage) für Dashboard und Editor
@@ -117,7 +117,7 @@ Läuft lokal im Browser, schreibt/liest `lgc_users.json` direkt auf dem WebDAV-S
 
 ### `einmalpins.html` — PIN-Übersicht
 
-Druckansicht aller aktiven Einmal-PINs. Wird aus dem Admin-Bereich von LifeguardClock oder aus `admin.html` geöffnet. *(Lokal erzeugt, nicht im Repo.)*
+Druckansicht aller aktiven Einmal-PINs. Wird aus `admin.html` geöffnet. *(Lokal erzeugt, nicht im Repo.)*
 
 ---
 

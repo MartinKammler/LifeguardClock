@@ -1,8 +1,8 @@
 # LifeguardClock – Release-Paket erstellen
-# Aufruf: .\make-release.ps1 [-Version "0.2"]
+# Aufruf: .\make-release.ps1 [-Version "0.3"]
 
 param(
-    [string]$Version = "0.2"
+    [string]$Version = "0.3"
 )
 
 $ErrorActionPreference = 'Stop'
@@ -26,6 +26,7 @@ $include = @(
     "fully-settings.json",
     "README.md",
     "DOKUMENTATION.md",
+    "CHANGELOG.md",
     "LICENSE",
     "presets\config.dlrg.js",
     "presets\config.simple.js"

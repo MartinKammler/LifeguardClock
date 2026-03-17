@@ -311,6 +311,11 @@
   <datalist id="known-persons-list"></datalist>
 
 <script>
+// ─── HTML-Escape ──────────────────────────────────────────────────────────────
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
 // ─── State ────────────────────────────────────────────────────────────────────
 let logData      = null;   // { version, exported, logicalDay, count, log }
 let history      = [];     // undo stack: array of JSON strings
@@ -779,7 +784,7 @@ function renderPersonFilter() {
     `<button class="filter-btn${filterPerson === null ? ' active' : ''}" data-p="">Alle</button>` +
     persons.map(p =>
       `<button class="filter-btn${filterPerson === p ? ' active' : ''}"
-        data-p="${p.replace(/"/g,'&quot;')}">${p}</button>`
+        data-p="${escHtml(p)}">${escHtml(p)}</button>`
     ).join('');
 }
 
@@ -905,7 +910,7 @@ function renderTimeline() {
 
       rowsHtml += `<div class="tl-row">
         <div class="tl-label">
-          <div class="tl-person" title="${person}">${person}</div>
+          <div class="tl-person" title="${escHtml(person)}">${escHtml(person)}</div>
           <div class="tl-ltype" style="color:${ti.main}">${ti.label}</div>
         </div>
         <div class="tl-track">${segs}</div>

@@ -10,7 +10,16 @@ Alle relevanten Änderungen pro Release. Format orientiert sich an [Keep a Chang
 
 - **Fallback-Konfiguration**: Fehlt `config.js` (z. B. GitHub Pages), startet die App automatisch mit Minimal-Config (nur Anwesenheit, Admin-PIN `000000`) — ermöglicht Hosting ohne sensible Dateien im Repo
 - **GitHub Pages Hosting**: App direkt über GitHub Pages hostbar — kein eigener Server nötig; Fallback greift automatisch wenn `config.js` fehlt
+- **QR-Code Cloud-Setup**: Admin erzeugt Einrichtungs-QR in `admin.html` → Mitglieder scannen auf dem Login-Screen → Cloud automatisch konfiguriert (BarcodeDetector API)
+- **Admin-Tabs**: Admin-Bereich in Tabs unterteilt (Protokoll, Stunden, Passwort, Zeitfenster, Cloud & Gerät)
+- **Stille Konfig-Aktualisierung**: Gerätekonfiguration wird beim App-Start und bei Netzwerkrückkehr automatisch aus der Cloud aktualisiert (ohne Benutzerinteraktion)
 - **Hosting-Dokumentation**: README um Abschnitt „Hosting / Installation" erweitert (GitHub Pages/PWA, Tablet/Kiosk, Windows); DOKUMENTATION.md erklärt Fallback-Config mit Sicherheitshinweis
+
+### Geändert
+
+- **Default Admin-Passwort**: `Admin1234` → `Admin19101913`
+- **Nutzerverwaltung**: Aus dem Stempeluhr-Admin entfernt — erfolgt jetzt ausschließlich über `admin.html`
+- **Cloud & Gerät**: „In Cloud sichern" und „Als Datei herunterladen" für Nutzerdaten entfernt (Verwaltung über `admin.html`)
 
 ---
 

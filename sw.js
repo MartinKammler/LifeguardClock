@@ -32,6 +32,8 @@ self.addEventListener('activate', event => {
 
 // ── Fetch ─────────────────────────────────────────────────────
 self.addEventListener('fetch', event => {
+  // Nur http/https cachen – chrome-extension:// u. ä. ignorieren
+  if (!event.request.url.startsWith('http')) return;
   const url = new URL(event.request.url);
 
   // Network-First: config.js und WebDAV-Pfade
