@@ -81,10 +81,12 @@
     <a id="app-link" class="btn" href="LifeguardClock.html">App öffnen</a>
   </div>
 
-  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcode/build/qrcode.min.js"></script>
   <script>
-    const appUrl = new URL('LifeguardClock.html', location.href).href;
-    document.getElementById('app-link').href = appUrl;
+    const GITHUB_PAGES_URL = 'https://MartinKammler.github.io/LifeguardClock/LifeguardClock.html';
+    const localUrl = new URL('LifeguardClock.html', location.href).href;
+    const appUrl = location.protocol === 'file:' ? GITHUB_PAGES_URL : localUrl;
+    document.getElementById('app-link').href = localUrl;
     QRCode.toCanvas(document.getElementById('qr'), appUrl, {
       width: 220,
       margin: 0,
