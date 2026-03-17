@@ -1,0 +1,25 @@
+# Sensible Konfiguration (echte PINs/Namen – niemals einchecken!)
+config.js
+
+# Admin-Tool-Zugangsdaten (Cloud-URL/Passwort – niemals einchecken!)
+admin_config.js
+
+# Einmal-PIN-Liste (enthält echte Namen & PINs – niemals einchecken!)
+einmalpins.html
+
+# Fully Kiosk Browser Einstellungen (enthält verschlüsselte Passwörter)
+fully-settings.json
+
+# Betriebssystem
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
