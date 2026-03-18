@@ -4,10 +4,10 @@
   Lizenz: GNU General Public License v3 – https://www.gnu.org/licenses/gpl-3.0.html
 -->
 <!DOCTYPE html>
-<html lang="de">
+<html lang="de" style="background:#09090d">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-fullscreen">
@@ -5021,14 +5021,10 @@ function handleQrResult(raw) {
   pushConfigToCloud(true); // Gerät in Cloud registrieren → sofort in Admin sichtbar
 }
 
-// ── Portrait-Lock (Screen Orientation API) ─────────────────────
-if (screen.orientation && screen.orientation.lock) {
-  screen.orientation.lock('portrait')
-    .then(() => document.body.classList.add('orientation-ready'))
-    .catch(() =>  document.body.classList.add('orientation-ready'));
-} else {
-  document.body.classList.add('orientation-ready');
-}
+// ── Portrait-Lock: Manifest übernimmt bei installierter PWA.
+// JS-Lock nur als Fallback für Browser ohne Manifest-Orientation-Support,
+// aber ohne .lock() um die OS-Dreh-Animation beim Start zu vermeiden.
+document.body.classList.add('orientation-ready');
 
 // ── Service Worker registrieren ───────────────────────────────
 if ('serviceWorker' in navigator) {
