@@ -1732,7 +1732,7 @@
     ::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 4px; }
 
     /* Portrait-Erzwingung via CSS (Fallback wenn Manifest-Orientation ignoriert wird) */
-    @media screen and (orientation: landscape) {
+    @media screen and (orientation: landscape) and (pointer: coarse) {
       body::before {
         content: 'Bitte Gerät drehen';
         position: fixed; inset: 0; z-index: 99999;
