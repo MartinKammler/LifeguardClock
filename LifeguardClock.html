@@ -3447,7 +3447,7 @@ async function pushConfigToCloud(silent = false) {
       if (silent) showInfoDialog('Gerät registriert', `HTTP ${r.status}\n\nZiel:\n${targetUrl}`);
       else showToast('Konfiguration hochgeladen');
     } else { showInfoDialog('Cloud-Fehler', `HTTP ${r.status}\n\nZiel:\n${targetUrl}`); }
-  } catch (e) { showInfoDialog('Cloud-Fehler', String(e)); }
+  } catch (e) { showInfoDialog('Cloud-Fehler', `${e}\n\nZiel:\n${cloudDavBase(cfg)}/lgc_config_${DEVICE_ID}.json\n\nHinweis: "Failed to fetch" = CORS, Mixed-Content (http statt https) oder Server nicht erreichbar.`); }
   finally { if (btn) { btn.disabled = false; btn.textContent = 'Konfig hochladen'; } }
 }
 
