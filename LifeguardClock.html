@@ -80,6 +80,7 @@
 
     html, body {
       height: 100%;
+      background: #09090d;
       background: var(--bg);
       color: var(--text);
       font-family: 'Inter', system-ui, sans-serif;
@@ -1731,9 +1732,9 @@
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 4px; }
 
-    /* Portrait-Erzwingung via CSS (Fallback wenn Manifest-Orientation ignoriert wird) */
+    /* Portrait-Erzwingung via CSS (nur nach Orientation-Lock, nicht beim Start) */
     @media screen and (orientation: landscape) and (pointer: coarse) {
-      body::before {
+      body.orientation-ready::before {
         content: 'Bitte Gerät drehen';
         position: fixed; inset: 0; z-index: 99999;
         display: flex; align-items: center; justify-content: center;
@@ -1741,7 +1742,7 @@
         font-family: system-ui, sans-serif; font-size: 1.2rem;
         letter-spacing: .02em;
       }
-      body > * { display: none !important; }
+      body.orientation-ready > * { display: none !important; }
     }
   </style>
 </head>
@@ -5022,7 +5023,11 @@ function handleQrResult(raw) {
 
 // ── Portrait-Lock (Screen Orientation API) ─────────────────────
 if (screen.orientation && screen.orientation.lock) {
-  screen.orientation.lock('portrait').catch(() => {});
+  screen.orientation.lock('portrait')
+    .then(() => document.body.classList.add('orientation-ready'))
+    .catch(() =>  document.body.classList.add('orientation-ready'));
+} else {
+  document.body.classList.add('orientation-ready');
 }
 
 // ── Service Worker registrieren ───────────────────────────────
