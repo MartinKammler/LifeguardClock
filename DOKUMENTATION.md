@@ -683,6 +683,12 @@ Browser-Kontexten verfügbar sein muss.
 Wird von LifeguardClock, Dashboard, Editor und admin.html gemeinsam genutzt.
 Eingaben in einer App stehen sofort in allen anderen zur Verfügung.
 
+> **Sicherheitshinweis (bewusster Trade-off):** Die Zugangsdaten liegen im Klartext im
+> `localStorage` des Browsers. Das ist auf dedizierten Kiosk-Geräten (ein Gerät, ein Zweck,
+> kein allgemeiner Browser-Zugriff) akzeptabel. Auf gemeinsam genutzten Geräten mit freiem
+> Browser-Zugriff sollten die Zugangsdaten nach der Nutzung manuell gelöscht werden
+> (Admin-Bereich → Cloud & Gerät → Zugangsdaten entfernen).
+
 **`lgc_type_config`** — Typ-Konfiguration für Farben und Labels.
 Wird beim Start von LifeguardClock befüllt:
 ```js

@@ -784,7 +784,7 @@
       } else {
         const sel = document.getElementById('cfg-device-select');
         const input = document.getElementById('cfg-device-id');
-        sel.innerHTML = ids.map(id => `<option value="${id}">${id}</option>`).join('');
+        sel.innerHTML = ids.map(id => `<option value="${escHtml(id)}">${escHtml(id)}</option>`).join('');
         sel.style.display = '';
         input.style.display = 'none';
         sel.value = ids[0];
@@ -1415,11 +1415,11 @@
       const zfRows   = _ZF_DAYS.map(d => {
         const zf = type.zeitfenster?.[d.key];
         return `<div class="cfg-zf-row">
-          <span class="cfg-zf-day">${d.label}</span>
-          <input type="time" class="cfg-zf-inp" data-idx="${idx}" data-day="${d.key}" data-field="start" value="${zf?.start ?? ''}">
+          <span class="cfg-zf-day">${escHtml(d.label)}</span>
+          <input type="time" class="cfg-zf-inp" data-idx="${idx}" data-day="${escHtml(d.key)}" data-field="start" value="${escHtml(zf?.start ?? '')}">
           <span class="cfg-zf-sep">&ndash;</span>
-          <input type="time" class="cfg-zf-inp" data-idx="${idx}" data-day="${d.key}" data-field="end"   value="${zf?.end ?? ''}">
-          <button class="btn-zf-clear" data-idx="${idx}" data-day="${d.key}" title="Zurücksetzen">&#xD7;</button>
+          <input type="time" class="cfg-zf-inp" data-idx="${idx}" data-day="${escHtml(d.key)}" data-field="end"   value="${escHtml(zf?.end ?? '')}">
+          <button class="btn-zf-clear" data-idx="${idx}" data-day="${escHtml(d.key)}" title="Zurücksetzen">&#xD7;</button>
         </div>`;
       }).join('');
       return `<div class="cfg-type-row${disabled ? ' is-disabled' : ''}" id="cfg-type-row-${idx}">

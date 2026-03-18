@@ -185,6 +185,36 @@
       max-height: 260px;
       object-fit: cover;
     }
+    #qr-manual-form {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 16px;
+    }
+    #qr-manual-form input {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: .5rem;
+      color: var(--text);
+      font-size: .9rem;
+      padding: 8px 10px;
+      width: 100%;
+    }
+    #qr-manual-divider {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 16px;
+      color: var(--muted);
+      font-size: .75rem;
+    }
+    #qr-manual-divider::before,
+    #qr-manual-divider::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--border);
+    }
     #qr-scan-status {
       text-align: center;
       padding: 10px 16px 14px;
@@ -1774,6 +1804,13 @@
     </div>
     <video id="qr-video" autoplay playsinline muted></video>
     <div id="qr-scan-status">Kamera wird gestartet…</div>
+    <div id="qr-manual-divider">oder manuell eingeben</div>
+    <div id="qr-manual-form">
+      <input id="qr-manual-url"  type="url"      placeholder="Nextcloud-URL (https://…)" autocomplete="off">
+      <input id="qr-manual-user" type="text"     placeholder="Benutzername" autocomplete="off">
+      <input id="qr-manual-pass" type="password" placeholder="App-Passwort" autocomplete="off">
+      <button class="btn btn-primary" style="width:100%" onclick="submitManualCloud()">Verbinden</button>
+    </div>
   </div>
 </div>
 
@@ -4846,6 +4883,11 @@ function openCloudSetup() {
 function closeCloudSetup() {
   document.getElementById('cloud-setup-overlay').classList.remove('visible');
   stopQrScanner();
+  // Video und Status zurücksetzen, Eingabefelder leeren
+  const video = document.getElementById('qr-video');
+  const form  = document.getElementById('qr-manual-form');
+  if (video) video.style.display = '';
+  if (form)  form.querySelectorAll('input').forEach(i => i.value = '');
 }
 
 function stopQrScanner() {
@@ -4873,7 +4915,8 @@ async function startQrScanner() {
     return;
   }
   if (!('BarcodeDetector' in window)) {
-    status.textContent = 'QR-Scanner nicht unterstützt. Bitte Chrome oder Edge verwenden.';
+    stopQrScanner();
+    showManualCloudForm();
     return;
   }
   const detector = new BarcodeDetector({ formats: ['qr_code'] });
@@ -4889,6 +4932,31 @@ async function startQrScanner() {
     requestAnimationFrame(scan);
   };
   video.addEventListener('loadedmetadata', scan, { once: true });
+}
+
+function showManualCloudForm() {
+  const video  = document.getElementById('qr-video');
+  const status = document.getElementById('qr-scan-status');
+  if (video)  video.style.display  = 'none';
+  if (status) status.textContent   = 'QR-Scanner nicht verfügbar – bitte manuell eingeben.';
+}
+
+function submitManualCloud() {
+  const url  = document.getElementById('qr-manual-url')?.value.trim()  || '';
+  const user = document.getElementById('qr-manual-user')?.value.trim() || '';
+  const pass = document.getElementById('qr-manual-pass')?.value.trim() || '';
+  const status = document.getElementById('qr-scan-status');
+  if (!url || !user || !pass) {
+    if (status) { status.style.display = 'block'; status.textContent = 'Bitte alle Felder ausfüllen.'; }
+    return;
+  }
+  const cfg = { url, user, pass };
+  localStorage.setItem('lgc_cloud', JSON.stringify(cfg));
+  closeCloudSetup();
+  checkCloudSetupButton();
+  showToast('☁ Cloud konfiguriert');
+  syncUsersFromCloud(true);
+  pushConfigToCloud(true);
 }
 
 function handleQrResult(raw) {
@@ -4913,6 +4981,7 @@ function handleQrResult(raw) {
   checkCloudSetupButton();
   showToast('☁ Cloud konfiguriert');
   syncUsersFromCloud(true);
+  pushConfigToCloud(true); // Gerät in Cloud registrieren → sofort in Admin sichtbar
 }
 
 // ── Portrait-Lock (Screen Orientation API) ─────────────────────

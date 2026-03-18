@@ -4,6 +4,17 @@ Alle relevanten Änderungen pro Release. Format orientiert sich an [Keep a Chang
 
 ---
 
+## [0.5] – 2026-03-18
+
+### Hinzugefügt
+
+- **Maskable PWA-Icon**: `Logo-icon.png` (schwarzer Hintergrund, kein Text) als `maskable`-Icon im Manifest — Android zeigt adaptives Icon ohne weißen Rand
+- **Manuelle Cloud-Eingabe**: Formular (URL, Benutzername, App-Passwort) immer sichtbar unterhalb des QR-Scanners — kein separater Fallback-Modus mehr, funktioniert auf allen Geräten
+- **iOS-Kompatibilität**: Kein BarcodeDetector → Video wird ausgeblendet, Formular bleibt — Cloud-Einrichtung auf Safari/iOS vollständig möglich
+- **Geräte-Registrierung**: Nach QR-Scan oder manueller Cloud-Eingabe wird `lgc_config_<deviceId>.json` sofort in die Cloud geschrieben — Gerät erscheint dadurch direkt in der Gerätesuche von `admin.html`
+
+---
+
 ## [0.4] – 2026-03-17
 
 ### Hinzugefügt
