@@ -4123,8 +4123,26 @@ async function saveAdminPw(pw) {
 
 function showAdminPwPrompt() {
   document.getElementById('admin-pw-input').value = '';
-  document.getElementById('admin-pw-err').textContent  = '';
-  document.getElementById('admin-pw-hint').textContent = '';
+  document.getElementById('admin-pw-err').textContent = '';
+
+  // Cloud-Status & Geräte-ID im Hint anzeigen
+  const hint = document.getElementById('admin-pw-hint');
+  const cfg  = getCloudConfig();
+  const lastOk = getCloudLastOk();
+  const errs   = getCloudErrLog();
+  let cloudLine;
+  if (!isCloudConfigured(cfg)) {
+    cloudLine = '☁ Cloud nicht konfiguriert';
+  } else if (lastOk) {
+    const t = new Date(lastOk).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+    cloudLine = `☁ Sync OK – ${t}`;
+  } else if (errs.length) {
+    cloudLine = `☁ Fehler: ${errs[errs.length - 1].msg || errs[errs.length - 1]}`;
+  } else {
+    cloudLine = '☁ Noch kein Sync';
+  }
+  hint.textContent = `Gerät: ${DEVICE_ID} · ${cloudLine}`;
+
   document.getElementById('admin-pw-overlay').classList.add('visible');
   setTimeout(() => document.getElementById('admin-pw-input').focus(), 120);
 }

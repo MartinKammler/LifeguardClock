@@ -1529,7 +1529,7 @@
     const status = document.getElementById('deploy-status');
     btn.disabled = true; btn.textContent = '…';
     try {
-      const base = cloudDavBase(creds);
+      const base = buildWebDavBase(creds);
       await fetch(base, { method: 'MKCOL', headers: { Authorization: authHeader(creds) } }).catch(() => {});
       const payload = JSON.stringify({ deployedAt: new Date().toISOString() });
       const r = await fetch(`${base}/lgc_deploy.json`, {
