@@ -659,6 +659,12 @@
     </div>
     <div class="card-body" id="config-card-body">
       <p class="note">Lade die Konfiguration eines Geräts, bearbeite sie und speichere sie zurück. Das Gerät übernimmt sie beim nächsten &bdquo;Konfig aktualisieren&ldquo;. <strong>cloud.*</strong> und <strong>deviceId</strong> werden niemals &uuml;berschrieben.</p>
+      <div class="cfg-row" style="margin-bottom:4px">
+        <label>Alle Geräte neu laden</label>
+        <button class="btn btn-ghost" id="btn-deploy-signal">&#x1F504; Deploy-Signal senden</button>
+        <span id="deploy-status" style="font-size:0.8rem;color:var(--text-2)"></span>
+      </div>
+      <hr style="border:none;border-top:1px solid var(--border);margin:12px 0">
       <div class="cfg-row">
         <label>Geräte-ID</label>
         <select id="cfg-device-select" style="display:none;padding:7px 10px;border-radius:6px;border:1px solid var(--border);background:#1e293b;color:#f1f5f9;font-size:0.88rem;font-family:inherit;min-width:200px"></select>
@@ -1515,6 +1521,34 @@
   });
 
   document.getElementById('btn-cfg-discover').addEventListener('click', discoverDevices);
+
+  document.getElementById('btn-deploy-signal').addEventListener('click', async () => {
+    const creds = getCredentials();
+    if (!creds) { toast('Keine Zugangsdaten gespeichert.', 'err'); return; }
+    const btn = document.getElementById('btn-deploy-signal');
+    const status = document.getElementById('deploy-status');
+    btn.disabled = true; btn.textContent = '…';
+    try {
+      const base = cloudDavBase(creds);
+      await fetch(base, { method: 'MKCOL', headers: { Authorization: authHeader(creds) } }).catch(() => {});
+      const payload = JSON.stringify({ deployedAt: new Date().toISOString() });
+      const r = await fetch(`${base}/lgc_deploy.json`, {
+        method: 'PUT',
+        headers: { Authorization: authHeader(creds), 'Content-Type': 'application/json' },
+        body: payload,
+      });
+      if (r.ok) {
+        toast('Deploy-Signal gesendet – Geräte laden beim nächsten Check neu.', 'ok');
+        status.textContent = `Gesendet: ${new Date().toLocaleTimeString()}`;
+      } else {
+        toast(`Fehler: HTTP ${r.status}`, 'err');
+      }
+    } catch (e) {
+      toast('Verbindungsfehler: ' + e.message, 'err');
+    } finally {
+      btn.disabled = false; btn.textContent = '🔄 Deploy-Signal senden';
+    }
+  });
 
   const cfgCardToggle = document.getElementById('config-card-toggle');
   const cfgCardBody   = document.getElementById('config-card-body');

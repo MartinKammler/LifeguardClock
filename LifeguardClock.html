@@ -2125,7 +2125,8 @@ function getDeviceId() {
   }
   return id;
 }
-const DEVICE_ID = getDeviceId();
+const DEVICE_ID   = getDeviceId();
+const APP_VERSION = '0.5';
 
 /* ── Proxy-Erkennung (admin-server.py auf localhost) ─────────
    Wenn die App über den lokalen Python-Proxy läuft, werden alle
@@ -3442,21 +3443,37 @@ async function pushConfigToCloud(silent = false) {
     }, null, 2);
     const r = await fetch(`${cloudDavBase(cfg)}/lgc_config_${DEVICE_ID}.json`,
       { method: 'PUT', headers: cloudHeaders(cfg), body: payload });
-    if (!silent) r.ok ? showToast('Konfiguration hochgeladen') : showToast(`Fehler: HTTP ${r.status}`);
-  } catch (e) { if (!silent) showToast('Fehler: ' + e.message); }
+    if (r.ok) { showToast(silent ? '☁ Gerät in Cloud registriert' : 'Konfiguration hochgeladen'); }
+    else       { showToast(`Cloud-Fehler: HTTP ${r.status}`); }
+  } catch (e) { showToast('Cloud-Fehler: ' + e.message); }
   finally { if (btn) { btn.disabled = false; btn.textContent = 'Konfig hochladen'; } }
 }
 
 async function silentConfigCheck() {
   const cfg = getCloudConfig();
   if (!isCloudConfigured(cfg)) return;
+  const hdrs = { 'Authorization': 'Basic ' + btoa(`${cfg.user}:${cfg.pass}`) };
+  // ── Deploy-Signal prüfen (alle Geräte) ──────────────────────
   try {
-    const r = await fetch(`${cloudDavBase(cfg)}/lgc_config_${DEVICE_ID}.json`,
-      { headers: { 'Authorization': 'Basic ' + btoa(`${cfg.user}:${cfg.pass}`) } });
+    const rd = await fetch(`${cloudDavBase(cfg)}/lgc_deploy.json`, { headers: hdrs });
+    if (rd.ok) {
+      const deploy = await rd.json();
+      const sig = deploy.deployedAt || '';
+      const seen = localStorage.getItem('lgc_deploy_seen') || '';
+      if (sig && sig !== seen) {
+        localStorage.setItem('lgc_deploy_seen', sig);
+        showToast('Update verfügbar – Seite wird neu geladen…');
+        setTimeout(() => location.reload(), 2000);
+        return;
+      }
+    }
+  } catch {}
+  // ── Gerätespezifische Konfiguration prüfen ───────────────────
+  try {
+    const r = await fetch(`${cloudDavBase(cfg)}/lgc_config_${DEVICE_ID}.json`, { headers: hdrs });
     if (!r.ok) return;
     const data = await r.json();
     if (!data.config || typeof data.config !== 'object') return;
-    const remoteTs = data.exported || '';
     const localRaw = localStorage.getItem('lgc_config_cloud');
     if (localRaw) {
       try {
@@ -4993,6 +5010,11 @@ if (screen.orientation && screen.orientation.lock) {
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('./sw.js').catch(err => {
     console.warn('SW-Registrierung fehlgeschlagen:', err);
+  });
+  // Neuer SW hat übernommen → App neu laden (PWA-Update)
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    showToast('App-Update installiert – wird neu geladen…');
+    setTimeout(() => location.reload(), 2000);
   });
 }
 </script>
