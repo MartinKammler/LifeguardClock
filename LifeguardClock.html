@@ -3441,9 +3441,9 @@ async function pushConfigToCloud(silent = false) {
       version: 1, exported: new Date().toISOString(), deviceId: DEVICE_ID,
       config: exportable,
     }, null, 2);
-    const r = await fetch(`${cloudDavBase(cfg)}/lgc_config_${DEVICE_ID}.json`,
-      { method: 'PUT', headers: cloudHeaders(cfg), body: payload });
-    if (r.ok) { showToast(silent ? '☁ Gerät in Cloud registriert' : 'Konfiguration hochgeladen'); }
+    const targetUrl = `${cloudDavBase(cfg)}/lgc_config_${DEVICE_ID}.json`;
+    const r = await fetch(targetUrl, { method: 'PUT', headers: cloudHeaders(cfg), body: payload });
+    if (r.ok) { showToast(silent ? `☁ Gerät registriert → ${targetUrl.replace(/.*\/LifeguardClock\//, 'LifeguardClock/')}` : 'Konfiguration hochgeladen'); }
     else       { showToast(`Cloud-Fehler: HTTP ${r.status}`); }
   } catch (e) { showToast('Cloud-Fehler: ' + e.message); }
   finally { if (btn) { btn.disabled = false; btn.textContent = 'Konfig hochladen'; } }
