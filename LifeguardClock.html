@@ -3443,9 +3443,11 @@ async function pushConfigToCloud(silent = false) {
     }, null, 2);
     const targetUrl = `${cloudDavBase(cfg)}/lgc_config_${DEVICE_ID}.json`;
     const r = await fetch(targetUrl, { method: 'PUT', headers: cloudHeaders(cfg), body: payload });
-    if (r.ok) { showToast(silent ? `☁ Gerät registriert → ${targetUrl.replace(/.*\/LifeguardClock\//, 'LifeguardClock/')}` : 'Konfiguration hochgeladen'); }
-    else       { showToast(`Cloud-Fehler: HTTP ${r.status}`); }
-  } catch (e) { showToast('Cloud-Fehler: ' + e.message); }
+    if (r.ok) {
+      if (silent) showInfoDialog('Gerät registriert', `HTTP ${r.status}\n\nZiel:\n${targetUrl}`);
+      else showToast('Konfiguration hochgeladen');
+    } else { showInfoDialog('Cloud-Fehler', `HTTP ${r.status}\n\nZiel:\n${targetUrl}`); }
+  } catch (e) { showInfoDialog('Cloud-Fehler', String(e)); }
   finally { if (btn) { btn.disabled = false; btn.textContent = 'Konfig hochladen'; } }
 }
 
@@ -4878,6 +4880,20 @@ function showToast(msg) {
   el.classList.add('visible');
   if (toastTimer) clearTimeout(toastTimer);
   toastTimer = setTimeout(() => el.classList.remove('visible'), 2800);
+}
+
+function showInfoDialog(title, text) {
+  const existing = document.getElementById('info-dialog-overlay');
+  if (existing) existing.remove();
+  const ov = document.createElement('div');
+  ov.id = 'info-dialog-overlay';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9999;display:flex;align-items:center;justify-content:center;padding:1rem';
+  ov.innerHTML = `<div style="background:var(--surface-2,#1e1e2e);border-radius:12px;padding:1.5rem;max-width:90vw;width:420px;word-break:break-all">
+    <div style="font-weight:700;font-size:1.1rem;margin-bottom:.75rem">${title}</div>
+    <pre style="white-space:pre-wrap;font-size:.8rem;color:var(--text-2,#aaa);margin:0 0 1rem">${text}</pre>
+    <button class="btn btn-primary" style="width:100%" onclick="document.getElementById('info-dialog-overlay').remove()">OK</button>
+  </div>`;
+  document.body.appendChild(ov);
 }
 
 /* ── CLOUD SETUP QR ──────────────────────────────────────────── */
