@@ -4,6 +4,14 @@ Alle relevanten Änderungen pro Release. Format orientiert sich an [Keep a Chang
 
 ---
 
+## [0.7] – tbd
+
+### Geändert
+
+- **QR-Scanner**: BarcodeDetector durch jsQR ersetzt — funktioniert jetzt auf allen Browsern (Firefox, Safari/iOS, ältere Android-WebViews); jsQR wird bei Bedarf von CDN nachgeladen (`jsdelivr.net`)
+
+---
+
 ## [0.6] – 2026-03-19
 
 ### Hinzugefügt
@@ -24,7 +32,28 @@ Alle relevanten Änderungen pro Release. Format orientiert sich an [Keep a Chang
 - **`config.js`**: `types`-Array dient nur noch als lokaler Fallback; globale Typen werden aus `lgc_types.json` geladen
 - **`silentConfigCheck`**: Prüft jetzt zusätzlich `lgc_types.json` — bei Änderung automatischer Reload; fehlende Gerätekonfiguration löst Auto-Push aus
 - **Orientierungssperre**: JS `screen.orientation.lock()` entfernt — PWA-Manifest übernimmt Portrait-Erzwingung ohne Animations-Flackern beim Start
-- **Service Worker**: Cache auf `lgc-shell-v8` erhöht
+- **Service Worker**: Cross-Origin-Requests (Cloud/WebDAV beliebiger Anbieter) werden nicht mehr gecacht — vorher war nur Nextclouds `/remote.php/` explizit ausgenommen; basename-Matching für App-Shell ist jetzt kompatibel mit GitHub Pages Subdirectory-Deployment; Cache auf `lgc-shell-v9`
+- **`genId()` in `admin.html`**: Nutzer-IDs werden jetzt via `crypto.randomUUID()` erzeugt (Fallback: `Date.now() + random`), statt nur `Date.now()` — keine Kollisionen bei schnellen Mehrfachaktionen
+
+### Behoben
+
+- **Monatswechsel-Bug**: Auto-Stop an der Tagesgrenze (z. B. 04:00 Uhr) hat am Monatsende falsche Dauern (0 ms) erzeugt, weil `calcDurationMs` und `getTypeStartMs` nur den aktuellen Monats-Log durchsuchten — jetzt wird auch der Vormonats-Log einbezogen (`getPrevLog`)
+- **User-Rename**: Umbenennen eines Nutzers hat alle bisherigen Log- und Backup-Einträge unter dem alten Namen belassen — Auswertungen zeigten dieselbe Person doppelt; alle `lgc_log_*`- und `lgc_backup_*`-Einträge werden jetzt beim Umbenennen mitgezogen
+- **Cloud-Sync überschreibt lokale PINs**: Startup-Sync hat lokal gesetzte PINs (Hash+Salt) mit dem Cloud-Stand überschrieben, wenn dort noch eine OTP-Version stand — neues Merge-Verhalten bevorzugt die lokale Version sofern der Nutzer seine PIN bereits gesetzt hat
+- **Cloud-PIN-Reset nicht wirksam**: Admin-Reset in `admin.html` (PIN löschen + `mustChangePIN: true`) wurde auf Geräten ignoriert, die bereits einen lokalen Hash hatten — expliziter Admin-Reset (kein `salt` in Cloud) gewinnt jetzt immer
+- **CSV Formula Injection**: Felder wie Nutzername und Typ-Bezeichnung in CSV-Exporten wurden ohne Schutz gegen Formel-Injection ausgegeben; `=`, `+`, `-`, `@`, Tab, CR als Zell-Präfix werden jetzt neutralisiert — betrifft Haupt-App und Dashboard
+- **Basic Auth bricht bei Nicht-ASCII-Credentials**: `btoa()` direkt auf Klartext aufgerufen; Umlaute oder andere Nicht-ASCII-Zeichen in Nextcloud-Passwörtern konnten die Verbindung brechen — jetzt `btoa(unescape(encodeURIComponent(...)))` in `LifeguardClock.html` (8 Stellen) und `admin.html`
+
+### Sicherheit
+
+- **`einmalpins.html` aus Release-ZIP entfernt**: Datei enthält echte Mitgliedernamen und aktive Einmal-PINs und darf nie verteilt werden (war bereits in `.gitignore`, fehlte aber im Release-Script)
+- **`fully-settings.json` aus Release-ZIP entfernt**: Enthält verschlüsselte Kiosk- und Remote-Admin-Passwörter sowie den Betreibernamen — gerätespezifisch, nicht für Weitergabe geeignet (war bereits in `.gitignore`)
+
+### Tests
+
+- **`test_sw.html`**: Routing-Logik auf neuen SW-Stand aktualisiert (Cross-Origin → `network-only`, basename-Matching, `lgc-shell-v9`)
+- **`test_admin.html`**: `authHeader` verwendet jetzt Unicode-sicheres Encoding; neuer Testfall für Umlaute in Credentials
+- **`test_LifeguardClock.html`**: Suite 21 (Push-Export) korrigiert — `types` dürfen nicht mehr im Geräte-Export stehen; Kettenreaktion-Regressionstest als in v0.6 strukturell behoben dokumentiert
 
 ---
 

@@ -5058,31 +5058,42 @@ async function startQrScanner() {
   status.textContent = 'Kamera wird gestartet…';
 
   if (!navigator.mediaDevices?.getUserMedia) {
-    status.textContent = 'Kamera nicht verfügbar. Cloud manuell im Admin-Bereich konfigurieren.';
+    status.textContent = 'Kamera nicht verfügbar. Manuell konfigurieren.';
     return;
   }
   try {
     _qrStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
     video.srcObject = _qrStream;
   } catch {
-    status.textContent = 'Kamera-Zugriff verweigert. Bitte in den Browser-Einstellungen erlauben.';
+    status.textContent = 'Kamera-Zugriff verweigert.';
     return;
   }
-  if (!('BarcodeDetector' in window)) {
-    stopQrScanner();
-    showManualCloudForm();
-    return;
-  }
-  const detector = new BarcodeDetector({ formats: ['qr_code'] });
+
   _qrScanning = true;
   status.textContent = 'QR-Code in Kamera halten…';
 
-  const scan = async () => {
+  if (typeof jsQR === 'undefined') {
+    await new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js';
+      s.onload = resolve; s.onerror = reject;
+      document.head.appendChild(s);
+    });
+  }
+
+  const canvas = document.createElement('canvas');
+  const ctx    = canvas.getContext('2d');
+
+  const scan = () => {
     if (!_qrScanning) return;
-    try {
-      const codes = await detector.detect(video);
-      if (codes.length > 0) { handleQrResult(codes[0].rawValue); return; }
-    } catch {}
+    if (video.readyState === video.HAVE_ENOUGH_DATA) {
+      canvas.width  = video.videoWidth;
+      canvas.height = video.videoHeight;
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const code = jsQR(imageData.data, imageData.width, imageData.height);
+      if (code) { handleQrResult(code.data); return; }
+    }
     requestAnimationFrame(scan);
   };
   video.addEventListener('loadedmetadata', scan, { once: true });
