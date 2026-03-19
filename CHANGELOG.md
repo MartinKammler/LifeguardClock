@@ -6,9 +6,19 @@ Alle relevanten Änderungen pro Release. Format orientiert sich an [Keep a Chang
 
 ## [0.7] – tbd
 
+### Hinzugefügt
+
+- **Per-User Cloud-Dateien (PIF)**: Jeder Nutzer bekommt eine eigene Cloud-Datei `lgc_pif_<userId>_YYYY-MM.json` — Stempel-Einträge werden sofort nach jedem Stempeln dorthin geschrieben; beim Login wird die Datei aus der Cloud geladen und mit dem lokalen Stand gemergt → aktiver Status ist jetzt geräteübergreifend konsistent (einstempeln auf Gerät A, ausstempeln auf Gerät B funktioniert korrekt)
+
 ### Geändert
 
 - **QR-Scanner**: BarcodeDetector durch jsQR ersetzt — funktioniert jetzt auf allen Browsern (Firefox, Safari/iOS, ältere Android-WebViews); jsQR wird bei Bedarf von CDN nachgeladen (`jsdelivr.net`)
+- **Dashboard Cloud- und Datei-Laden**: Erkennt und lädt jetzt beide Dateitypen — `lgc_pif_*` (per Nutzer) und `lgc_*_DATUM.json` (per Gerät); Einträge werden geräteübergreifend dedupliziert um Doppelzählung zu vermeiden wenn beide Quellen geladen werden
+- **Editor Cloud-Laden**: Zeigt `lgc_pif_*`-Dateien in der Dateiliste an (mit `(PIF)`-Label); lädt und speichert PIF-Format korrekt (`entries`-Feld statt `log`)
+
+### Tests
+
+- **`test_LifeguardClock.html`**: Suite 34 für `mergeUserEntries` — 6 Testfälle (leere Eingabe, null, neue Einträge, Duplikate, Mischung, Sortierung)
 
 ---
 

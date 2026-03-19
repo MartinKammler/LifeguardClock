@@ -325,6 +325,7 @@ let activeTab    = 'table';
 let editingId    = null;   // id of row currently in inline edit mode
 let cloudFileUrl = null;   // URL der geladenen Cloud-Datei (null = lokal)
 let cloudDirty   = false;  // true wenn ungespeicherte Änderungen gegenüber Cloud
+let cloudIsPIF   = false;  // true wenn geladene Cloud-Datei ein PIF (lgc_pif_*) ist
 
 // ─── Typ-Farb-Palette (passend zu LifeguardClock.html) ────────────────────────────
 const COLOR_PALETTE = {
@@ -525,14 +526,16 @@ async function openCloudPicker() {
     const xml = await res.text();
     const hrefs = [...xml.matchAll(/<[^>]*:href[^>]*>([^<]+)<\/[^>]*:href>/g)]
       .map(m => decodeURIComponent(m[1].trim()))
-      .filter(h => /lgc_.*\d{4}-\d{2}-\d{2}\.json$/.test(h))
+      .filter(h => /lgc_pif_[^_]+_\d{4}-\d{2}\.json$/.test(h) ||
+                   /lgc_.*\d{4}-\d{2}-\d{2}\.json$/.test(h))
       .sort((a, b) => b.localeCompare(a));
     if (hrefs.length === 0) { alert('Keine Dateien in der Cloud gefunden.'); return; }
     const sel = document.getElementById('cloud-file-select');
     sel.innerHTML = hrefs.map(h => {
-      const name = h.split('/').pop();
-      const m = name.match(/lgc_(.+?)_(\d{4}-\d{2}-\d{2})\.json$/);
-      const label = m ? `${m[2]}  –  ${m[1]}` : name;
+      const name  = h.split('/').pop();
+      const mPIF  = name.match(/^lgc_pif_(.+?)_(\d{4}-\d{2})\.json$/);
+      const mDev  = name.match(/lgc_(.+?)_(\d{4}-\d{2}-\d{2})\.json$/);
+      const label = mPIF ? `${mPIF[2]}  –  ${mPIF[1]}  (PIF)` : mDev ? `${mDev[2]}  –  ${mDev[1]}` : name;
       return `<option value="${h}">${label}</option>`;
     }).join('');
     document.getElementById('modal-cloud').showModal();
@@ -555,8 +558,8 @@ async function loadFromCloud(href) {
     const r = await fetch(fileUrl, { headers: { Authorization: auth } });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const json = await r.json();
-    logData = json;
-    if (!Array.isArray(logData.log)) logData.log = [];
+    cloudIsPIF = !!(json.version === 1 && json.userId && Array.isArray(json.entries));
+    logData    = { ...json, log: cloudIsPIF ? json.entries : (json.log || []) };
     cloudFileUrl = fileUrl;
     cloudDirty   = false;
     history = []; histIdx = -1; editingId = null; filterPerson = null;
@@ -577,6 +580,7 @@ async function saveToCloud() {
   btn.disabled = true; btn.textContent = '\u23F3 Speichere\u2026';
   try {
     const out = { ...logData, exported: new Date().toISOString(), count: logData.log.length };
+    if (cloudIsPIF) { out.entries = out.log; delete out.log; }
     const r = await fetch(cloudFileUrl, {
       method: 'PUT',
       headers: { Authorization: cloudAuth(creds), 'Content-Type': 'application/json' },
@@ -596,9 +600,9 @@ async function saveToCloud() {
 async function loadFile(file) {
   try {
     const json = JSON.parse(await file.text());
-    logData = json;
-    if (!Array.isArray(logData.log)) logData.log = [];
-    cloudFileUrl = null; cloudDirty = false;
+    const isPIF = !!(json.version === 1 && json.userId && Array.isArray(json.entries));
+    logData      = { ...json, log: isPIF ? json.entries : (json.log || []) };
+    cloudFileUrl = null; cloudDirty = false; cloudIsPIF = false;
     history = []; histIdx = -1; editingId = null; filterPerson = null;
     buildTypeMaps();
     populateTypSelect();

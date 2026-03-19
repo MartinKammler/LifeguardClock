@@ -2271,6 +2271,8 @@ function addEntry(entry) {
   const log = getLog();
   log.push({ id: Date.now() + Math.random(), ...entry });
   saveLog(log);
+  const u = getUsers().find(u => u.name === entry.nutzer);
+  if (u) pushUserPif(u.id).catch(() => {});
 }
 
 function getAllStates() {
@@ -2948,6 +2950,8 @@ function openDashboard() {
   syncDashboard();
   showScreen('screen-dashboard');
   startIdleTimer();
+  // Geräteübergreifenden Stand laden: PIF aus Cloud holen und UI aktualisieren
+  fetchUserPif(currentUser.id).catch(() => {});
 }
 
 function syncDashboard() {
@@ -3326,6 +3330,72 @@ async function syncToCloud(silent = false) {
     _syncRunning = false;
     if (syncBtn) { syncBtn.disabled = false; syncBtn.textContent = 'Jetzt synchronisieren'; }
   }
+}
+
+// ── Per-User Personal Info Files (PIF) ──────────────────────
+// Jeder Nutzer hat eine eigene Cloud-Datei: lgc_pif_<userId>_YYYY-MM.json
+// Dadurch ist der aktive Stempel-Status geräteübergreifend konsistent.
+
+function mergeUserEntries(cloudEntries) {
+  if (!Array.isArray(cloudEntries) || !cloudEntries.length) return false;
+  const log = getLog();
+  const existingIds = new Set(log.map(e => e.id));
+  const newEntries = cloudEntries.filter(e => !existingIds.has(e.id));
+  if (!newEntries.length) return false;
+  const merged = [...log, ...newEntries].sort((a, b) => a.id - b.id);
+  saveLog(merged);
+  return true;
+}
+
+async function pushUserPif(userId) {
+  const cfg = getCloudConfig();
+  if (!isCloudConfigured(cfg)) return;
+  const user = getUsers().find(u => u.id === userId);
+  if (!user) return;
+  const month   = todayISO().slice(0, 7);
+  const entries = getLog().filter(e => e.nutzer === user.name);
+  const payload = JSON.stringify({
+    version:  1,
+    userId,
+    userName: user.name,
+    month,
+    exported: new Date().toISOString(),
+    entries,
+  });
+  try {
+    await ensureCloudFolder(cfg);
+    await fetch(`${cloudDavBase(cfg)}/lgc_pif_${userId}_${month}.json`,
+      { method: 'PUT', headers: cloudHeaders(cfg), body: payload });
+  } catch {}
+}
+
+async function fetchUserPif(userId) {
+  const cfg = getCloudConfig();
+  if (!isCloudConfigured(cfg)) return;
+  const user = getUsers().find(u => u.id === userId);
+  if (!user) return;
+  const month  = todayISO().slice(0, 7);
+  const months = [month];
+  // Vormonat laden falls wir noch vor der Tagesgrenze sind
+  const d = new Date();
+  if (d.getHours() < (CONFIG.dayBoundaryHour ?? 4)) {
+    const m = d.getMonth();
+    months.push(m === 0
+      ? `${d.getFullYear() - 1}-12`
+      : `${d.getFullYear()}-${String(m).padStart(2, '0')}`);
+  }
+  const base = cloudDavBase(cfg);
+  const hdrs = cloudHeaders(cfg);
+  let changed = false;
+  for (const mon of months) {
+    try {
+      const resp = await fetch(`${base}/lgc_pif_${userId}_${mon}.json`, { headers: hdrs });
+      if (!resp.ok) continue;
+      const data = await resp.json();
+      if (mergeUserEntries(data.entries)) changed = true;
+    } catch {}
+  }
+  if (changed && currentUser?.id === userId) syncDashboard();
 }
 
 // ── Auto-Retry bei Netzwerkrückkehr ─────────────────────────

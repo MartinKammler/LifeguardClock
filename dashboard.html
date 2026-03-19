@@ -605,16 +605,37 @@
 
     // ─── Laden ───────────────────────────────────────────────────────────────
     async function processFiles(fileList) {
-      const entries = [];
-      const seenFiles = new Set();
+      const entries      = [];
+      const seenFiles    = new Set();
+      const seenEntryIds = new Set();  // verhindert Doppelzählung wenn PIF + Gerätedatei geladen
       for (const file of fileList) {
-        if (!/^lgc_.*\d{4}-\d{2}-\d{2}\.json$/.test(file.name)) continue;
-        if (seenFiles.has(file.name)) continue;  // Duplikat überspringen
+        const isPIF    = /^lgc_pif_[^_]+_\d{4}-\d{2}\.json$/.test(file.name);
+        const isDevice = /^lgc_.*\d{4}-\d{2}-\d{2}\.json$/.test(file.name);
+        if (!isPIF && !isDevice) continue;
+        if (seenFiles.has(file.name)) continue;
         seenFiles.add(file.name);
         try {
           const json = JSON.parse(await file.text());
-          const day = json.logicalDay || (file.name.match(/(\d{4}-\d{2}-\d{2})/)||[])[1];
-          if (day && Array.isArray(json.log)) entries.push({ day, log: json.log });
+          if (isPIF) {
+            const byDay = {};
+            for (const e of (json.entries || [])) {
+              if (!e.id || seenEntryIds.has(e.id)) continue;
+              seenEntryIds.add(e.id);
+              const day = e.zeitstempel?.slice(0, 10);
+              if (!day) continue;
+              (byDay[day] ??= []).push(e);
+            }
+            for (const [day, log] of Object.entries(byDay)) entries.push({ day, log });
+          } else {
+            const day = json.logicalDay || (file.name.match(/(\d{4}-\d{2}-\d{2})/)||[])[1];
+            if (day && Array.isArray(json.log)) {
+              const log = json.log.filter(e => {
+                if (!e.id || seenEntryIds.has(e.id)) return false;
+                seenEntryIds.add(e.id); return true;
+              });
+              if (log.length) entries.push({ day, log });
+            }
+          }
         } catch { /* überspringe kaputte Datei */ }
       }
       if (entries.length === 0) {
@@ -1115,7 +1136,8 @@
 
         const hrefs = [...xml.matchAll(/<[^>]*:href[^>]*>([^<]+)<\/[^>]*:href>/g)]
           .map(m => decodeURIComponent(m[1].trim()))
-          .filter(h => /lgc_.*\d{4}-\d{2}-\d{2}\.json$/.test(h));
+          .filter(h => /lgc_pif_[^_]+_\d{4}-\d{2}\.json$/.test(h) ||
+                       /lgc_.*\d{4}-\d{2}-\d{2}\.json$/.test(h));
 
         if (hrefs.length === 0) {
           btn.disabled = false; btn.textContent = '☁️ Cloud laden';
@@ -1123,11 +1145,13 @@
           return;
         }
 
-        const entries = [];
-        const seenHrefs = new Set();
+        const entries      = [];
+        const seenHrefs    = new Set();
+        const seenEntryIds = new Set();  // verhindert Doppelzählung wenn PIF + Gerätedatei
         for (const href of hrefs) {
-          if (seenHrefs.has(href)) continue;  // Duplikat überspringen
+          if (seenHrefs.has(href)) continue;
           seenHrefs.add(href);
+          const isPIF   = /lgc_pif_[^_]+_\d{4}-\d{2}\.json$/.test(href);
           const fileUrl = IS_PROXY
             ? href
             : (creds.url.replace(/\/$/, '') + (href.startsWith('/') ? href : '/' + href));
@@ -1135,9 +1159,27 @@
             const r = await fetch(fileUrl, { headers: { Authorization: auth } });
             if (!r.ok) continue;
             const json = await r.json();
-            const m = href.match(/(\d{4}-\d{2}-\d{2})\.json$/);
-            const day = json.logicalDay || (m && m[1]);
-            if (day && Array.isArray(json.log)) entries.push({ day, log: json.log });
+            if (isPIF) {
+              const byDay = {};
+              for (const e of (json.entries || [])) {
+                if (!e.id || seenEntryIds.has(e.id)) continue;
+                seenEntryIds.add(e.id);
+                const day = e.zeitstempel?.slice(0, 10);
+                if (!day) continue;
+                (byDay[day] ??= []).push(e);
+              }
+              for (const [day, log] of Object.entries(byDay)) entries.push({ day, log });
+            } else {
+              const m   = href.match(/(\d{4}-\d{2}-\d{2})\.json$/);
+              const day = json.logicalDay || (m && m[1]);
+              if (day && Array.isArray(json.log)) {
+                const log = json.log.filter(e => {
+                  if (!e.id || seenEntryIds.has(e.id)) return false;
+                  seenEntryIds.add(e.id); return true;
+                });
+                if (log.length) entries.push({ day, log });
+              }
+            }
           } catch {}
         }
 

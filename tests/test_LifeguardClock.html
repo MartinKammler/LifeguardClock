@@ -2076,6 +2076,84 @@ await test('getAllStates() zeigt keinen Toast bei gültigem JSON', () => {
 });
 
 /* ══════════════════════════════════════════════════════════════
+   Suite 34 – mergeUserEntries
+══════════════════════════════════════════════════════════════ */
+suite('34 – mergeUserEntries');
+
+// 1:1 aus LifeguardClock.html
+function mergeUserEntries(cloudEntries) {
+  if (!Array.isArray(cloudEntries) || !cloudEntries.length) return false;
+  const log = getLog();
+  const existingIds = new Set(log.map(e => e.id));
+  const newEntries = cloudEntries.filter(e => !existingIds.has(e.id));
+  if (!newEntries.length) return false;
+  const merged = [...log, ...newEntries].sort((a, b) => a.id - b.id);
+  saveLog(merged);
+  return true;
+}
+
+await test('leere Cloud-Einträge → false, Log unverändert', () => {
+  resetStore();
+  saveLog([{ id: 1, nutzer: 'Max', typ: 'anwesenheit', aktion: 'start' }]);
+  const changed = mergeUserEntries([]);
+  assert(!changed, 'soll false zurückgeben');
+  assertEqual(getLog().length, 1, 'Log soll unverändert sein');
+  resetStore();
+});
+
+await test('null/kein Array → false', () => {
+  resetStore();
+  assert(!mergeUserEntries(null),      'null → false');
+  assert(!mergeUserEntries(undefined), 'undefined → false');
+  assert(!mergeUserEntries('foo'),     'string → false');
+  resetStore();
+});
+
+await test('neue Einträge werden hinzugefügt → true', () => {
+  resetStore();
+  saveLog([{ id: 1, nutzer: 'Max', typ: 'anwesenheit', aktion: 'start' }]);
+  const changed = mergeUserEntries([
+    { id: 2, nutzer: 'Max', typ: 'anwesenheit', aktion: 'stop', dauer_ms: 3600000 },
+  ]);
+  assert(changed, 'soll true zurückgeben');
+  assertEqual(getLog().length, 2, 'Log soll 2 Einträge haben');
+  resetStore();
+});
+
+await test('Duplikat (gleiche id) wird nicht erneut hinzugefügt → false', () => {
+  resetStore();
+  saveLog([{ id: 42, nutzer: 'Max', typ: 'anwesenheit', aktion: 'start' }]);
+  const changed = mergeUserEntries([
+    { id: 42, nutzer: 'Max', typ: 'anwesenheit', aktion: 'start' },
+  ]);
+  assert(!changed, 'soll false zurückgeben');
+  assertEqual(getLog().length, 1, 'Log soll unverändert bleiben');
+  resetStore();
+});
+
+await test('Mischung: neue + Duplikate → nur neue werden hinzugefügt', () => {
+  resetStore();
+  saveLog([{ id: 10, nutzer: 'Max', typ: 'anwesenheit', aktion: 'start' }]);
+  const changed = mergeUserEntries([
+    { id: 10, nutzer: 'Max', typ: 'anwesenheit', aktion: 'start' },  // Duplikat
+    { id: 20, nutzer: 'Max', typ: 'anwesenheit', aktion: 'stop', dauer_ms: 3600000 },
+  ]);
+  assert(changed, 'soll true zurückgeben');
+  assertEqual(getLog().length, 2, 'Log soll 2 Einträge haben');
+  resetStore();
+});
+
+await test('Einträge werden nach id sortiert gespeichert', () => {
+  resetStore();
+  saveLog([{ id: 30, nutzer: 'Max', typ: 'anwesenheit', aktion: 'stop' }]);
+  mergeUserEntries([{ id: 5, nutzer: 'Max', typ: 'anwesenheit', aktion: 'start' }]);
+  const log = getLog();
+  assertEqual(log[0].id, 5,  'erster Eintrag soll id=5 haben');
+  assertEqual(log[1].id, 30, 'zweiter Eintrag soll id=30 haben');
+  resetStore();
+});
+
+/* ══════════════════════════════════════════════════════════════
    Auswertung
 ══════════════════════════════════════════════════════════════ */
 const out = document.getElementById('output');
