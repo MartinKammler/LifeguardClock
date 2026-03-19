@@ -3472,7 +3472,7 @@ async function silentConfigCheck() {
   // ── Gerätespezifische Konfiguration prüfen ───────────────────
   try {
     const r = await fetch(`${cloudDavBase(cfg)}/lgc_config_${DEVICE_ID}.json`, { headers: hdrs });
-    if (!r.ok) return;
+    if (!r.ok) { if (r.status === 404) pushConfigToCloud(true); return; }
     const data = await r.json();
     if (!data.config || typeof data.config !== 'object') return;
     const localRaw = localStorage.getItem('lgc_config_cloud');
@@ -4885,6 +4885,7 @@ checkCloudSetupButton();
 
 // Stille Konfigurationsprüfung beim Start
 setTimeout(() => silentConfigCheck(), 3000);
+
 
 // Session-Wiederherstellung ohne PIN wurde entfernt (Sicherheit: Shared-Tablet).
 // Crash-Recovery für Wachstunde läuft nach PIN-Login in openDashboard().
