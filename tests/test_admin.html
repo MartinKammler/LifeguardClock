@@ -63,7 +63,7 @@ function otpUsers(users) {
 }
 
 function authHeader(creds) {
-  return 'Basic ' + btoa(creds.user + ':' + creds.pass);
+  return 'Basic ' + btoa(unescape(encodeURIComponent(creds.user + ':' + creds.pass)));
 }
 
 /* ═══════════════════════════════════════════════════════════════ */
@@ -179,15 +179,22 @@ await test('leere Liste ergibt leeres Ergebnis', () => {
 /* ── Suite 5: authHeader ──────────────────────────────────────── */
 suite('authHeader – Basic Auth');
 
-await test('erzeugt korrekten Basic Auth Header', () => {
+await test('erzeugt korrekten Basic Auth Header (ASCII)', () => {
   const header = authHeader({ user: 'admin', pass: 'secret' });
-  assertEqual(header, 'Basic ' + btoa('admin:secret'));
+  assertEqual(header, 'Basic ' + btoa(unescape(encodeURIComponent('admin:secret'))));
 });
 
-await test('behandelt Sonderzeichen korrekt', () => {
+await test('behandelt ASCII-Sonderzeichen korrekt', () => {
   const header = authHeader({ user: 'usr@domain', pass: 'p@ss:w0rd' });
-  const decoded = atob(header.replace('Basic ', ''));
+  const decoded = decodeURIComponent(escape(atob(header.replace('Basic ', ''))));
   assertEqual(decoded, 'usr@domain:p@ss:w0rd');
+});
+
+await test('behandelt Nicht-ASCII-Zeichen korrekt (Umlaute)', () => {
+  const header = authHeader({ user: 'müller', pass: 'Päßwört' });
+  // Dekodieren mit symmetrischer Methode
+  const decoded = decodeURIComponent(escape(atob(header.replace('Basic ', ''))));
+  assertEqual(decoded, 'müller:Päßwört');
 });
 
 /* ── Suite 6: User-Verwaltung Logik ───────────────────────────── */

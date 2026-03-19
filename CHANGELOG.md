@@ -4,6 +4,30 @@ Alle relevanten Änderungen pro Release. Format orientiert sich an [Keep a Chang
 
 ---
 
+## [0.6] – 2026-03-19
+
+### Hinzugefügt
+
+- **Zentrale Typen-Verwaltung** (`lgc_types.json`): Stempel-Typen werden jetzt zentral in der Cloud gespeichert und in `admin.html` verwaltet (Anlegen, Bearbeiten, Löschen) — gelten automatisch für alle Geräte beim nächsten Start
+- **Typen-Karte in admin.html**: Neue Karte „Stempel-Typen" — vollständige Formular-Bearbeitung aller Typ-Felder (key, label, logType, Farbe, Berechtigung, Max-Dauer, Pflichtpause, Zeitfenster, Mutex, AutoStart); farbige Punkte zeigen Typ-Farbe direkt in der Liste
+- **Permissions automatisch aktuell**: Berechtigungs-Checkboxen beim Nutzer-Anlegen/Bearbeiten kommen jetzt aus den zentralen Typen — neue Typen erscheinen ohne Anpassung der Konfiguration sofort
+- **Per-device Overrides**: Gerätekonfiguration enthält jetzt nur noch `typeOverrides` (disabled + zeitfenster pro Typ) statt vollständiger Typen-Kopie
+- **Auto-Registrierung**: Findet `silentConfigCheck` keine `lgc_config_<deviceId>.json` in der Cloud (HTTP 404), wird die Gerätekonfiguration automatisch gepusht — Gerät erscheint danach in der admin.html-Gerätesuche
+- **10 Farben**: Farbpalette erweitert von 5 auf 10 — neu: `orange`, `lime`, `cyan`, `violet`, `pink`, `grey`; konsistent in LifeguardClock.html, admin.html, dashboard.html und editor.html
+- **Geräteinfo im Admin-PIN-Popup**: Zeigt Geräte-ID und Cloud-Sync-Status (Uhrzeit letzter Sync oder Fehlertext) direkt beim Admin-Login-Prompt
+- **„Gerät drehen"-Overlay nur auf Touchgeräten**: Media-Query `pointer: coarse` begrenzt das Hochformat-Overlay auf echte Mobilgeräte — erscheint nicht mehr auf Laptops oder Desktops
+- **PWA Statusleiste**: `viewport-fit=cover` + `background:#09090d` auf `<html>` — verhindert weißen Streifen im Statusleistenbereich auf Android/iOS
+
+### Geändert
+
+- **`lgc_config_<deviceId>.json`**: Neues Format `v2` — enthält nur noch gerätespezifische Felder + `typeOverrides`, keine vollständige Typ-Definition mehr (Rückwärtskompatibilität zu v1-Format gewährleistet)
+- **`config.js`**: `types`-Array dient nur noch als lokaler Fallback; globale Typen werden aus `lgc_types.json` geladen
+- **`silentConfigCheck`**: Prüft jetzt zusätzlich `lgc_types.json` — bei Änderung automatischer Reload; fehlende Gerätekonfiguration löst Auto-Push aus
+- **Orientierungssperre**: JS `screen.orientation.lock()` entfernt — PWA-Manifest übernimmt Portrait-Erzwingung ohne Animations-Flackern beim Start
+- **Service Worker**: Cache auf `lgc-shell-v8` erhöht
+
+---
+
 ## [0.5] – 2026-03-18
 
 ### Hinzugefügt
@@ -12,6 +36,9 @@ Alle relevanten Änderungen pro Release. Format orientiert sich an [Keep a Chang
 - **Manuelle Cloud-Eingabe**: Formular (URL, Benutzername, App-Passwort) immer sichtbar unterhalb des QR-Scanners — kein separater Fallback-Modus mehr, funktioniert auf allen Geräten
 - **iOS-Kompatibilität**: Kein BarcodeDetector → Video wird ausgeblendet, Formular bleibt — Cloud-Einrichtung auf Safari/iOS vollständig möglich
 - **Geräte-Registrierung**: Nach QR-Scan oder manueller Cloud-Eingabe wird `lgc_config_<deviceId>.json` sofort in die Cloud geschrieben — Gerät erscheint dadurch direkt in der Gerätesuche von `admin.html`
+- **PWA-Update-Toast**: Service Worker `controllerchange`-Event → App zeigt Toast „Update installiert" und lädt automatisch neu
+- **Cloud Deploy-Signal**: Admin kann in `admin.html` (Tab Cloud & Gerät) ein Deploy-Signal senden (`lgc_deploy.json`) — alle verbundenen Geräte laden beim nächsten `silentConfigCheck` automatisch neu
+- **XSS-Härtung admin.html**: Geräte-IDs und Zeitfenster-Werte in `innerHTML` konsequent mit `escHtml()` escaped
 
 ---
 

@@ -5,12 +5,14 @@
    - Alles andere → Network-First mit Cache-Fallback
 */
 
-const CACHE_NAME = 'lgc-shell-v5';
+const CACHE_NAME = 'lgc-shell-v9';
 const APP_SHELL = [
   './LifeguardClock.html',
   './manifest.json',
   './Logo.png',
 ];
+// Dateinamen der App-Shell für Matching (basename — kompatibel mit GitHub Pages Subdirectory)
+const APP_SHELL_NAMES = new Set(APP_SHELL.map(p => p.split('/').pop()));
 
 // ── Install: App-Shell vorhalten ──────────────────────────────
 self.addEventListener('install', event => {
@@ -36,14 +38,21 @@ self.addEventListener('fetch', event => {
   if (!event.request.url.startsWith('http')) return;
   const url = new URL(event.request.url);
 
-  // Network-First: config.js und WebDAV-Pfade
-  if (url.pathname.endsWith('config.js') || url.pathname.includes('/remote.php/')) {
+  // Cross-Origin (Cloud/WebDAV): immer Network-Only, nie cachen
+  // Funktioniert für alle WebDAV-Anbieter (nicht nur Nextcloud /remote.php/)
+  if (url.origin !== self.location.origin) {
+    event.respondWith(fetch(event.request));
+    return;
+  }
+
+  // Network-First: config.js (gleiches Origin, aber immer frisch laden)
+  if (url.pathname.endsWith('/config.js')) {
     event.respondWith(networkFirst(event.request));
     return;
   }
 
-  // Cache-First: App-Shell-Ressourcen
-  if (APP_SHELL.some(path => url.pathname.endsWith(path.replace('./', '/')))) {
+  // Cache-First: App-Shell-Ressourcen (exaktes Pfad-Matching)
+  if (APP_SHELL_NAMES.has(url.pathname.split('/').pop())) {
     event.respondWith(cacheFirst(event.request));
     return;
   }

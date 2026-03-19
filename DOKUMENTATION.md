@@ -146,43 +146,40 @@ adminPin: '000000'
 
 Der Admin-PIN muss 6 Stellen haben und darf keinem Benutzer als reguläre PIN zugewiesen sein.
 
-### Stempel-Typen (`types[]`)
+### Stempel-Typen (ab v0.6: `lgc_types.json`)
 
-Das Herzstück der Konfiguration. Jeder Typ wird als Objekt in `CONFIG.types[]` definiert.
-Die App leitet alle Buttons, Farben, Automatismen und Berechtigungen daraus ab.
+Ab v0.6 werden Stempel-Typen zentral in der Cloud-Datei `lgc_types.json` gespeichert und über
+**`admin.html` → „Stempel-Typen"** verwaltet. Die App lädt sie beim Start automatisch.
 
-```js
-types: [
-  {
-    key:     'anwesenheit',
-    label:   'Anwesenheit',
-    logType: 'anwesenheit',
-    color:   'blue',
-    pinned:  true,
-  },
-  {
-    key:                 'wachdienst',
-    label:               'Wachdienst',
-    logType:             'wachdienst',
-    color:               'amber',
-    requiresZeitfenster: true,
-    maxDurationMs:       7200000,   // 2 Stunden
-    cooldownMs:          1800000,   // 30 Minuten Pflichtpause
-    autoStartKeys:       ['anwesenheit'],
-    mutexKeys:           ['sanitaet'],
-    permissionKey:       'wachdienst',
-  },
-]
+Das `types[]`-Array in `config.js` dient nur noch als **lokaler Fallback**, wenn noch keine
+Cloud-Verbindung eingerichtet ist (z. B. beim ersten Start).
+
+**Format `lgc_types.json`:**
+
+```json
+{
+  "version": 1,
+  "updated": "2026-03-19T00:00:00.000Z",
+  "types": [
+    { "key": "anwesenheit", "label": "Anwesenheit", "logType": "anwesenheit",
+      "color": "blue", "pinned": true },
+    { "key": "wachdienst", "label": "Wachdienst", "logType": "wachdienst",
+      "color": "amber", "requiresZeitfenster": true,
+      "maxDurationMs": 7200000, "cooldownMs": 1800000,
+      "autoStartKeys": ["anwesenheit"], "mutexKeys": ["sanitaetsdienst"],
+      "permissionKey": "wachdienst" }
+  ]
+}
 ```
 
-**Pflichtfelder:**
+**Pflichtfelder (pro Typ):**
 
-| Feld      | Beschreibung                                                         |
-|-----------|----------------------------------------------------------------------|
-| `key`     | Eindeutiger interner Schlüssel (keine Sonderzeichen)                 |
-| `label`   | Anzeigename im Dashboard                                             |
-| `logType` | Bezeichnung im Log — **nach Produktivstart nicht mehr ändern!**      |
-| `color`   | Farbe: `'blue'` \| `'green'` \| `'amber'` \| `'red'` \| `'violet'` |
+| Feld      | Beschreibung                                                                                   |
+|-----------|------------------------------------------------------------------------------------------------|
+| `key`     | Eindeutiger interner Schlüssel (keine Sonderzeichen)                                           |
+| `label`   | Anzeigename im Dashboard                                                                       |
+| `logType` | Bezeichnung im Log — **nach Produktivstart nicht mehr ändern!**                                |
+| `color`   | Farbe: `'blue'` \| `'amber'` \| `'orange'` \| `'red'` \| `'green'` \| `'lime'` \| `'cyan'` \| `'violet'` \| `'pink'` \| `'grey'` |
 
 **Optionale Felder:**
 
@@ -392,7 +389,7 @@ können gleichzeitig aktiv sein und trotzdem unterschiedliche Fenster haben. Das
 für einen Typ wird nach folgender Priorität bestimmt:
 
 1. **Manuell für heute gesetzt** (Admin-Bereich, pro Typ) – höchste Priorität.
-2. **Typ-eigenes `zeitfenster`-Objekt** aus `config.js` – überschreibt den globalen Standard.
+2. **Typ-eigenes `zeitfenster`-Objekt** aus `lgc_types.json` (Cloud) – überschreibt den globalen Standard.
 3. **Globaler `zeitfensterDefaults`**-Eintrag aus `config.js` – gilt als Standard für alle Typen ohne eigenes `zeitfenster`.
 4. **Hartkodierter Fallback** `07:00–21:00`.
 
@@ -469,6 +466,16 @@ Erreichbar mit dem Admin-PIN aus `config.js`.
 6. **Cloud-Sync** – Nextcloud / WebDAV-Konfiguration und Nutzerdaten-Sicherung
 7. **Tages-Backups** – Download und Übersicht vergangener Backups
 8. **Zeitfenster** – Tageseinstellung pro Typ (für alle Typen mit `requiresZeitfenster: true`)
+
+### Stempel-Typen (`admin.html`)
+
+`admin.html` enthält eine eigene Karte **„Stempel-Typen"** zur Verwaltung der zentralen
+`lgc_types.json`. Änderungen werden sofort in die Cloud geschrieben und beim nächsten Start
+aller Geräte übernommen.
+
+- Typen hinzufügen, bearbeiten, löschen
+- Alle Felder konfigurierbar: Farbe, Zeitlimit, Pflichtpause, Zeitfenster, Berechtigungen usw.
+- Farbige Punkte zeigen die konfigurierte Typ-Farbe direkt in der Liste
 
 ### Protokoll-Tabelle
 
@@ -559,6 +566,9 @@ Jedes Gerät schreibt seine eigenen Dateien in den Ordner `LifeguardClock/` auf 
 
 | Datei                                    | Inhalt                                         |
 |------------------------------------------|------------------------------------------------|
+| `lgc_types.json`                  | Zentrale Stempel-Typ-Definitionen (alle Geräte)|
+| `lgc_users.json`                  | Nutzerliste, PINs, Berechtigungen (alle Geräte)|
+| `lgc_config_<deviceId>.json`      | Geräte-Overrides: deaktivierte Typen, Zeitfenster |
 | `lgc_[deviceId]_YYYY-MM-DD.json`  | Tages-Snapshot dieses Geräts                   |
 | `lgc_[deviceId]_latest.json`      | Aktuellster Stand (wird bei jedem Sync ersetzt)|
 
@@ -612,7 +622,7 @@ gestartet werden können. Jeder Typ hat sein **eigenes** Zeitfenster.
 ### Priorität (pro Typ)
 
 1. **Manuell für heute gesetzt** (Admin-Bereich, pro Typ) – höchste Priorität.
-2. **Typ-eigenes `zeitfenster`-Objekt** aus `config.js` – per-Typ-Standard für jeden Wochentag.
+2. **Typ-eigenes `zeitfenster`-Objekt** aus `lgc_types.json` (Cloud) – per-Typ-Standard für jeden Wochentag.
 3. **Globaler `zeitfensterDefaults`**-Eintrag aus `config.js` – gilt als Standard für Typen ohne eigenes `zeitfenster`.
 4. **Hartkodierter Fallback** `07:00–21:00` – falls kein `zeitfensterDefaults` in `config.js`.
 

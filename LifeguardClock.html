@@ -4,10 +4,10 @@
   Lizenz: GNU General Public License v3 – https://www.gnu.org/licenses/gpl-3.0.html
 -->
 <!DOCTYPE html>
-<html lang="de">
+<html lang="de" style="background:#09090d">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-fullscreen">
@@ -80,6 +80,7 @@
 
     html, body {
       height: 100%;
+      background: #09090d;
       background: var(--bg);
       color: var(--text);
       font-family: 'Inter', system-ui, sans-serif;
@@ -1731,9 +1732,9 @@
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 4px; }
 
-    /* Portrait-Erzwingung via CSS (Fallback wenn Manifest-Orientation ignoriert wird) */
-    @media screen and (orientation: landscape) {
-      body::before {
+    /* Portrait-Erzwingung via CSS (nur nach Orientation-Lock, nicht beim Start) */
+    @media screen and (orientation: landscape) and (pointer: coarse) {
+      body.orientation-ready::before {
         content: 'Bitte Gerät drehen';
         position: fixed; inset: 0; z-index: 99999;
         display: flex; align-items: center; justify-content: center;
@@ -1741,7 +1742,7 @@
         font-family: system-ui, sans-serif; font-size: 1.2rem;
         letter-spacing: .02em;
       }
-      body > * { display: none !important; }
+      body.orientation-ready > * { display: none !important; }
     }
   </style>
 </head>
@@ -2070,20 +2071,38 @@ function saveUsers(list) {
    BEVOR die abgeleiteten Konstanten (TYPES, ADMIN_PIN usw.) berechnet werden.
    cloud.* und deviceId werden nie überschrieben (Sicherheit / Bootstrapping). */
 ;(function applyCloudConfigOverlay() {
-  // Nur diese gerätespezifischen Felder dürfen aus der Cloud überschrieben werden.
-  // defaultUsers, removedUsers, cloud usw. bleiben immer lokal aus config.js.
   const DEVICE_FIELDS = ['adminPin', 'dayBoundaryHour', 'pinClearSeconds',
                          'autoLogoutSeconds', 'screensaverSeconds', 'zeitfensterDefaults'];
+  // ── Gerätespezifische Felder aus lgc_config_cloud ────────────
+  let typeOverrides = {};
   try {
     const raw = localStorage.getItem('lgc_config_cloud');
-    if (!raw) return;
-    const ov = JSON.parse(raw);
-    if (!ov || typeof ov !== 'object') return;
-    DEVICE_FIELDS.forEach(k => { if (k in ov) CONFIG[k] = ov[k]; });
-    // Typen aus Cloud nur übernehmen wenn vorhanden (nie mit leerem Array überschreiben)
-    if (Array.isArray(ov.types) && ov.types.length > 0) {
-      CONFIG.types = ov.types;
+    if (raw) {
+      const ov = JSON.parse(raw);
+      if (ov && typeof ov === 'object') {
+        DEVICE_FIELDS.forEach(k => { if (k in ov) CONFIG[k] = ov[k]; });
+        typeOverrides = ov.typeOverrides || {};
+        // Legacy: komplette types-Array in device config (vor v0.6)
+        if (Array.isArray(ov.types) && ov.types.length > 0 && !localStorage.getItem('lgc_cloud_types')) {
+          CONFIG.types = ov.types;
+        }
+      }
     }
+  } catch {}
+  // ── Globale Typen aus lgc_cloud_types + per-device Overrides ─
+  try {
+    const rawTypes = localStorage.getItem('lgc_cloud_types');
+    if (!rawTypes) return;
+    const cloudTypes = JSON.parse(rawTypes);
+    if (!Array.isArray(cloudTypes) || cloudTypes.length === 0) return;
+    CONFIG.types = cloudTypes.map(t => {
+      const ov = typeOverrides[t.key];
+      if (!ov) return t;
+      const merged = { ...t };
+      if ('disabled' in ov) merged.disabled = ov.disabled;
+      if (ov.zeitfenster)   merged.zeitfenster = ov.zeitfenster;
+      return merged;
+    });
   } catch {}
 })();
 
@@ -2125,7 +2144,8 @@ function getDeviceId() {
   }
   return id;
 }
-const DEVICE_ID = getDeviceId();
+const DEVICE_ID   = getDeviceId();
+const APP_VERSION = '0.6';
 
 /* ── Proxy-Erkennung (admin-server.py auf localhost) ─────────
    Wenn die App über den lokalen Python-Proxy läuft, werden alle
@@ -2229,6 +2249,17 @@ function logKey() {
 function getLog() {
   try { return JSON.parse(localStorage.getItem(logKey()) || '[]'); }
   catch { showToast('⚠ Logdaten beschädigt – bitte Admin informieren'); return []; }
+}
+// Vormonat-Log für Monatswechsel-Lookups (z. B. Auto-Stop an Monatsende)
+function getPrevLog() {
+  const d = new Date();
+  if (d.getHours() < (CONFIG.dayBoundaryHour ?? 4)) d.setDate(d.getDate() - 1);
+  const m = d.getMonth(); // 0-indexed; 0 = Januar
+  const key = m === 0
+    ? `lgc_log_${d.getFullYear() - 1}-12`
+    : `lgc_log_${d.getFullYear()}-${pad(m)}`;
+  try { return JSON.parse(localStorage.getItem(key) || '[]'); }
+  catch { return []; }
 }
 function saveLog(log) {
   localStorage.setItem(logKey(), JSON.stringify(log));
@@ -2518,23 +2549,26 @@ function calcDuration(userName, logType) {
 // Returns duration in ms; atTs = stop timestamp (defaults to now)
 function calcDurationMs(userName, logType, atTs) {
   const atTime = atTs ? new Date(atTs).getTime() : Date.now();
-  const log = getLog();
-  for (let i = log.length - 1; i >= 0; i--) {
-    const e = log[i];
-    if (e.nutzer !== userName || e.typ !== logType) continue;
-    if (e.aktion === 'stop')  return 0;  // stop vor start → keine offene Sitzung
-    if (e.aktion === 'start') return Math.max(0, atTime - new Date(e.zeitstempel).getTime());
+  // Suche erst im aktuellen Monats-Log, dann im Vormonat (Monatswechsel-Bug-Fix)
+  for (const log of [getLog(), getPrevLog()]) {
+    for (let i = log.length - 1; i >= 0; i--) {
+      const e = log[i];
+      if (e.nutzer !== userName || e.typ !== logType) continue;
+      if (e.aktion === 'stop')  return 0;  // stop vor start → keine offene Sitzung
+      if (e.aktion === 'start') return Math.max(0, atTime - new Date(e.zeitstempel).getTime());
+    }
   }
   return 0;
 }
 
 // Gibt den Startzeitpunkt (epoch-ms) der aktuellen Sitzung für einen Typ zurück, oder null
 function getTypeStartMs(userName, logType) {
-  const log = getLog();
-  for (let i = log.length - 1; i >= 0; i--) {
-    const e = log[i];
-    if (e.nutzer === userName && e.typ === logType) {
-      return e.aktion === 'start' ? new Date(e.zeitstempel).getTime() : null;
+  for (const log of [getLog(), getPrevLog()]) {
+    for (let i = log.length - 1; i >= 0; i--) {
+      const e = log[i];
+      if (e.nutzer === userName && e.typ === logType) {
+        return e.aktion === 'start' ? new Date(e.zeitstempel).getTime() : null;
+      }
     }
   }
   return null;
@@ -3219,7 +3253,7 @@ function cloudDavBase(cfg) {
 }
 function cloudHeaders(cfg, extra) {
   return {
-    'Authorization': 'Basic ' + btoa(`${cfg.user}:${cfg.pass}`),
+    'Authorization': 'Basic ' + btoa(unescape(encodeURIComponent(`${cfg.user}:${cfg.pass}`))),
     'Content-Type': 'application/json',
     ...extra,
   };
@@ -3228,7 +3262,7 @@ async function ensureCloudFolder(cfg) {
   try {
     await fetch(cloudDavBase(cfg), {
       method: 'MKCOL',
-      headers: { 'Authorization': 'Basic ' + btoa(`${cfg.user}:${cfg.pass}`) },
+      headers: { 'Authorization': 'Basic ' + btoa(unescape(encodeURIComponent(`${cfg.user}:${cfg.pass}`))) },
     });
   } catch {}
 }
@@ -3318,7 +3352,7 @@ async function testCloudConnection() {
       : `${cfg.url.trim().replace(/\/$/, '').replace(/\/remote\.php\/dav.*/i, '')}/remote.php/dav/files/${encodeURIComponent(cfg.user)}/`;
     const r = await fetch(
       davRoot,
-      { method: 'PROPFIND', headers: { 'Authorization': 'Basic ' + btoa(`${cfg.user}:${cfg.pass}`), 'Depth': '0' } }
+      { method: 'PROPFIND', headers: { 'Authorization': 'Basic ' + btoa(unescape(encodeURIComponent(`${cfg.user}:${cfg.pass}`))), 'Depth': '0' } }
     );
     if (r.status === 207 || r.status === 200) {
       showToast('Verbindung erfolgreich');
@@ -3348,7 +3382,7 @@ async function restoreFromCloud() {
   try {
     const r = await fetch(
       `${cloudDavBase(cfg)}/lgc_${DEVICE_ID}_latest.json`,
-      { headers: { 'Authorization': 'Basic ' + btoa(`${cfg.user}:${cfg.pass}`) } }
+      { headers: { 'Authorization': 'Basic ' + btoa(unescape(encodeURIComponent(`${cfg.user}:${cfg.pass}`))) } }
     );
     if (!r.ok) { showToast(`Fehler beim Laden: HTTP ${r.status}`); return; }
     const data = await r.json();
@@ -3406,7 +3440,7 @@ async function restoreUsersFromCloud() {
   if (btn) { btn.disabled = true; btn.textContent = 'Lade…'; }
   try {
     const r = await fetch(`${cloudDavBase(cfg)}/lgc_users.json`,
-      { headers: { 'Authorization': 'Basic ' + btoa(`${cfg.user}:${cfg.pass}`) } });
+      { headers: { 'Authorization': 'Basic ' + btoa(unescape(encodeURIComponent(`${cfg.user}:${cfg.pass}`))) } });
     if (!r.ok) { showToast(`Fehler beim Laden: HTTP ${r.status}`); return; }
     const data = await r.json();
     const ts = new Date(data.exported).toLocaleString('de-DE');
@@ -3433,30 +3467,71 @@ async function pushConfigToCloud(silent = false) {
     await ensureCloudFolder(cfg);
     // Nur gerätespezifische Felder hochladen — keine Nutzer, keine Cloud-Zugangsdaten
     const DEVICE_FIELDS = ['adminPin', 'dayBoundaryHour', 'pinClearSeconds',
-                           'autoLogoutSeconds', 'screensaverSeconds', 'zeitfensterDefaults', 'types'];
+                           'autoLogoutSeconds', 'screensaverSeconds', 'zeitfensterDefaults'];
     const exportable = {};
     DEVICE_FIELDS.forEach(k => { if (k in CONFIG) exportable[k] = CONFIG[k]; });
+    // Per-device Overrides: nur disabled + zeitfenster pro Typ
+    const typeOverrides = {};
+    (CONFIG.types || []).forEach(t => {
+      const ov = {};
+      if (t.disabled)    ov.disabled    = true;
+      if (t.zeitfenster) ov.zeitfenster = t.zeitfenster;
+      if (Object.keys(ov).length) typeOverrides[t.key] = ov;
+    });
+    if (Object.keys(typeOverrides).length) exportable.typeOverrides = typeOverrides;
     const payload = JSON.stringify({
       version: 1, exported: new Date().toISOString(), deviceId: DEVICE_ID,
       config: exportable,
     }, null, 2);
     const r = await fetch(`${cloudDavBase(cfg)}/lgc_config_${DEVICE_ID}.json`,
       { method: 'PUT', headers: cloudHeaders(cfg), body: payload });
-    if (!silent) r.ok ? showToast('Konfiguration hochgeladen') : showToast(`Fehler: HTTP ${r.status}`);
-  } catch (e) { if (!silent) showToast('Fehler: ' + e.message); }
+    if (r.ok) { showToast(silent ? '☁ Gerät in Cloud registriert' : 'Konfiguration hochgeladen'); }
+    else       { showToast(`Cloud-Fehler: HTTP ${r.status}`); }
+  } catch (e) { showToast('Cloud-Fehler: ' + e.message); }
   finally { if (btn) { btn.disabled = false; btn.textContent = 'Konfig hochladen'; } }
 }
 
 async function silentConfigCheck() {
   const cfg = getCloudConfig();
   if (!isCloudConfigured(cfg)) return;
+  const hdrs = { 'Authorization': 'Basic ' + btoa(unescape(encodeURIComponent(`${cfg.user}:${cfg.pass}`))) };
+  // ── Deploy-Signal prüfen (alle Geräte) ──────────────────────
   try {
-    const r = await fetch(`${cloudDavBase(cfg)}/lgc_config_${DEVICE_ID}.json`,
-      { headers: { 'Authorization': 'Basic ' + btoa(`${cfg.user}:${cfg.pass}`) } });
-    if (!r.ok) return;
+    const rd = await fetch(`${cloudDavBase(cfg)}/lgc_deploy.json`, { headers: hdrs });
+    if (rd.ok) {
+      const deploy = await rd.json();
+      const sig = deploy.deployedAt || '';
+      const seen = localStorage.getItem('lgc_deploy_seen') || '';
+      if (sig && sig !== seen) {
+        localStorage.setItem('lgc_deploy_seen', sig);
+        showToast('Update verfügbar – Seite wird neu geladen…');
+        setTimeout(() => location.reload(), 2000);
+        return;
+      }
+    }
+  } catch {}
+  // ── Globale Typen aus lgc_types.json prüfen ─────────────────
+  try {
+    const rt = await fetch(`${cloudDavBase(cfg)}/lgc_types.json`, { headers: hdrs });
+    if (rt.ok) {
+      const typesData = await rt.json();
+      if (Array.isArray(typesData.types) && typesData.types.length > 0) {
+        const current  = localStorage.getItem('lgc_cloud_types') || '[]';
+        const incoming = JSON.stringify(typesData.types);
+        if (current !== incoming) {
+          localStorage.setItem('lgc_cloud_types', incoming);
+          location.reload();
+          return;
+        }
+      }
+    }
+  } catch {}
+  // ── Gerätespezifische Konfiguration prüfen ───────────────────
+  try {
+    const r = await fetch(`${cloudDavBase(cfg)}/lgc_config_${DEVICE_ID}.json`, { headers: hdrs });
+    if (!r.ok) { if (r.status === 404) pushConfigToCloud(true); return; }
     const data = await r.json();
     if (!data.config || typeof data.config !== 'object') return;
-    const remoteTs = data.exported || '';
     const localRaw = localStorage.getItem('lgc_config_cloud');
     if (localRaw) {
       try {
@@ -3476,7 +3551,7 @@ async function pullConfigFromCloud() {
   if (btn) { btn.disabled = true; btn.textContent = 'Lade…'; }
   try {
     const r = await fetch(`${cloudDavBase(cfg)}/lgc_config_${DEVICE_ID}.json`,
-      { headers: { 'Authorization': 'Basic ' + btoa(`${cfg.user}:${cfg.pass}`) } });
+      { headers: { 'Authorization': 'Basic ' + btoa(unescape(encodeURIComponent(`${cfg.user}:${cfg.pass}`))) } });
     if (!r.ok) { showToast(`Fehler: HTTP ${r.status}`); return; }
     const data = await r.json();
     if (!data.config || typeof data.config !== 'object') { showToast('Ungültige Konfig-Datei'); return; }
@@ -3506,6 +3581,34 @@ function resetConfigCloud() {
 }
 
 /* ── NUTZER-STARTUP-SYNC ────────────────────────────────────── */
+// Merged Cloud-Nutzerliste mit lokalen Daten:
+// - Cloud ist maßgeblich für neue Nutzer und Admin-PIN-Resets
+// - Lokal gesetzte PINs (salt vorhanden, kein mustChangePIN) bleiben erhalten
+function mergeCloudUsers(cloudUsers) {
+  const local    = getUsers();
+  const localMap = Object.fromEntries(local.map(u => [u.id, u]));
+  const result   = [];
+  for (const cu of cloudUsers) {
+    const lu = localMap[cu.id];
+    if (!lu) {
+      result.push(cu); // neuer Nutzer aus Cloud
+    } else {
+      // Expliziter Admin-Reset: Cloud hat mustChangePIN=true ohne salt → Cloud gewinnt
+      const adminReset = cu.mustChangePIN === true && !cu.salt;
+      if (lu.salt && !lu.mustChangePIN && !adminReset) {
+        // Lokal gesetzte PIN behalten (Namens-/Berechtigungsänderungen aus Cloud übernehmen)
+        result.push({ ...cu, pin: lu.pin, salt: lu.salt, mustChangePIN: false });
+      } else {
+        result.push(cu); // Admin-Reset, OTP oder neue Nutzerin → Cloud-Version
+      }
+    }
+    delete localMap[cu.id];
+  }
+  // Lokal-only Nutzer behalten (noch nicht in Cloud gespeichert)
+  for (const lu of Object.values(localMap)) result.push(lu);
+  return result;
+}
+
 // Zieht beim App-Start einmalig die Nutzerliste aus der Cloud.
 // Läuft nach getUsers() (localStorage-Fallback) async im Hintergrund.
 async function syncUsersFromCloud(silent = false) {
@@ -3513,14 +3616,15 @@ async function syncUsersFromCloud(silent = false) {
   if (!isCloudConfigured(cfg)) return false;
   try {
     const r = await fetch(`${cloudDavBase(cfg)}/lgc_users.json`, {
-      headers: { 'Authorization': 'Basic ' + btoa(`${cfg.user}:${cfg.pass}`) }
+      headers: { 'Authorization': 'Basic ' + btoa(unescape(encodeURIComponent(`${cfg.user}:${cfg.pass}`))) }
     });
     if (!r.ok) return false;
     const data = await r.json();
     if (!Array.isArray(data.users) || !data.users.length) return false;
-    localStorage.setItem('lgc_users', JSON.stringify(data.users));
+    const merged = mergeCloudUsers(data.users);
+    localStorage.setItem('lgc_users', JSON.stringify(merged));
     USERS.length = 0;
-    data.users.forEach(u => USERS.push(u));
+    merged.forEach(u => USERS.push(u));
     // currentUser aktualisieren falls bereits eingeloggt (Race Condition Fix)
     if (currentUser) {
       const updated = USERS.find(u => u.id === currentUser.id);
@@ -3978,6 +4082,12 @@ function renderBackups() {
   </div>`;
 }
 
+// Schützt CSV-Zellen vor Formula-Injection (=, +, -, @, Tab, CR als Präfix)
+function csvCell(val) {
+  const s = String(val ?? '');
+  return /^[=+\-@\t\r]/.test(s) ? "'" + s : s;
+}
+
 function downloadBackup(key) {
   try {
     const data = JSON.parse(localStorage.getItem(key) || 'null');
@@ -3987,7 +4097,7 @@ function downloadBackup(key) {
     const rows   = data.log.map(e => {
       const d   = new Date(e.zeitstempel);
       const dur = (e.aktion === 'stop' && e.dauer_ms) ? fmtDuration(e.dauer_ms) : '';
-      return `"${e.id}";"${e.zeitstempel}";"${d.toLocaleDateString('de-DE')}";"${d.toLocaleTimeString('de-DE')}";"${e.nutzer}";"${e.typ}";"${e.aktion}";"${dur}"`;
+      return `"${e.id}";"${e.zeitstempel}";"${d.toLocaleDateString('de-DE')}";"${d.toLocaleTimeString('de-DE')}";"${csvCell(e.nutzer)}";"${csvCell(e.typ)}";"${csvCell(e.aktion)}";"${dur}"`;
     }).join('\r\n');
     const blob = new Blob(['\uFEFF' + header + rows], { type: 'text/csv;charset=utf-8;' });
     const url  = URL.createObjectURL(blob);
@@ -4104,8 +4214,26 @@ async function saveAdminPw(pw) {
 
 function showAdminPwPrompt() {
   document.getElementById('admin-pw-input').value = '';
-  document.getElementById('admin-pw-err').textContent  = '';
-  document.getElementById('admin-pw-hint').textContent = '';
+  document.getElementById('admin-pw-err').textContent = '';
+
+  // Cloud-Status & Geräte-ID im Hint anzeigen
+  const hint = document.getElementById('admin-pw-hint');
+  const cfg  = getCloudConfig();
+  const lastOk = getCloudLastOk();
+  const errs   = getCloudErrLog();
+  let cloudLine;
+  if (!isCloudConfigured(cfg)) {
+    cloudLine = '☁ Cloud nicht konfiguriert';
+  } else if (lastOk) {
+    const t = new Date(lastOk).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+    cloudLine = `☁ Sync OK – ${t}`;
+  } else if (errs.length) {
+    cloudLine = `☁ Fehler: ${errs[errs.length - 1].msg || errs[errs.length - 1]}`;
+  } else {
+    cloudLine = '☁ Noch kein Sync';
+  }
+  hint.textContent = `Gerät: ${DEVICE_ID} · ${cloudLine}`;
+
   document.getElementById('admin-pw-overlay').classList.add('visible');
   setTimeout(() => document.getElementById('admin-pw-input').focus(), 120);
 }
@@ -4313,13 +4441,37 @@ function saveUserEdit(id) {
     saveUsers([...USERS, newUser]);
     _pendingNew = false;
   } else {
-    let updated = { ...USERS.find(u => u.id === id), name };
+    const existing = USERS.find(u => u.id === id);
+    const oldName  = existing?.name;
+    let updated = { ...existing, name };
     if (pin) {
       // Admin-gesetzte PIN → Einmal-PIN (Klartext), wird beim nächsten Login erzwungen zu ändern
       delete updated.salt;
       updated = { ...updated, pin, mustChangePIN: true };
     }
     saveUsers(USERS.map(u => u.id !== id ? u : updated));
+    // Alle Log- und Backup-Einträge mit dem alten Namen auf den neuen Namen aktualisieren
+    if (oldName && oldName !== name) {
+      for (const key of Object.keys(localStorage)) {
+        if (key.startsWith('lgc_log_')) {
+          try {
+            const entries = JSON.parse(localStorage.getItem(key) || '[]');
+            if (!Array.isArray(entries)) continue;
+            let changed = false;
+            entries.forEach(e => { if (e.nutzer === oldName) { e.nutzer = name; changed = true; } });
+            if (changed) localStorage.setItem(key, JSON.stringify(entries));
+          } catch {}
+        } else if (key.startsWith('lgc_backup_')) {
+          try {
+            const backup = JSON.parse(localStorage.getItem(key) || 'null');
+            if (!backup?.log) continue;
+            let changed = false;
+            backup.log.forEach(e => { if (e.nutzer === oldName) { e.nutzer = name; changed = true; } });
+            if (changed) localStorage.setItem(key, JSON.stringify(backup));
+          } catch {}
+        }
+      }
+    }
   }
   renderUsersSection();
   showToast('Gespeichert');
@@ -4575,7 +4727,7 @@ document.getElementById('btn-export').addEventListener('click', () => {
     const date = d.toLocaleDateString('de-DE');
     const time = d.toLocaleTimeString('de-DE');
     const dur  = (e.aktion === 'stop' && e.dauer_ms) ? fmtDuration(e.dauer_ms) : '';
-    return `"${e.id}";"${e.zeitstempel}";"${date}";"${time}";"${e.nutzer}";"${e.typ}";"${e.aktion}";"${dur}"`;
+    return `"${e.id}";"${e.zeitstempel}";"${date}";"${time}";"${csvCell(e.nutzer)}";"${csvCell(e.typ)}";"${csvCell(e.aktion)}";"${dur}"`;
   }).join('\r\n');
 
   const now  = new Date();
@@ -4753,8 +4905,8 @@ function renderMyHours() {
     const ms   = d?.totalMs || 0;
     const live = d?.active   || false;
     const val  = fmtQuarterH(ms);
-    const colorVars = { blue: '--blue', green: '--green', amber: '--amber', red: '--red', violet: '--violet' };
-    const _fallbackVars = ['--blue','--amber','--red','--green','--violet'];
+    const colorVars = { blue: '--blue', green: '--green', amber: '--amber', red: '--red', violet: '--violet', orange: '--orange', cyan: '--cyan', pink: '--pink', lime: '--lime', grey: '--grey' };
+    const _fallbackVars = ['--blue','--amber','--red','--green','--violet','--orange','--cyan','--pink','--lime','--grey'];
     const col  = `var(${colorVars[t.color] || _fallbackVars[TYPES.indexOf(t) % 5]})`;
     return `
       <div class="my-hours-row" style="border-left-color:${col}">
@@ -4850,6 +5002,7 @@ checkCloudSetupButton();
 // Stille Konfigurationsprüfung beim Start
 setTimeout(() => silentConfigCheck(), 3000);
 
+
 // Session-Wiederherstellung ohne PIN wurde entfernt (Sicherheit: Shared-Tablet).
 // Crash-Recovery für Wachstunde läuft nach PIN-Login in openDashboard().
 
@@ -4862,6 +5015,7 @@ function showToast(msg) {
   if (toastTimer) clearTimeout(toastTimer);
   toastTimer = setTimeout(() => el.classList.remove('visible'), 2800);
 }
+
 
 /* ── CLOUD SETUP QR ──────────────────────────────────────────── */
 let _qrStream   = null;
@@ -4984,15 +5138,20 @@ function handleQrResult(raw) {
   pushConfigToCloud(true); // Gerät in Cloud registrieren → sofort in Admin sichtbar
 }
 
-// ── Portrait-Lock (Screen Orientation API) ─────────────────────
-if (screen.orientation && screen.orientation.lock) {
-  screen.orientation.lock('portrait').catch(() => {});
-}
+// ── Portrait-Lock: Manifest übernimmt bei installierter PWA.
+// JS-Lock nur als Fallback für Browser ohne Manifest-Orientation-Support,
+// aber ohne .lock() um die OS-Dreh-Animation beim Start zu vermeiden.
+document.body.classList.add('orientation-ready');
 
 // ── Service Worker registrieren ───────────────────────────────
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('./sw.js').catch(err => {
     console.warn('SW-Registrierung fehlgeschlagen:', err);
+  });
+  // Neuer SW hat übernommen → App neu laden (PWA-Update)
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    showToast('App-Update installiert – wird neu geladen…');
+    setTimeout(() => location.reload(), 2000);
   });
 }
 </script>

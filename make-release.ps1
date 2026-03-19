@@ -2,7 +2,7 @@
 # Aufruf: .\make-release.ps1 [-Version "0.4"]
 
 param(
-    [string]$Version = "0.4"
+    [string]$Version = "0.6"
 )
 
 $ErrorActionPreference = 'Stop'
@@ -15,7 +15,7 @@ $include = @(
     "admin.html",
     "dashboard.html",
     "editor.html",
-    "einmalpins.html",
+    # einmalpins.html enthält echte Namen/PINs → wird nicht ins Release gepackt
     "sw.js",
     "manifest.json",
     "Logo.png",
@@ -24,13 +24,18 @@ $include = @(
     "admin_config.example.js",
     "admin-server.py",
     "admin-server.bat",
-    "fully-settings.json",
+    # fully-settings.json enthält persönliche Daten (Kiosk-PIN, Admin-PW, Nutzername) → nicht im Release
     "README.md",
     "DOKUMENTATION.md",
     "CHANGELOG.md",
     "LICENSE",
     "presets\config.dlrg.js",
-    "presets\config.simple.js"
+    "presets\config.simple.js",
+    "tests\test_LifeguardClock.html",
+    "tests\test_admin.html",
+    "tests\test_dashboard.html",
+    "tests\test_editor.html",
+    "tests\test_sw.html"
 )
 
 # Alte ZIP entfernen falls vorhanden
@@ -41,6 +46,7 @@ $tmp = Join-Path $env:TEMP "lgc-release-$Version"
 if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
 New-Item -ItemType Directory -Path $tmp | Out-Null
 New-Item -ItemType Directory -Path "$tmp\presets" | Out-Null
+New-Item -ItemType Directory -Path "$tmp\tests"   | Out-Null
 
 foreach ($rel in $include) {
     $src = Join-Path $root $rel
