@@ -48,29 +48,11 @@ const CONFIG = {
 
   /* ── Stempel-Typen ────────────────────────────────────────── */
   //
-  // Pflichtfelder:
-  //   key      – eindeutiger interner Schlüssel (keine Sonderzeichen)
-  //   label    – Anzeigename im Dashboard
-  //   logType  – Bezeichnung im Log (unveränderlich nach Produktivstart!)
-  //   color    – Farbe: 'blue' | 'green' | 'amber' | 'red' | 'violet'
+  // Ab v0.6: Typen werden zentral in lgc_types.json in der Cloud verwaltet
+  // (admin.html → Karte „Stempel-Typen"). Das types-Array hier dient nur noch
+  // als lokaler Fallback, wenn die Cloud noch nicht konfiguriert ist.
   //
-  // Optionale Felder:
-  //   pinned              – true: bleibt beim Scrollen immer sichtbar
-  //   disabled            – true: Typ vollständig ausgeblendet (kein Button, kein Log)
-  //   requiresZeitfenster – true: Knopf außerhalb des Zeitfensters gesperrt
-  //   zeitfenster         – Typ-eigene Zeitfenster pro Wochentag (überschreibt zeitfensterDefaults)
-  //                         Fehlender Wochentag = ganztägig gesperrt
-  //                         Beispiel: zeitfenster: { mo: {start:'08:00',end:'20:00'}, di: {...} }
-  //   maxDurationMs       – Auto-Stop nach X Millisekunden
-  //   cooldownMs          – Pflichtpause nach Auto-Stop (Knopf gesperrt + Countdown)
-  //   autoStartKeys       – Startet diese Typen automatisch beim Start mit
-  //   mutexKeys           – Stoppt diese Typen automatisch beim Start
-  //   permissionKey       – Nutzer braucht diesen Key in permissions[], sonst unsichtbar
-  //
-  // Scroll-Verhalten:
-  //   Bei mehr als 3 Typen werden nicht-gepinnte Typen scrollbar.
-  //   Gepinnte Typen (pinned: true) bleiben immer sichtbar.
-  //
+  // Fallback-Minimal-Konfiguration (wird durch Cloud-Typen überschrieben):
   types: [
     {
       key:     'anwesenheit',
@@ -79,33 +61,9 @@ const CONFIG = {
       color:   'blue',
       pinned:  true,
     },
-    {
-      key:                 'typ_a',
-      label:               'Typ A',
-      logType:             'typ_a',
-      color:               'amber',
-      requiresZeitfenster: true,
-      maxDurationMs:       7200000,    // 2 Stunden
-      cooldownMs:          1800000,    // 30 Minuten Pflichtpause
-      autoStartKeys:       ['anwesenheit'],
-      mutexKeys:           ['typ_b'],
-      permissionKey:       'typ_a',
-    },
-    {
-      key:                 'typ_b',
-      label:               'Typ B',
-      logType:             'typ_b',
-      color:               'red',
-      requiresZeitfenster: true,
-      maxDurationMs:       21600000,   // 6 Stunden
-      cooldownMs:          1800000,    // 30 Minuten Pflichtpause
-      autoStartKeys:       ['anwesenheit'],
-      mutexKeys:           ['typ_a'],
-      permissionKey:       'typ_b',
-    },
   ],
 
-  /* ── Mitglieder ───────────────────────────────────────────── */
+/* ── Mitglieder ───────────────────────────────────────────── */
   // id          : eindeutiger interner Schlüssel (keine Leerzeichen)
   // name        : Anzeigename
   // pin         : 6-stellige PIN

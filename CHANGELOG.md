@@ -4,6 +4,23 @@ Alle relevanten Änderungen pro Release. Format orientiert sich an [Keep a Chang
 
 ---
 
+## [0.6] – 2026-03-19
+
+### Hinzugefügt
+
+- **Zentrale Typen-Verwaltung** (`lgc_types.json`): Stempel-Typen werden jetzt zentral in der Cloud gespeichert und in `admin.html` verwaltet (Anlegen, Bearbeiten, Löschen) — gelten automatisch für alle Geräte
+- **Typen-Karte in admin.html**: Neue Karte „Stempel-Typen" — vollständige Formular-Bearbeitung aller Typ-Felder (key, label, logType, Farbe, Berechtigung, Max-Dauer, Pflichtpause, Zeitfenster, Mutex, AutoStart)
+- **Permissions automatisch aktuell**: Berechtigungs-Checkboxen beim Nutzer-Anlegen/Bearbeiten kommen jetzt aus den zentralen Typen — neue Typen erscheinen sofort
+- **Per-device Overrides**: Gerätekonfiguration enthält jetzt nur noch `typeOverrides` (disabled + zeitfenster pro Typ) statt vollständiger Typen-Kopie — Gerät-spezifisch ohne Redundanz
+
+### Geändert
+
+- **`lgc_config_<deviceId>.json`**: Neues Format `v2` — enthält nur noch gerätespezifische Felder + `typeOverrides`, keine vollständige Typ-Definition mehr (Rückwärtskompatibilität zu altem Format gewährleistet)
+- **`config.js`**: `types`-Array dient nur noch als lokaler Fallback; globale Typen werden aus `lgc_types.json` geladen
+- **`silentConfigCheck`**: Prüft jetzt auch `lgc_types.json` — bei Änderung automatischer Reload
+
+---
+
 ## [0.5] – 2026-03-18
 
 ### Hinzugefügt

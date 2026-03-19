@@ -651,6 +651,102 @@
     </table>
   </div>
 
+  <!-- Typen card -->
+  <div class="card config-card" id="types-card">
+    <div class="card-header" id="types-card-toggle">
+      <span class="card-title">🏷 Stempel-Typen</span>
+      <span class="toggle-icon" id="types-toggle-icon">▾</span>
+    </div>
+    <div class="card-body" id="types-card-body" class="hidden">
+      <p class="note">Globale Typ-Definitionen — gelten für alle Geräte. Zeitfenster und &bdquo;Deaktiviert&ldquo; können pro Gerät überschrieben werden.</p>
+      <div class="cfg-row" style="margin-bottom:8px">
+        <button class="btn btn-ghost" id="btn-types-load">&#x2601; Typen laden</button>
+        <button class="btn btn-green"  id="btn-types-save" disabled>&#x2191; In Cloud speichern</button>
+        <button class="btn btn-ghost"  id="btn-types-add">+ Typ hinzufügen</button>
+        <span id="types-meta" style="font-size:0.8rem;color:var(--text-2);margin-left:8px"></span>
+      </div>
+      <div id="types-list"></div>
+
+      <!-- Inline-Formular für neuen/bearbeiteten Typ -->
+      <div id="type-form-wrap" style="display:none;margin-top:16px;padding:16px;background:var(--surface-3,#252532);border-radius:10px">
+        <div style="font-weight:700;margin-bottom:12px" id="type-form-title">Typ bearbeiten</div>
+        <div class="cfg-fields">
+          <div class="cfg-field-row">
+            <label>Key</label>
+            <input type="text" id="tf-key" class="cfg-inp cfg-inp-mono" placeholder="z.B. wachdienst" pattern="[a-z0-9_-]+">
+            <span class="cfg-hint">Intern, unveränderlich nach dem ersten Speichern</span>
+          </div>
+          <div class="cfg-field-row">
+            <label>Label</label>
+            <input type="text" id="tf-label" class="cfg-inp" placeholder="z.B. Wachdienst">
+          </div>
+          <div class="cfg-field-row">
+            <label>Log-Typ</label>
+            <input type="text" id="tf-logtype" class="cfg-inp cfg-inp-mono" placeholder="= Key wenn leer">
+            <span class="cfg-hint">Wert in den JSON-Logdateien</span>
+          </div>
+          <div class="cfg-field-row">
+            <label>Farbe</label>
+            <select id="tf-color" class="cfg-inp">
+              <option value="blue">blue</option>
+              <option value="amber">amber</option>
+              <option value="orange">orange</option>
+              <option value="red">red</option>
+              <option value="green">green</option>
+              <option value="lime">lime</option>
+              <option value="cyan">cyan</option>
+              <option value="violet">violet</option>
+              <option value="pink">pink</option>
+              <option value="grey">grey</option>
+            </select>
+          </div>
+          <div class="cfg-field-row">
+            <label>Permission-Key</label>
+            <input type="text" id="tf-permkey" class="cfg-inp cfg-inp-mono" placeholder="leer = keine Berechtigung nötig">
+          </div>
+          <div class="cfg-field-row">
+            <label>Max. Dauer</label>
+            <input type="number" id="tf-maxdur" class="cfg-inp" min="0" placeholder="leer = unbegrenzt">
+            <span class="cfg-hint">Minuten (0 = unbegrenzt)</span>
+          </div>
+          <div class="cfg-field-row">
+            <label>Pflichtpause</label>
+            <input type="number" id="tf-cooldown" class="cfg-inp" min="0" placeholder="leer = keine">
+            <span class="cfg-hint">Minuten nach Max.-Dauer</span>
+          </div>
+          <div class="cfg-field-row">
+            <label>Auto-Start</label>
+            <input type="text" id="tf-autostart" class="cfg-inp cfg-inp-mono" placeholder="kommagetrennte Keys">
+            <span class="cfg-hint">Diese Typen starten/stoppen automatisch mit</span>
+          </div>
+          <div class="cfg-field-row">
+            <label>Mutex</label>
+            <input type="text" id="tf-mutex" class="cfg-inp cfg-inp-mono" placeholder="kommagetrennte Keys">
+            <span class="cfg-hint">Schließen sich gegenseitig aus</span>
+          </div>
+          <div class="cfg-field-row">
+            <label>Optionen</label>
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+              <input type="checkbox" id="tf-pinned"> <span>Pinned (immer sichtbar)</span>
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-left:16px">
+              <input type="checkbox" id="tf-requireszf"> <span>Zeitfenster erforderlich</span>
+            </label>
+          </div>
+          <!-- Standard-Zeitfenster (global) -->
+          <div id="tf-zf-wrap" style="display:none;margin-top:8px">
+            <div class="cfg-hint" style="margin-bottom:6px">Standard-Zeitfenster (kann pro Gerät überschrieben werden)</div>
+            <div id="tf-zf-grid"></div>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:12px">
+          <button class="btn btn-green" id="btn-type-form-save">Speichern</button>
+          <button class="btn btn-ghost" id="btn-type-form-cancel">Abbrechen</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Device config card -->
   <div class="card config-card" id="config-card">
     <div class="card-header" id="config-card-toggle">
@@ -737,7 +833,8 @@
   /* ── State ─────────────────────────────────────────── */
   let users = [];          // array of user objects (live)
   let usersVersion = 1;
-  let _editTypes = [];     // Typen der geladenen Gerätekonfig (live)
+  let _globalTypes = [];   // Globale Typen aus lgc_types.json (live)
+  let _editTypes = [];     // Typen der geladenen Gerätekonfig (per-device overrides)
   let usersExported = null;
   let saveTimer = null;
   let _cfgFull = null;     // vollständiges config-Objekt (für unveränderte Felder)
@@ -806,10 +903,11 @@
     }
   }
 
-  /* ── Permissions from CONFIG ───────────────────────── */
+  /* ── Permissions from global types ─────────────────── */
   function getPermDefs() {
-    if (!window.CONFIG || !Array.isArray(window.CONFIG.types)) return [];
-    return window.CONFIG.types
+    const src = _globalTypes.length > 0 ? _globalTypes
+              : (window.CONFIG?.types || []);
+    return src
       .filter(t => t.permissionKey)
       .map(t => ({ key: t.permissionKey, label: t.label }));
   }
@@ -1400,6 +1498,28 @@
   init();
   renderDeviceList();
 
+  // Globale Typen beim Start automatisch laden
+  (async () => {
+    const creds = getCredentials();
+    if (!creds) return;
+    try {
+      const res = await fetch(`${buildWebDavBase(creds)}/lgc_types.json`, {
+        headers: { Authorization: authHeader(creds) },
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!Array.isArray(data.types) || data.types.length === 0) return;
+      _globalTypes = data.types.map(t => ({...t}));
+      if (!window.CONFIG) window.CONFIG = {};
+      window.CONFIG.types = _globalTypes;
+      renderGlobalTypesList();
+      renderTable();
+      buildNewPermChecks();
+      document.getElementById('types-meta').textContent =
+        `Stand: ${data.updated ? new Date(data.updated).toLocaleString('de-DE') : '?'}`;
+    } catch {}
+  })();
+
   /* ── Device config editor ──────────────────────────────── */
   /* ── Typen-Verwaltungs-UI ──────────────────────────────── */
   const _ZF_DAYS = [
@@ -1520,6 +1640,209 @@
     }
   });
 
+  /* ══════════════════════════════════════════════════════
+     Globale Typen-Karte (lgc_types.json)
+  ══════════════════════════════════════════════════════ */
+
+  // Toggle
+  document.getElementById('types-card-toggle').addEventListener('click', () => {
+    const body = document.getElementById('types-card-body');
+    const icon = document.getElementById('types-toggle-icon');
+    body.classList.toggle('hidden');
+    icon.classList.toggle('open');
+  });
+  document.getElementById('types-card-body').classList.add('hidden');
+
+  function renderGlobalTypesList() {
+    const list = document.getElementById('types-list');
+    if (_globalTypes.length === 0) {
+      list.innerHTML = '<p class="note" style="margin:0">Keine Typen – aus Cloud laden oder neu erstellen.</p>';
+      return;
+    }
+    list.innerHTML = _globalTypes.map((t, idx) => `
+      <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">
+        <span style="width:16px;height:16px;border-radius:50%;background:var(--${escHtml(t.color)},var(--blue));flex-shrink:0"></span>
+        <span style="font-weight:600;min-width:120px">${escHtml(t.label || t.key)}</span>
+        <code style="font-size:11px;color:var(--text-3)">${escHtml(t.key)}</code>
+        ${t.permissionKey ? `<span style="font-size:11px;padding:2px 6px;border-radius:4px;background:var(--surface-3)">${escHtml(t.permissionKey)}</span>` : ''}
+        ${t.maxDurationMs ? `<span style="font-size:11px;color:var(--text-2)">${Math.round(t.maxDurationMs/60000)}min</span>` : ''}
+        <div style="margin-left:auto;display:flex;gap:6px">
+          <button class="btn btn-ghost" style="padding:4px 10px;font-size:12px" data-type-edit="${idx}">&#9998; Bearbeiten</button>
+          <button class="btn btn-danger" style="padding:4px 10px;font-size:12px" data-type-del="${idx}">&#x2715;</button>
+        </div>
+      </div>`).join('');
+
+    list.querySelectorAll('[data-type-edit]').forEach(btn => {
+      btn.addEventListener('click', () => openTypeForm(parseInt(btn.dataset.typeEdit)));
+    });
+    list.querySelectorAll('[data-type-del]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const idx = parseInt(btn.dataset.typeDel);
+        if (!confirm(`Typ „${_globalTypes[idx].label || _globalTypes[idx].key}" löschen?`)) return;
+        _globalTypes.splice(idx, 1);
+        renderGlobalTypesList();
+        document.getElementById('btn-types-save').disabled = false;
+      });
+    });
+  }
+
+  let _typeFormIdx = -1; // -1 = neu
+  function openTypeForm(idx) {
+    _typeFormIdx = idx;
+    const t = idx >= 0 ? _globalTypes[idx] : {};
+    document.getElementById('type-form-title').textContent = idx >= 0 ? 'Typ bearbeiten' : 'Neuer Typ';
+    document.getElementById('tf-key').value       = t.key       || '';
+    document.getElementById('tf-key').readOnly    = idx >= 0;
+    document.getElementById('tf-label').value     = t.label     || '';
+    document.getElementById('tf-logtype').value   = t.logType   || '';
+    document.getElementById('tf-color').value     = t.color     || 'blue';
+    document.getElementById('tf-permkey').value   = t.permissionKey || '';
+    document.getElementById('tf-maxdur').value    = t.maxDurationMs ? Math.round(t.maxDurationMs / 60000) : '';
+    document.getElementById('tf-cooldown').value  = t.cooldownMs    ? Math.round(t.cooldownMs    / 60000) : '';
+    document.getElementById('tf-autostart').value = (t.autoStartKeys || []).join(', ');
+    document.getElementById('tf-mutex').value     = (t.mutexKeys     || []).join(', ');
+    document.getElementById('tf-pinned').checked      = !!t.pinned;
+    document.getElementById('tf-requireszf').checked  = !!t.requiresZeitfenster;
+    renderTypeFormZf(t.zeitfenster || {}, !!t.requiresZeitfenster);
+    document.getElementById('type-form-wrap').style.display = '';
+    document.getElementById('tf-label').focus();
+  }
+
+  function renderTypeFormZf(zeitfenster, show) {
+    const wrap = document.getElementById('tf-zf-wrap');
+    wrap.style.display = show ? '' : 'none';
+    const grid = document.getElementById('tf-zf-grid');
+    grid.innerHTML = _ZF_DAYS.map(d => {
+      const zf = zeitfenster[d.key] || {};
+      return `<div class="cfg-zf-row">
+        <span class="cfg-zf-day">${escHtml(d.label)}</span>
+        <input type="time" class="cfg-zf-inp" data-day="${d.key}" data-field="start" value="${escHtml(zf.start || '')}">
+        <span class="cfg-zf-sep">&ndash;</span>
+        <input type="time" class="cfg-zf-inp" data-day="${d.key}" data-field="end"   value="${escHtml(zf.end || '')}">
+      </div>`;
+    }).join('');
+  }
+
+  document.getElementById('tf-requireszf').addEventListener('change', function() {
+    document.getElementById('tf-zf-wrap').style.display = this.checked ? '' : 'none';
+  });
+
+  document.getElementById('btn-type-form-save').addEventListener('click', () => {
+    const key = document.getElementById('tf-key').value.trim().toLowerCase().replace(/\s+/g, '_');
+    if (!key) { toast('Key darf nicht leer sein.', 'err'); return; }
+    if (_typeFormIdx < 0 && _globalTypes.some(t => t.key === key)) {
+      toast(`Key „${key}" existiert bereits.`, 'err'); return;
+    }
+    const label   = document.getElementById('tf-label').value.trim();
+    const logType = document.getElementById('tf-logtype').value.trim() || key;
+    const color   = document.getElementById('tf-color').value;
+    const permKey = document.getElementById('tf-permkey').value.trim();
+    const maxMin  = parseInt(document.getElementById('tf-maxdur').value)   || 0;
+    const cdMin   = parseInt(document.getElementById('tf-cooldown').value) || 0;
+    const autoStr = document.getElementById('tf-autostart').value;
+    const muxStr  = document.getElementById('tf-mutex').value;
+    const pinned  = document.getElementById('tf-pinned').checked;
+    const reqZf   = document.getElementById('tf-requireszf').checked;
+
+    // Zeitfenster aus Grid lesen
+    const zf = {};
+    document.getElementById('tf-zf-grid').querySelectorAll('.cfg-zf-inp').forEach(inp => {
+      if (!inp.value) return;
+      const d = inp.dataset.day, f = inp.dataset.field;
+      if (!zf[d]) zf[d] = {};
+      zf[d][f] = inp.value;
+    });
+
+    const t = { key, label, logType, color };
+    if (pinned)          t.pinned = true;
+    if (reqZf)           t.requiresZeitfenster = true;
+    if (maxMin > 0)      t.maxDurationMs = maxMin * 60000;
+    if (cdMin  > 0)      t.cooldownMs    = cdMin  * 60000;
+    if (permKey)         t.permissionKey = permKey;
+    const autoKeys = autoStr.split(',').map(s => s.trim()).filter(Boolean);
+    const muxKeys  = muxStr.split(',').map(s => s.trim()).filter(Boolean);
+    if (autoKeys.length) t.autoStartKeys = autoKeys;
+    if (muxKeys.length)  t.mutexKeys     = muxKeys;
+    if (reqZf && Object.keys(zf).length) t.zeitfenster = zf;
+
+    if (_typeFormIdx >= 0) {
+      _globalTypes[_typeFormIdx] = t;
+    } else {
+      _globalTypes.push(t);
+    }
+    document.getElementById('type-form-wrap').style.display = 'none';
+    renderGlobalTypesList();
+    document.getElementById('btn-types-save').disabled = false;
+    // Permissions-Spalte aktuell halten
+    renderTable();
+    buildNewPermChecks();
+  });
+
+  document.getElementById('btn-type-form-cancel').addEventListener('click', () => {
+    document.getElementById('type-form-wrap').style.display = 'none';
+  });
+
+  document.getElementById('btn-types-add').addEventListener('click', () => openTypeForm(-1));
+
+  document.getElementById('btn-types-load').addEventListener('click', async () => {
+    const creds = getCredentials();
+    if (!creds) { toast('Keine Zugangsdaten.', 'err'); return; }
+    const btn = document.getElementById('btn-types-load');
+    btn.disabled = true; btn.textContent = '…';
+    try {
+      const res = await fetch(`${buildWebDavBase(creds)}/lgc_types.json`, {
+        headers: { Authorization: authHeader(creds) },
+      });
+      if (res.status === 404) {
+        toast('lgc_types.json noch nicht vorhanden – Typen neu erstellen und speichern.', 'info');
+        return;
+      }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (!Array.isArray(data.types)) throw new Error('Ungültiges Format');
+      _globalTypes = data.types.map(t => ({...t}));
+      if (!window.CONFIG) window.CONFIG = {};
+      window.CONFIG.types = _globalTypes;
+      renderGlobalTypesList();
+      renderTable();
+      buildNewPermChecks();
+      document.getElementById('btn-types-save').disabled = false;
+      document.getElementById('types-meta').textContent =
+        `Stand: ${data.updated ? new Date(data.updated).toLocaleString('de-DE') : '?'}`;
+      toast(`${_globalTypes.length} Typ(en) geladen.`, 'ok');
+    } catch (e) {
+      toast('Fehler: ' + e.message, 'err');
+    } finally {
+      btn.disabled = false; btn.textContent = '☁ Typen laden';
+    }
+  });
+
+  document.getElementById('btn-types-save').addEventListener('click', async () => {
+    const creds = getCredentials();
+    if (!creds) { toast('Keine Zugangsdaten.', 'err'); return; }
+    const btn = document.getElementById('btn-types-save');
+    btn.disabled = true; btn.textContent = '…';
+    try {
+      const base = buildWebDavBase(creds);
+      await fetch(base, { method: 'MKCOL', headers: { Authorization: authHeader(creds) } }).catch(() => {});
+      const payload = JSON.stringify({ version: 1, updated: new Date().toISOString(), types: _globalTypes }, null, 2);
+      const res = await fetch(`${base}/lgc_types.json`, {
+        method: 'PUT',
+        headers: { Authorization: authHeader(creds), 'Content-Type': 'application/json' },
+        body: payload,
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      document.getElementById('types-meta').textContent = `Stand: ${new Date().toLocaleString('de-DE')}`;
+      toast('Typen gespeichert – Geräte übernehmen beim nächsten Check.', 'ok');
+    } catch (e) {
+      toast('Fehler: ' + e.message, 'err');
+    } finally {
+      btn.disabled = false; btn.textContent = '↑ In Cloud speichern';
+    }
+  });
+
+  /* ══════════════════════════════════════════════════════ */
+
   document.getElementById('btn-cfg-discover').addEventListener('click', discoverDevices);
 
   document.getElementById('btn-deploy-signal').addEventListener('click', async () => {
@@ -1583,18 +1906,20 @@
       document.getElementById('cfg-day-boundary').value = cfg.dayBoundaryHour ?? 4;
       document.getElementById('cfg-screensaver').value  = cfg.screensaverSeconds ?? 60;
 
-      // Stempel-Typen: in-memory + JSON-Textarea + Verwaltungs-UI
-      _editTypes = (cfg.types || []).map(t => ({...t}));
+      // Per-device overrides aus typeOverrides mergen (neue Format)
+      // Fallback: legacy types-Array aus alter Gerätekonfig
+      const overrides = cfg.typeOverrides || {};
+      const baseTypes = _globalTypes.length > 0 ? _globalTypes : (cfg.types || []);
+      _editTypes = baseTypes.map(t => {
+        const ov = overrides[t.key];
+        if (!ov) return { ...t };
+        const merged = { ...t };
+        if ('disabled'   in ov) merged.disabled   = ov.disabled;
+        if (ov.zeitfenster)     merged.zeitfenster = { ...ov.zeitfenster };
+        return merged;
+      });
       syncTypesToTextarea();
       renderTypesUI();
-
-      // Typen für Berechtigungs-Spalte übernehmen → Tabelle neu rendern
-      if (_editTypes.length > 0) {
-        if (!window.CONFIG) window.CONFIG = {};
-        window.CONFIG.types = _editTypes;
-        renderTable();
-        buildNewPermChecks();
-      }
 
       addKnownDevice(deviceId);
       document.getElementById('cfg-meta').textContent =
@@ -1622,20 +1947,19 @@
     const dayBoundary = parseInt(document.getElementById('cfg-day-boundary').value) || 4;
     const screensaver = parseInt(document.getElementById('cfg-screensaver').value) || 60;
 
-    // Typen: aus _editTypes (Verwaltungs-UI) — JSON-Textarea nur als Fallback
-    let types = _editTypes.length > 0 ? _editTypes : null;
-    if (!types) {
-      try {
-        types = JSON.parse(document.getElementById('cfg-types-json').value);
-        if (!Array.isArray(types)) throw new Error('muss ein Array sein');
-      } catch (e) {
-        toast('Ungültiges JSON bei Stempel-Typen: ' + e.message, 'err'); return;
-      }
-    }
+    // Per-device typeOverrides (nur disabled + zeitfenster)
+    const typeOverrides = {};
+    _editTypes.forEach(t => {
+      const ov = {};
+      if (t.disabled)    ov.disabled    = true;
+      if (t.zeitfenster) ov.zeitfenster = t.zeitfenster;
+      if (Object.keys(ov).length) typeOverrides[t.key] = ov;
+    });
 
-    // Nur gerätespezifische Felder speichern — defaultUsers/removedUsers/cloud nie in Gerätekonfig
-    const { defaultUsers: _du, removedUsers: _ru, cloud: _cl, ...cfgBase } = (_cfgFull || {});
-    const merged = { ...cfgBase, dayBoundaryHour: dayBoundary, screensaverSeconds: screensaver, types };
+    // Nur gerätespezifische Felder speichern — types/cloud/defaultUsers nie in Gerätekonfig
+    const { defaultUsers: _du, removedUsers: _ru, cloud: _cl, types: _ty, ...cfgBase } = (_cfgFull || {});
+    const merged = { ...cfgBase, dayBoundaryHour: dayBoundary, screensaverSeconds: screensaver };
+    if (Object.keys(typeOverrides).length) merged.typeOverrides = typeOverrides;
     if (adminPin) merged.adminPin = adminPin;
 
     const btn = document.getElementById('btn-cfg-save');

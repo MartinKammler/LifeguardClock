@@ -2071,20 +2071,38 @@ function saveUsers(list) {
    BEVOR die abgeleiteten Konstanten (TYPES, ADMIN_PIN usw.) berechnet werden.
    cloud.* und deviceId werden nie überschrieben (Sicherheit / Bootstrapping). */
 ;(function applyCloudConfigOverlay() {
-  // Nur diese gerätespezifischen Felder dürfen aus der Cloud überschrieben werden.
-  // defaultUsers, removedUsers, cloud usw. bleiben immer lokal aus config.js.
   const DEVICE_FIELDS = ['adminPin', 'dayBoundaryHour', 'pinClearSeconds',
                          'autoLogoutSeconds', 'screensaverSeconds', 'zeitfensterDefaults'];
+  // ── Gerätespezifische Felder aus lgc_config_cloud ────────────
+  let typeOverrides = {};
   try {
     const raw = localStorage.getItem('lgc_config_cloud');
-    if (!raw) return;
-    const ov = JSON.parse(raw);
-    if (!ov || typeof ov !== 'object') return;
-    DEVICE_FIELDS.forEach(k => { if (k in ov) CONFIG[k] = ov[k]; });
-    // Typen aus Cloud nur übernehmen wenn vorhanden (nie mit leerem Array überschreiben)
-    if (Array.isArray(ov.types) && ov.types.length > 0) {
-      CONFIG.types = ov.types;
+    if (raw) {
+      const ov = JSON.parse(raw);
+      if (ov && typeof ov === 'object') {
+        DEVICE_FIELDS.forEach(k => { if (k in ov) CONFIG[k] = ov[k]; });
+        typeOverrides = ov.typeOverrides || {};
+        // Legacy: komplette types-Array in device config (vor v0.6)
+        if (Array.isArray(ov.types) && ov.types.length > 0 && !localStorage.getItem('lgc_cloud_types')) {
+          CONFIG.types = ov.types;
+        }
+      }
     }
+  } catch {}
+  // ── Globale Typen aus lgc_cloud_types + per-device Overrides ─
+  try {
+    const rawTypes = localStorage.getItem('lgc_cloud_types');
+    if (!rawTypes) return;
+    const cloudTypes = JSON.parse(rawTypes);
+    if (!Array.isArray(cloudTypes) || cloudTypes.length === 0) return;
+    CONFIG.types = cloudTypes.map(t => {
+      const ov = typeOverrides[t.key];
+      if (!ov) return t;
+      const merged = { ...t };
+      if ('disabled' in ov) merged.disabled = ov.disabled;
+      if (ov.zeitfenster)   merged.zeitfenster = ov.zeitfenster;
+      return merged;
+    });
   } catch {}
 })();
 
@@ -3435,9 +3453,18 @@ async function pushConfigToCloud(silent = false) {
     await ensureCloudFolder(cfg);
     // Nur gerätespezifische Felder hochladen — keine Nutzer, keine Cloud-Zugangsdaten
     const DEVICE_FIELDS = ['adminPin', 'dayBoundaryHour', 'pinClearSeconds',
-                           'autoLogoutSeconds', 'screensaverSeconds', 'zeitfensterDefaults', 'types'];
+                           'autoLogoutSeconds', 'screensaverSeconds', 'zeitfensterDefaults'];
     const exportable = {};
     DEVICE_FIELDS.forEach(k => { if (k in CONFIG) exportable[k] = CONFIG[k]; });
+    // Per-device Overrides: nur disabled + zeitfenster pro Typ
+    const typeOverrides = {};
+    (CONFIG.types || []).forEach(t => {
+      const ov = {};
+      if (t.disabled)    ov.disabled    = true;
+      if (t.zeitfenster) ov.zeitfenster = t.zeitfenster;
+      if (Object.keys(ov).length) typeOverrides[t.key] = ov;
+    });
+    if (Object.keys(typeOverrides).length) exportable.typeOverrides = typeOverrides;
     const payload = JSON.stringify({
       version: 1, exported: new Date().toISOString(), deviceId: DEVICE_ID,
       config: exportable,
@@ -3466,6 +3493,22 @@ async function silentConfigCheck() {
         showToast('Update verfügbar – Seite wird neu geladen…');
         setTimeout(() => location.reload(), 2000);
         return;
+      }
+    }
+  } catch {}
+  // ── Globale Typen aus lgc_types.json prüfen ─────────────────
+  try {
+    const rt = await fetch(`${cloudDavBase(cfg)}/lgc_types.json`, { headers: hdrs });
+    if (rt.ok) {
+      const typesData = await rt.json();
+      if (Array.isArray(typesData.types) && typesData.types.length > 0) {
+        const current  = localStorage.getItem('lgc_cloud_types') || '[]';
+        const incoming = JSON.stringify(typesData.types);
+        if (current !== incoming) {
+          localStorage.setItem('lgc_cloud_types', incoming);
+          location.reload();
+          return;
+        }
       }
     }
   } catch {}
