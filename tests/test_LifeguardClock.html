@@ -1261,12 +1261,22 @@ function applyCloudConfigOverlay(targetCfg, cloudData) {
   }
 }
 
-// Extrahierte Export-Logik (1:1 aus pushConfigToCloud)
+// Extrahierte Export-Logik (1:1 aus pushConfigToCloud, v0.6)
+// types werden NICHT mehr exportiert — sie liegen zentral in lgc_types.json
 const EXPORT_DEVICE_FIELDS = ['adminPin', 'dayBoundaryHour', 'pinClearSeconds',
-                              'autoLogoutSeconds', 'screensaverSeconds', 'zeitfensterDefaults', 'types'];
+                              'autoLogoutSeconds', 'screensaverSeconds', 'zeitfensterDefaults'];
 function buildExportableConfig(cfg) {
   const out = {};
   EXPORT_DEVICE_FIELDS.forEach(k => { if (k in cfg) out[k] = cfg[k]; });
+  // Per-device Overrides: disabled + zeitfenster pro Typ
+  const typeOverrides = {};
+  (cfg.types || []).forEach(t => {
+    const ov = {};
+    if (t.disabled)    ov.disabled    = true;
+    if (t.zeitfenster) ov.zeitfenster = t.zeitfenster;
+    if (Object.keys(ov).length) typeOverrides[t.key] = ov;
+  });
+  if (Object.keys(typeOverrides).length) out.typeOverrides = typeOverrides;
   return out;
 }
 
@@ -1329,26 +1339,15 @@ await test('cloud-Credentials werden NICHT übernommen', () => {
   assertEqual(cfg.cloud.url, 'lokal', 'cloud.url soll nicht überschrieben werden');
 });
 
-await test('types werden übernommen wenn Cloud-Array nicht leer', () => {
-  const cloudTypes = [{ key: 'anwesenheit', label: 'A', logType: 'a', color: 'blue' }];
-  const cfg = { types: [] };
-  applyCloudConfigOverlay(cfg, { types: cloudTypes });
-  assertEqual(cfg.types.length, 1, 'types aus Cloud sollen übernommen werden');
-  assertEqual(cfg.types[0].key, 'anwesenheit', 'Typ-Schlüssel soll stimmen');
-});
-
-await test('lokale types bleiben wenn Cloud-Array leer ist', () => {
+// Ab v0.6: types kommen aus lgc_types.json (lgc_cloud_types in localStorage), NICHT aus
+// der Gerätekonfiguration. applyCloudConfigOverlay übernimmt nur DEVICE_FIELDS + typeOverrides.
+await test('types werden NICHT aus device config übernommen (v0.6)', () => {
   const localTypes = [{ key: 'anwesenheit', label: 'A', logType: 'a', color: 'blue' }];
   const cfg = { types: localTypes };
-  applyCloudConfigOverlay(cfg, { types: [] });
-  assertEqual(cfg.types.length, 1, 'Lokale types sollen bei leerem Cloud-Array erhalten bleiben');
-});
-
-await test('lokale types bleiben wenn Cloud kein types-Feld hat', () => {
-  const localTypes = [{ key: 'anwesenheit', label: 'A', logType: 'a', color: 'blue' }];
-  const cfg = { types: localTypes };
+  // Legacy-Pfad: nur wenn kein lgc_cloud_types in localStorage UND cloudData.types vorhanden
   applyCloudConfigOverlay(cfg, { adminPin: '999999' });
-  assertEqual(cfg.types.length, 1, 'Lokale types sollen erhalten bleiben wenn Cloud kein types hat');
+  assertEqual(cfg.types.length, 1, 'types sollen durch Overlay nicht gelöscht werden');
+  assertEqual(cfg.types[0].key, 'anwesenheit', 'Lokale types sollen erhalten bleiben');
 });
 
 await test('unbekannte Felder werden ignoriert', () => {
@@ -1367,13 +1366,13 @@ await test('null als cloudData verursacht keinen Fehler', () => {
 /* ── Suite 21: buildExportableConfig ──────────────────────── */
 suite('buildExportableConfig (Push-Export)');
 
-await test('enthält adminPin, dayBoundaryHour, types', () => {
+await test('enthält adminPin, dayBoundaryHour; types NICHT mehr (v0.6)', () => {
   const cfg = { adminPin: '112233', dayBoundaryHour: 4, types: [{ key: 'a' }],
     cloud: { url: 'x' }, defaultUsers: [{ id: 'u' }] };
   const exp = buildExportableConfig(cfg);
   assert('adminPin'        in exp, 'adminPin soll exportiert werden');
   assert('dayBoundaryHour' in exp, 'dayBoundaryHour soll exportiert werden');
-  assert('types'           in exp, 'types soll exportiert werden');
+  assert(!('types' in exp), 'types darf NICHT mehr im Geräte-Export stehen (v0.6 → lgc_types.json)');
 });
 
 await test('enthält NICHT defaultUsers', () => {
@@ -1401,20 +1400,20 @@ await test('fehlende Felder werden nicht als undefined exportiert', () => {
   assert(!('screensaverSeconds' in exp), 'Nicht vorhandene Felder sollen nicht exportiert werden');
 });
 
-await test('Roundtrip: Export → Overlay → gleiche Gerätewerte', () => {
+await test('Roundtrip: Export → Overlay → gleiche Gerätewerte (ohne types)', () => {
   const original = { adminPin: '445566', dayBoundaryHour: 6, screensaverSeconds: 90,
     types: [{ key: 'anwesenheit', label: 'A', logType: 'a', color: 'blue' }],
     cloud: { url: 'x' }, defaultUsers: [{ id: 'u' }] };
   const exported = buildExportableConfig(original);
+  assert(!('types' in exported), 'types darf nicht im Export stehen');
   const restored = { adminPin: '000000', dayBoundaryHour: 4, screensaverSeconds: 60,
     types: [], cloud: { url: 'y' }, defaultUsers: [] };
   applyCloudConfigOverlay(restored, exported);
-  assertEqual(restored.adminPin,          '445566', 'adminPin soll nach Roundtrip stimmen');
-  assertEqual(restored.dayBoundaryHour,   6,        'dayBoundaryHour soll stimmen');
-  assertEqual(restored.screensaverSeconds, 90,      'screensaverSeconds soll stimmen');
-  assertEqual(restored.types.length,      1,        'types soll stimmen');
-  assertEqual(restored.cloud.url,        'y',       'cloud.url soll NICHT überschrieben worden sein');
-  assert(restored.defaultUsers.length === 0,        'defaultUsers sollen NICHT überschrieben worden sein');
+  assertEqual(restored.adminPin,           '445566', 'adminPin soll nach Roundtrip stimmen');
+  assertEqual(restored.dayBoundaryHour,    6,        'dayBoundaryHour soll stimmen');
+  assertEqual(restored.screensaverSeconds, 90,       'screensaverSeconds soll stimmen');
+  assertEqual(restored.cloud.url,         'y',       'cloud.url soll NICHT überschrieben worden sein');
+  assert(restored.defaultUsers.length === 0,         'defaultUsers sollen NICHT überschrieben worden sein');
 });
 
 /* ── Suite 22: checkDayBoundary ───────────────────────────── */
@@ -1511,31 +1510,24 @@ await test('zweiter Aufruf am gleichen Tag erzeugt keinen zweiten Stop', () => {
 /* ── Suite 23: Regressions-Tests (konkrete Bugs) ──────────── */
 suite('Regressions-Tests');
 
-// BUG: Kettenreaktion — Cloud hatte types:[], Overlay löschte lokale Types,
+// BUG (v0.5): Kettenreaktion — Cloud hatte types:[], Overlay löschte lokale Types,
 //      pushConfigToCloud exportierte dann [], nächster Pull spielte [] zurück → keine Buttons
-await test('Kettenreaktion: leere Cloud-types überschreiben nicht → Export enthält lokale types', () => {
-  // Schritt 1: config.js hat korrekte Types (Tablet-Zustand)
+// Ab v0.6 BEHOBEN: types werden nie in der Gerätekonfig exportiert (→ lgc_types.json)
+await test('Kettenreaktion unmöglich (v0.6): Export enthält keine types', () => {
   const localCfg = {
     adminPin: '000000', dayBoundaryHour: 4,
     types: [{ key: 'anwesenheit', label: 'Anwesenheit', logType: 'anwesenheit', color: 'blue' }],
     defaultUsers: [{ id: 'martin', name: 'Martin' }],
     cloud: { url: 'https://cloud.example.com', user: 'u', pass: 'p' },
   };
-  // Schritt 2: Cloud-Konfig hat types:[] (der alte Bug-Zustand)
-  const badCloudConfig = { adminPin: '000000', dayBoundaryHour: 4, types: [], defaultUsers: [] };
-  // Schritt 3: Overlay anwenden — types sollen NICHT gelöscht werden
-  applyCloudConfigOverlay(localCfg, badCloudConfig);
-  assertEqual(localCfg.types.length, 1, 'Lokale types sollen nach Overlay noch vorhanden sein');
-  // Schritt 4: Export für pushConfigToCloud
   const exported = buildExportableConfig(localCfg);
-  // Schritt 5: Export muss korrekte types enthalten, NICHT []
-  assert(Array.isArray(exported.types) && exported.types.length > 0,
-    'Exportierter Config darf types nicht leer exportieren nach Overlay mit types:[]');
-  assertEqual(exported.types[0].key, 'anwesenheit', 'Exportierte types müssen die lokalen sein');
-  // Schritt 6: Neues Gerät lädt diese exportierte Config → Overlay anwenden
-  const freshCfg = { adminPin: '999999', dayBoundaryHour: 4, types: [], defaultUsers: [] };
-  applyCloudConfigOverlay(freshCfg, exported);
-  assertEqual(freshCfg.types.length, 1, 'Nach Pull der korrekten Cloud-Config sollen types vorhanden sein');
+  // In v0.6 sind types NICHT im Export → Kettenreaktion über Gerätekonfig kann nicht eintreten
+  assert(!('types' in exported),
+    'types dürfen nicht im Geräte-Export stehen — werden via lgc_types.json verteilt');
+  // typeOverrides sind erlaubt, aber nur für disabled/zeitfenster
+  if ('typeOverrides' in exported) {
+    assert(typeof exported.typeOverrides === 'object', 'typeOverrides muss ein Objekt sein');
+  }
 });
 
 // BUG: defaultUsers aus Cloud-Config hat leere Liste → Nutzer weg nach Overlay

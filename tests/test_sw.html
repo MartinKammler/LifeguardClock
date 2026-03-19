@@ -42,19 +42,26 @@ function escHtml(s) {
    SW-Logik extrahiert (ohne Service Worker Globals)
    ══════════════════════════════════════════════════════════════ */
 
-const CACHE_NAME = 'lgc-shell-v3';
+const CACHE_NAME = 'lgc-shell-v9';
 const APP_SHELL = [
   './LifeguardClock.html',
   './manifest.json',
   './Logo.png',
 ];
+// Basename-Matching: kompatibel mit GitHub Pages Subdirectory (z. B. /repo/LifeguardClock.html)
+const APP_SHELL_NAMES = new Set(APP_SHELL.map(p => p.split('/').pop()));
 
-// Routing-Logik aus dem fetch-Handler extrahiert:
+// Routing-Logik aus dem fetch-Handler extrahiert (1:1 aus sw.js):
+const SW_ORIGIN = 'https://example.com';
 function classifyRequest(url) {
   if (!url.startsWith('http')) return 'ignore';
   const u = new URL(url);
-  if (u.pathname.endsWith('config.js') || u.pathname.includes('/remote.php/')) return 'network-first';
-  if (APP_SHELL.some(path => u.pathname.endsWith(path.replace('./', '/')))) return 'cache-first';
+  // Cross-Origin (Cloud/WebDAV): immer Network-Only
+  if (u.origin !== SW_ORIGIN) return 'network-only';
+  // config.js: immer Network-First
+  if (u.pathname.endsWith('/config.js')) return 'network-first';
+  // App-Shell: Cache-First via Basename
+  if (APP_SHELL_NAMES.has(u.pathname.split('/').pop())) return 'cache-first';
   return 'network-first';
 }
 
@@ -106,8 +113,10 @@ await test('config.js → network-first', () => {
   assertEqual(classifyRequest('https://example.com/path/config.js'), 'network-first');
 });
 
-await test('WebDAV remote.php → network-first', () => {
-  assertEqual(classifyRequest('https://cloud.example.com/remote.php/dav/files/user/'), 'network-first');
+await test('Cross-Origin (WebDAV, beliebiger Anbieter) → network-only', () => {
+  assertEqual(classifyRequest('https://cloud.example.com/remote.php/dav/files/user/'), 'network-only');
+  assertEqual(classifyRequest('https://storage.hetzner.com/dav/lgc/'), 'network-only');
+  assertEqual(classifyRequest('https://other-domain.org/file.json'), 'network-only');
 });
 
 await test('LifeguardClock.html → cache-first', () => {
@@ -134,19 +143,15 @@ await test('admin.html → network-first (nicht in APP_SHELL)', () => {
 /* ── Suite 3: APP_SHELL Pfad-Matching ─────────────────────────── */
 suite('APP_SHELL Pfad-Matching');
 
-await test('Pfad-Matching funktioniert mit und ohne Subdirectory', () => {
+await test('Basename-Matching: GitHub Pages Subdirectory → cache-first', () => {
   // Simuliert GitHub Pages: /LifeguardClock/LifeguardClock.html
-  assertEqual(classifyRequest('https://user.github.io/LifeguardClock/LifeguardClock.html'), 'cache-first');
-  assertEqual(classifyRequest('https://user.github.io/LifeguardClock/Logo.png'), 'cache-first');
+  assertEqual(classifyRequest('https://example.com/LifeguardClock/LifeguardClock.html'), 'cache-first');
+  assertEqual(classifyRequest('https://example.com/LifeguardClock/Logo.png'), 'cache-first');
 });
 
-await test('Ähnliche Dateinamen matchen nicht falsch', () => {
-  // NotLifeguardClock.html sollte nicht matchen — aber endsWith matched es trotzdem
-  // Das ist ein bekanntes Limit des einfachen Matching-Algorithmus
-  const result = classifyRequest('https://example.com/NotLifeguardClock.html');
-  // Dokumentiert: endsWith-basiertes Matching hat keine strikte Pfadgrenze
-  assert(result === 'cache-first' || result === 'network-first',
-    'Soll einen gültigen Routing-Typ zurückgeben');
+await test('Ähnliche Dateinamen werden korrekt abgelehnt', () => {
+  // Basename 'NotLifeguardClock.html' ist nicht in APP_SHELL_NAMES
+  assertEqual(classifyRequest('https://example.com/NotLifeguardClock.html'), 'network-first');
 });
 
 /* ── Suite 4: Edge Cases ──────────────────────────────────────── */

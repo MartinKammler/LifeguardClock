@@ -331,10 +331,15 @@ const COLOR_PALETTE = {
   blue:   { main: '#3b82f6', dim: 'rgba(59,130,246,.15)'  },
   green:  { main: '#22c55e', dim: 'rgba(34,197,94,.15)'   },
   amber:  { main: '#f59e0b', dim: 'rgba(245,158,11,.15)'  },
+  orange: { main: '#fb923c', dim: 'rgba(251,146,60,.15)'  },
   red:    { main: '#ef4444', dim: 'rgba(239,68,68,.15)'   },
+  lime:   { main: '#a3e635', dim: 'rgba(163,230,53,.15)'  },
+  cyan:   { main: '#22d3ee', dim: 'rgba(34,211,238,.15)'  },
   violet: { main: '#8b5cf6', dim: 'rgba(139,92,246,.15)'  },
+  pink:   { main: '#f472b6', dim: 'rgba(244,114,182,.15)' },
+  grey:   { main: '#9ca3af', dim: 'rgba(156,163,175,.15)' },
 };
-const _FALLBACK_COLOR_ORDER = ['blue','amber','red','green','violet'];
+const _FALLBACK_COLOR_ORDER = ['blue','amber','red','green','violet','orange','cyan','pink','lime','grey'];
 
 // Stabiler Hash-Fallback: gleicher logType → immer gleiche Farbe
 function _hashColor(str) {

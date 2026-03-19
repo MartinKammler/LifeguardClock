@@ -8,16 +8,23 @@ Alle relevanten Änderungen pro Release. Format orientiert sich an [Keep a Chang
 
 ### Hinzugefügt
 
-- **Zentrale Typen-Verwaltung** (`lgc_types.json`): Stempel-Typen werden jetzt zentral in der Cloud gespeichert und in `admin.html` verwaltet (Anlegen, Bearbeiten, Löschen) — gelten automatisch für alle Geräte
-- **Typen-Karte in admin.html**: Neue Karte „Stempel-Typen" — vollständige Formular-Bearbeitung aller Typ-Felder (key, label, logType, Farbe, Berechtigung, Max-Dauer, Pflichtpause, Zeitfenster, Mutex, AutoStart)
-- **Permissions automatisch aktuell**: Berechtigungs-Checkboxen beim Nutzer-Anlegen/Bearbeiten kommen jetzt aus den zentralen Typen — neue Typen erscheinen sofort
-- **Per-device Overrides**: Gerätekonfiguration enthält jetzt nur noch `typeOverrides` (disabled + zeitfenster pro Typ) statt vollständiger Typen-Kopie — Gerät-spezifisch ohne Redundanz
+- **Zentrale Typen-Verwaltung** (`lgc_types.json`): Stempel-Typen werden jetzt zentral in der Cloud gespeichert und in `admin.html` verwaltet (Anlegen, Bearbeiten, Löschen) — gelten automatisch für alle Geräte beim nächsten Start
+- **Typen-Karte in admin.html**: Neue Karte „Stempel-Typen" — vollständige Formular-Bearbeitung aller Typ-Felder (key, label, logType, Farbe, Berechtigung, Max-Dauer, Pflichtpause, Zeitfenster, Mutex, AutoStart); farbige Punkte zeigen Typ-Farbe direkt in der Liste
+- **Permissions automatisch aktuell**: Berechtigungs-Checkboxen beim Nutzer-Anlegen/Bearbeiten kommen jetzt aus den zentralen Typen — neue Typen erscheinen ohne Anpassung der Konfiguration sofort
+- **Per-device Overrides**: Gerätekonfiguration enthält jetzt nur noch `typeOverrides` (disabled + zeitfenster pro Typ) statt vollständiger Typen-Kopie
+- **Auto-Registrierung**: Findet `silentConfigCheck` keine `lgc_config_<deviceId>.json` in der Cloud (HTTP 404), wird die Gerätekonfiguration automatisch gepusht — Gerät erscheint danach in der admin.html-Gerätesuche
+- **10 Farben**: Farbpalette erweitert von 5 auf 10 — neu: `orange`, `lime`, `cyan`, `violet`, `pink`, `grey`; konsistent in LifeguardClock.html, admin.html, dashboard.html und editor.html
+- **Geräteinfo im Admin-PIN-Popup**: Zeigt Geräte-ID und Cloud-Sync-Status (Uhrzeit letzter Sync oder Fehlertext) direkt beim Admin-Login-Prompt
+- **„Gerät drehen"-Overlay nur auf Touchgeräten**: Media-Query `pointer: coarse` begrenzt das Hochformat-Overlay auf echte Mobilgeräte — erscheint nicht mehr auf Laptops oder Desktops
+- **PWA Statusleiste**: `viewport-fit=cover` + `background:#09090d` auf `<html>` — verhindert weißen Streifen im Statusleistenbereich auf Android/iOS
 
 ### Geändert
 
-- **`lgc_config_<deviceId>.json`**: Neues Format `v2` — enthält nur noch gerätespezifische Felder + `typeOverrides`, keine vollständige Typ-Definition mehr (Rückwärtskompatibilität zu altem Format gewährleistet)
+- **`lgc_config_<deviceId>.json`**: Neues Format `v2` — enthält nur noch gerätespezifische Felder + `typeOverrides`, keine vollständige Typ-Definition mehr (Rückwärtskompatibilität zu v1-Format gewährleistet)
 - **`config.js`**: `types`-Array dient nur noch als lokaler Fallback; globale Typen werden aus `lgc_types.json` geladen
-- **`silentConfigCheck`**: Prüft jetzt auch `lgc_types.json` — bei Änderung automatischer Reload
+- **`silentConfigCheck`**: Prüft jetzt zusätzlich `lgc_types.json` — bei Änderung automatischer Reload; fehlende Gerätekonfiguration löst Auto-Push aus
+- **Orientierungssperre**: JS `screen.orientation.lock()` entfernt — PWA-Manifest übernimmt Portrait-Erzwingung ohne Animations-Flackern beim Start
+- **Service Worker**: Cache auf `lgc-shell-v8` erhöht
 
 ---
 

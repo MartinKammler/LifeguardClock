@@ -2,7 +2,7 @@
 # Aufruf: .\make-release.ps1 [-Version "0.4"]
 
 param(
-    [string]$Version = "0.5"
+    [string]$Version = "0.6"
 )
 
 $ErrorActionPreference = 'Stop'
@@ -15,7 +15,7 @@ $include = @(
     "admin.html",
     "dashboard.html",
     "editor.html",
-    "einmalpins.html",
+    # einmalpins.html enthält echte Namen/PINs → wird nicht ins Release gepackt
     "sw.js",
     "manifest.json",
     "Logo.png",
@@ -24,7 +24,7 @@ $include = @(
     "admin_config.example.js",
     "admin-server.py",
     "admin-server.bat",
-    "fully-settings.json",
+    # fully-settings.json enthält persönliche Daten (Kiosk-PIN, Admin-PW, Nutzername) → nicht im Release
     "README.md",
     "DOKUMENTATION.md",
     "CHANGELOG.md",

@@ -23,6 +23,12 @@
       --green:   #4caf7d;
       --red:     #e05252;
       --amber:   #f5c842;
+      --orange:  #fb923c;
+      --violet:  #a78bfa;
+      --cyan:    #22d3ee;
+      --pink:    #f472b6;
+      --lime:    #a3e635;
+      --grey:    #9ca3af;
     }
 
     html, body {
@@ -947,7 +953,7 @@
   }
 
   function authHeader(creds) {
-    return 'Basic ' + btoa(`${creds.user}:${creds.pass}`);
+    return 'Basic ' + btoa(unescape(encodeURIComponent(`${creds.user}:${creds.pass}`)));
   }
 
   /* ── Status badge ──────────────────────────────────── */
@@ -1063,7 +1069,8 @@
   }
 
   function genId() {
-    return 'u' + Date.now();
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) return 'u' + crypto.randomUUID();
+    return 'u' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
   }
 
   function otpUsers() {
