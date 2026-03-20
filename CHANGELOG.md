@@ -4,7 +4,7 @@ Alle relevanten Änderungen pro Release. Format orientiert sich an [Keep a Chang
 
 ---
 
-## [0.7] – tbd
+## [0.7] – 2026-03-20
 
 ### Hinzugefügt
 
@@ -14,11 +14,22 @@ Alle relevanten Änderungen pro Release. Format orientiert sich an [Keep a Chang
 
 - **QR-Scanner**: BarcodeDetector durch jsQR ersetzt — funktioniert jetzt auf allen Browsern (Firefox, Safari/iOS, ältere Android-WebViews); jsQR wird bei Bedarf von CDN nachgeladen (`jsdelivr.net`)
 - **Dashboard Cloud- und Datei-Laden**: Erkennt und lädt jetzt beide Dateitypen — `lgc_pif_*` (per Nutzer) und `lgc_*_DATUM.json` (per Gerät); Einträge werden geräteübergreifend dedupliziert um Doppelzählung zu vermeiden wenn beide Quellen geladen werden
-- **Editor Cloud-Laden**: Zeigt `lgc_pif_*`-Dateien in der Dateiliste an (mit `(PIF)`-Label); lädt und speichert PIF-Format korrekt (`entries`-Feld statt `log`)
+- **Kachel-Layout Landscape-Tablets**: `@media (max-height: 640px)` sorgt dafür dass genau 3 Stempelkacheln auf den Schirm passen (getestet auf Fire 7, 1024×600 px) — überschreibt die 768px-Desktop-Paddings die vorher 52px Bottom-Abstand erzwangen; Kachelhöhe via `height: calc((100vh - 148px) / 3)`, Schriften und Buttons kompakter
+- **Editor Cloud-Laden**: Zeigt ausschließlich `lgc_pif_*`-Dateien im Dropdown — Gerätedateien können weiterhin per lokalem Datei-Picker geladen werden; PIF-Format wird korrekt geladen (`entries` → `log`) und gespeichert; Typen werden beim Cloud-Laden automatisch aus `lgc_types.json` aktualisiert (`lgc_cloud_types`-Fallback in `buildTypeMaps`)
+- **About-Dialog**: Splash-Logo vergrößert (240 px), GitHub-Link ergänzt
+
+### Behoben
+
+- **Service Worker cached `/remote.php/` im Proxy-Modus**: Wenn die App über den lokalen Proxy (`localhost`) läuft, wurden same-origin `/remote.php/…`-Requests fälschlicherweise in den Cache geschrieben — jetzt immer Network-Only
+- **XSS-Escaping editor.html**: `e.nutzer` im Edit-Input-`value`-Attribut und in der Anzeigespalte, `ti.label` im Typ-Badge, `t.logType`/`t.label` im Typ-Dropdown und Cloud-Picker-`href` / Dateiname jetzt konsequent über `escHtml()` escaped
+- **XSS-Escaping dashboard.html**: Typ-Labels (`T_INFO[t]?.label`) in Übersichts-, Tages-, Wochen- und Personen-Tabellen sowie Personennamen in Tages- und Wochen-Tabellenzeilen jetzt escaped
+- **Event-Listener-Leak dashboard.html**: `renderPersonFilter()` hat bei jedem `renderAll()`-Aufruf einen neuen Click-Handler am `#person-filter`-Element registriert — Listener wird jetzt einmalig beim Initialisieren gesetzt
+- **Versionsdrift**: `APP_VERSION` in `LifeguardClock.html` auf `'0.7'` aktualisiert
 
 ### Tests
 
 - **`test_LifeguardClock.html`**: Suite 34 für `mergeUserEntries` — 6 Testfälle (leere Eingabe, null, neue Einträge, Duplikate, Mischung, Sortierung)
+- **`test_sw.html`**: Neuer Testfall „same-origin `/remote.php/` (Proxy-Modus localhost) → network-only"
 
 ---
 

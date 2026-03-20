@@ -58,6 +58,8 @@ function classifyRequest(url) {
   const u = new URL(url);
   // Cross-Origin (Cloud/WebDAV): immer Network-Only
   if (u.origin !== SW_ORIGIN) return 'network-only';
+  // Same-Origin /remote.php/ (WebDAV via lokalem Proxy): nie cachen
+  if (u.pathname.startsWith('/remote.php/')) return 'network-only';
   // config.js: immer Network-First
   if (u.pathname.endsWith('/config.js')) return 'network-first';
   // App-Shell: Cache-First via Basename
@@ -117,6 +119,11 @@ await test('Cross-Origin (WebDAV, beliebiger Anbieter) → network-only', () => 
   assertEqual(classifyRequest('https://cloud.example.com/remote.php/dav/files/user/'), 'network-only');
   assertEqual(classifyRequest('https://storage.hetzner.com/dav/lgc/'), 'network-only');
   assertEqual(classifyRequest('https://other-domain.org/file.json'), 'network-only');
+});
+
+await test('same-origin /remote.php/ (Proxy-Modus localhost) → network-only', () => {
+  assertEqual(classifyRequest('https://example.com/remote.php/dav/files/user/lgc_users.json'), 'network-only');
+  assertEqual(classifyRequest('https://example.com/remote.php/dav/files/user/lgc_types.json'), 'network-only');
 });
 
 await test('LifeguardClock.html → cache-first', () => {

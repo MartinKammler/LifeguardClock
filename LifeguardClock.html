@@ -568,7 +568,7 @@
       display: flex;
       flex-direction: column;
       background: var(--surface);
-      border: 2px solid var(--border);
+      border: 5px solid var(--gc);
       border-radius: var(--r-l);
       overflow: hidden;
       transition: border-color 0.3s, box-shadow 0.3s;
@@ -942,6 +942,26 @@
       .admin-body { padding: 0 20px 0; }
     }
 
+    /* ─── LANDSCAPE COMPACT (Fire 7 u. ä.: ≤640 px Höhe) ────── */
+    /* Überschreibt 640px- und 768px-Regeln; muss danach stehen.  */
+    /* Kachel-Höhe: (100vh - 148px) / 3                           */
+    /*   148 = Header(115) + body-pad(12) + 3×gap(18) + Rundung   */
+    @media (max-height: 640px) {
+      .dash-body      { padding: 6px 12px; gap: 6px; }
+      .actions-pinned { padding: 0; }
+      .actions-scroll { padding: 0; gap: 6px; }
+
+      .action-group { height: calc((100vh - 148px) / 3); min-height: 0; }
+
+      .group-hdr          { padding: 8px 14px; }
+      .group-elapsed      { padding: 4px 14px 6px; }
+      .group-elapsed-time { font-size: clamp(18px, 4vw, 26px); }
+
+      .action-btn { min-height: 56px; gap: 4px; }
+      .btn-icon   { font-size: 22px; }
+      .btn-lbl    { font-size: 11px; }
+    }
+
     /* ─── GROUP NOTICE (Zeitfenster-Hinweis) ────────────────── */
     .group-notice {
       display: none;
@@ -956,6 +976,45 @@
     }
     .group-notice.visible { display: block; }
     .group-notice.urgent  { color: var(--red); background: var(--red-dim); }
+
+    /* ─── KOMPAKT-MODUS: inaktive Typen im Scroll-Bereich ────────── */
+    .action-group.compact {
+      min-height: 0;
+    }
+    .action-group.compact .group-elapsed,
+    .action-group.compact .group-timer,
+    .action-group.compact .group-notice {
+      display: none;
+    }
+    .action-group.compact .group-hdr {
+      padding: 10px 14px;
+      border-bottom: none;
+    }
+    .action-group.compact .group-btns {
+      display: flex;
+      padding-bottom: 8px;
+      background: var(--surface);
+    }
+    .action-group.compact .btn-stop {
+      display: none;
+    }
+    .action-group.compact .btn-start {
+      flex: 1;
+    }
+    .action-group.compact .action-btn {
+      min-height: 58px;
+    }
+
+    /* ─── PINNED: inaktiv → "Beginnen" volle Breite ─────────── */
+    #actions-pinned .action-group:not(.is-active) .group-btns {
+      display: flex;
+    }
+    #actions-pinned .action-group:not(.is-active) .btn-stop {
+      display: none;
+    }
+    #actions-pinned .action-group:not(.is-active) .btn-start {
+      flex: 1;
+    }
 
     /* ─── LAUFZEIT-ANZEIGE (immer sichtbar) ──────────────────── */
     .group-elapsed {
@@ -1196,6 +1255,15 @@
       -webkit-tap-highlight-color: transparent;
     }
     .btn-stopall:hover, .btn-stopall:active { background: var(--amber); color: #000; }
+    .btn-clearstamps {
+      height: 38px; padding: 0 13px; border-radius: var(--r-s);
+      border: 1px solid var(--red); background: var(--red-dim);
+      color: var(--red); font-family: 'Inter', sans-serif;
+      font-size: 13px; font-weight: 700; cursor: pointer;
+      white-space: nowrap; transition: all 0.18s;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .btn-clearstamps:hover, .btn-clearstamps:active { background: var(--red); color: #fff; }
     .btn-shutdown {
       height: 40px; padding: 0 14px; border-radius: var(--r);
       border: 1px solid var(--red); background: var(--red-dim);
@@ -1535,6 +1603,54 @@
       margin-top: 10px;
     }
 
+    /* ─── SPLASH OVERLAY ────────────────────────────────────── */
+    #splash-overlay {
+      position: fixed; inset: 0; z-index: 900;
+      background: rgba(0,0,0,0.82);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      display: flex; align-items: center; justify-content: center;
+      opacity: 0; pointer-events: none;
+      transition: opacity 0.22s;
+    }
+    #splash-overlay.visible { opacity: 1; pointer-events: all; }
+    .splash-card {
+      background: var(--surface);
+      border: 1px solid var(--border-2);
+      border-radius: var(--r-l);
+      padding: 36px 32px 28px;
+      max-width: 340px; width: 100%;
+      display: flex; flex-direction: column; align-items: center;
+      gap: 0;
+      box-shadow: 0 24px 80px rgba(0,0,0,0.7);
+      text-align: center;
+    }
+    .splash-logo { width: 240px; height: 240px; object-fit: contain; border-radius: 34px; margin-bottom: 20px; }
+    .splash-version {
+      font-size: 13px; font-weight: 700; color: rgba(255,255,255,0.55);
+      letter-spacing: 1px; text-transform: uppercase; margin-bottom: 20px;
+    }
+    .splash-divider {
+      width: 100%; height: 1px; background: var(--border);
+      margin-bottom: 16px;
+    }
+    .splash-license {
+      font-size: 13px; line-height: 1.8; color: rgba(255,255,255,0.75);
+    }
+    .splash-license a { color: var(--blue); text-decoration: none; }
+    .splash-close {
+      margin-top: 22px;
+      height: 38px; padding: 0 24px;
+      border-radius: var(--r-s);
+      border: 1px solid rgba(255,255,255,0.2);
+      background: rgba(255,255,255,0.08);
+      color: rgba(255,255,255,0.75);
+      font-family: 'Inter', sans-serif; font-size: 13px; font-weight: 600;
+      cursor: pointer; transition: all 0.15s;
+    }
+    .splash-close:hover { color: #fff; border-color: rgba(255,255,255,0.4); background: rgba(255,255,255,0.13); }
+    .app-brand { cursor: pointer; }
+
     /* ─── ADMIN PASSWORD OVERLAY ────────────────────────────── */
     #admin-pw-overlay {
       position: fixed; inset: 0;
@@ -1855,6 +1971,7 @@
     <div class="admin-actions">
       <button class="btn-kiosk-exit" id="btn-kiosk-exit" onclick="exitKioskMode()">&#x26F6; Vollbild beenden</button>
       <button class="btn-stopall"    id="btn-stopall">&#x23F9; Alle ausstempeln</button>
+      <button class="btn-clearstamps" id="btn-clearstamps">&#x1F5D1; Stempeldaten l&ouml;schen</button>
       <button class="btn-shutdown"   id="btn-shutdown">&#x23FB; Herunterfahren</button>
     </div>
     <div class="admin-tabs">
@@ -1900,6 +2017,27 @@
     <div class="cloud-section" id="cloud-section"></div>
   </div>
 
+</div>
+
+<!-- Splash Overlay -->
+<div id="splash-overlay" onclick="if(event.target===this)closeSplash()">
+  <div class="splash-card">
+    <img src="Logo.png" alt="Logo" class="splash-logo">
+    <div class="splash-version" id="splash-version">v—</div>
+    <div class="splash-divider"></div>
+    <div class="splash-license">
+      Copyright &copy; Martin Kammler<br>
+      Lizenz: <a href="https://www.gnu.org/licenses/gpl-3.0.html" target="_blank" rel="noopener noreferrer">
+        GNU General Public License v3
+      </a><br><br>
+      Dieses Programm ist freie Software. Du kannst es unter den<br>
+      Bedingungen der GPL v3 weitergeben und/oder verändern.<br><br>
+      <a href="https://github.com/MartinKammler/LifeguardClock" target="_blank" rel="noopener noreferrer">
+        github.com/MartinKammler/LifeguardClock
+      </a>
+    </div>
+    <button class="splash-close" onclick="closeSplash()">Schließen</button>
+  </div>
 </div>
 
 <!-- Confirm Modal -->
@@ -2145,7 +2283,7 @@ function getDeviceId() {
   return id;
 }
 const DEVICE_ID   = getDeviceId();
-const APP_VERSION = '0.6';
+const APP_VERSION = '0.7';
 
 /* ── Proxy-Erkennung (admin-server.py auf localhost) ─────────
    Wenn die App über den lokalen Python-Proxy läuft, werden alle
@@ -2205,8 +2343,16 @@ function isWeakPIN(pin) {
   return false;
 }
 
-// Typen aus config.js ableiten (deaktivierte Typen ausblenden)
-const TYPES     = (CONFIG.types || []).filter(t => !t.disabled).map(t => ({ ...t }));
+// Typen aus config.js ableiten (deaktivierte Typen ausblenden, nach order sortieren)
+const TYPES = (CONFIG.types || [])
+  .filter(t => !t.disabled)
+  .map((t, i) => ({ _origIdx: i, ...t }))
+  .sort((a, b) => {
+    const ao = a.order ?? Infinity, bo = b.order ?? Infinity;
+    if (ao !== bo) return ao - bo;
+    return a._origIdx - b._origIdx;  // gleiche order → Originalreihenfolge
+  })
+  .map(({ _origIdx, ...t }) => t);
 const TIME_KEYS = TYPES.filter(t => t.requiresZeitfenster).map(t => t.key);
 
 // Dynamische CSS-Badge-Klassen für Typ-Farben in Admin/Log-Ansicht
@@ -3016,6 +3162,26 @@ function syncDashboard() {
       }
     }
   });
+
+  // Aktive Typen dynamisch in den Pinned-Bereich verschieben
+  if (!IS_PROXY) {
+    const pinnedEl  = document.getElementById('actions-pinned');
+    const scrollEl  = document.getElementById('actions-scroll');
+    const anyActive = TYPES.some(t =>
+      !!state[t.key] && !(t.permissionKey && userPerms && !userPerms.includes(t.permissionKey))
+    );
+    // Immer in TYPES-Reihenfolge einhängen, damit die Reihenfolge nach
+    // dem Ausstempeln wiederhergestellt wird (appendChild ans Ende = korrekte Ordnung)
+    TYPES.forEach(type => {
+      if (type.permissionKey && userPerms && !userPerms.includes(type.permissionKey)) return;
+      const group = document.getElementById(`group-${type.key}`);
+      if (!group) return;
+      const isActive       = !!state[type.key];
+      const shouldBePinned = isActive || (!anyActive && type.pinned);
+      group.classList.toggle('compact', !shouldBePinned && !isActive);
+      (shouldBePinned ? pinnedEl : scrollEl).appendChild(group);
+    });
+  }
 }
 
 // Aktualisiert Countdown-Timer und Cooldown-Anzeigen für alle Typen mit maxDurationMs
@@ -3353,7 +3519,8 @@ async function pushUserPif(userId) {
   const user = getUsers().find(u => u.id === userId);
   if (!user) return;
   const month   = todayISO().slice(0, 7);
-  const entries = getLog().filter(e => e.nutzer === user.name);
+  const day     = todayISO();
+  const entries = getLog().filter(e => e.nutzer === user.name && e.zeitstempel?.startsWith(day));
   const payload = JSON.stringify({
     version:  1,
     userId,
@@ -3565,9 +3732,10 @@ async function silentConfigCheck() {
   const cfg = getCloudConfig();
   if (!isCloudConfigured(cfg)) return;
   const hdrs = { 'Authorization': 'Basic ' + btoa(unescape(encodeURIComponent(`${cfg.user}:${cfg.pass}`))) };
+  const noCache = { headers: hdrs, cache: 'no-store' };
   // ── Deploy-Signal prüfen (alle Geräte) ──────────────────────
   try {
-    const rd = await fetch(`${cloudDavBase(cfg)}/lgc_deploy.json`, { headers: hdrs });
+    const rd = await fetch(`${cloudDavBase(cfg)}/lgc_deploy.json`, noCache);
     if (rd.ok) {
       const deploy = await rd.json();
       const sig = deploy.deployedAt || '';
@@ -3582,7 +3750,7 @@ async function silentConfigCheck() {
   } catch {}
   // ── Globale Typen aus lgc_types.json prüfen ─────────────────
   try {
-    const rt = await fetch(`${cloudDavBase(cfg)}/lgc_types.json`, { headers: hdrs });
+    const rt = await fetch(`${cloudDavBase(cfg)}/lgc_types.json`, noCache);
     if (rt.ok) {
       const typesData = await rt.json();
       if (Array.isArray(typesData.types) && typesData.types.length > 0) {
@@ -3598,7 +3766,7 @@ async function silentConfigCheck() {
   } catch {}
   // ── Gerätespezifische Konfiguration prüfen ───────────────────
   try {
-    const r = await fetch(`${cloudDavBase(cfg)}/lgc_config_${DEVICE_ID}.json`, { headers: hdrs });
+    const r = await fetch(`${cloudDavBase(cfg)}/lgc_config_${DEVICE_ID}.json`, noCache);
     if (!r.ok) { if (r.status === 404) pushConfigToCloud(true); return; }
     const data = await r.json();
     if (!data.config || typeof data.config !== 'object') return;
@@ -4823,6 +4991,49 @@ document.getElementById('btn-clr').addEventListener('click', () => {
   });
 });
 
+// Löscht NUR Stempeldaten: Logs, Backups, State, Session.
+// Alles andere (Cloud-Config, Nutzer, Passwort, Zeitfenster, Geräte-ID, Typen etc.) bleibt.
+function clearStampData() {
+  const toDelete = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (!k || !k.startsWith('lgc_')) continue;
+    if (k.startsWith('lgc_log_') || k.startsWith('lgc_backup_') ||
+        k === 'lgc_state' || k === 'lgc_session') {
+      toDelete.push(k);
+    }
+  }
+  toDelete.forEach(k => localStorage.removeItem(k));
+}
+
+document.getElementById('btn-clearstamps').addEventListener('click', () => {
+  const logKeys = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (k && k.startsWith('lgc_log_')) logKeys.push(k);
+  }
+  const total = logKeys.reduce((n, k) => {
+    try { return n + JSON.parse(localStorage.getItem(k) || '[]').length; } catch { return n; }
+  }, 0);
+  showConfirm(
+    `Alle Stempeldaten auf diesem Gerät löschen?\n\n` +
+    `Betroffen:\n` +
+    `• ${total} Stempeleinträge (${logKeys.length} Monat${logKeys.length !== 1 ? 'e' : ''})\n` +
+    `• Alle lokalen Backups\n` +
+    `• Aktive Ein-/Ausstempel-Zustände\n\n` +
+    `Erhalten bleiben:\n` +
+    `• Nutzer & PINs\n` +
+    `• Cloud-Zugangsdaten & Sync\n` +
+    `• Admin-Passwort\n` +
+    `• Zeitfenster & Typ-Konfiguration`,
+    () => {
+      clearStampData();
+      renderAdmin();
+      showToast('Alle Stempeldaten gelöscht');
+    }
+  );
+});
+
 // Löscht alle Stempel-Daten dieses Geräts (Logs aller Jahre, Backups, Zustand, Session).
 // Konfiguration, Gerät-ID, Nutzer und Cloud-Zugangsdaten bleiben erhalten.
 function resetAllLocalData() {
@@ -5040,12 +5251,35 @@ function moveSsClock() {
   el.style.top  = (5 + Math.random() * (maxY - 5)).toFixed(1) + 'vh';
 }
 
-// Any interaction on the screensaver dismisses it
+// Screensaver schließen: der auslösende Touch/Klick soll NICHT
+// gleichzeitig eine PIN-Taste drücken. Alle Folge-Events der gleichen
+// Berührung (touchend, mousedown, mouseup, click) werden geblockt,
+// bis der Finger wieder gehoben wurde (= click-Event abgeschlossen).
+let _ssDismissed = false;
+
 ['touchstart', 'mousedown', 'keydown'].forEach(evt => {
-  document.addEventListener(evt, () => {
-    if (ssActive) hideScreensaver();
+  document.addEventListener(evt, e => {
+    if (ssActive) {
+      hideScreensaver();
+      if (evt !== 'keydown') _ssDismissed = true;
+      e.stopPropagation();
+    }
   }, { capture: true });
 });
+
+// touchend und click (= Finger weg) der gleichen Berührung abfangen
+document.addEventListener('touchend', e => {
+  if (_ssDismissed) e.stopPropagation();
+}, { capture: true });
+
+document.addEventListener('mouseup', e => {
+  if (_ssDismissed) e.stopPropagation();
+}, { capture: true });
+
+// click ist immer das letzte synthetische Event – danach Flag löschen
+document.addEventListener('click', e => {
+  if (_ssDismissed) { _ssDismissed = false; e.stopPropagation(); }
+}, { capture: true });
 
 // Interactions on the login screen reset the ss idle timer
 ['touchstart', 'mousedown', 'keydown'].forEach(evt => {
@@ -5068,6 +5302,16 @@ syncUsersFromCloud(true).then(ok => {
 
 // Einrichtungs-Button anzeigen wenn Cloud nicht konfiguriert
 checkCloudSetupButton();
+
+/* ── SPLASH ─────────────────────────────────────────────────── */
+function openSplash() {
+  document.getElementById('splash-version').textContent = 'v' + APP_VERSION;
+  document.getElementById('splash-overlay').classList.add('visible');
+}
+function closeSplash() {
+  document.getElementById('splash-overlay').classList.remove('visible');
+}
+document.querySelector('.app-brand').addEventListener('click', openSplash);
 
 // Stille Konfigurationsprüfung beim Start
 setTimeout(() => silentConfigCheck(), 3000);
@@ -5225,7 +5469,7 @@ function handleQrResult(raw) {
 document.body.classList.add('orientation-ready');
 
 // ── Service Worker registrieren ───────────────────────────────
-if ('serviceWorker' in navigator) {
+if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   navigator.serviceWorker.register('./sw.js').catch(err => {
     console.warn('SW-Registrierung fehlgeschlagen:', err);
   });

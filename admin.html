@@ -577,9 +577,9 @@
   <div class="card" id="qr-card">
     <div class="card-header" id="qr-card-toggle">
       <h2>&#128241; Einrichtungs-QR f&uuml;r Mitglieder</h2>
-      <span class="toggle-icon" id="qr-toggle-icon">&#9660;</span>
+      <span class="toggle-icon" id="qr-toggle-icon">&#9654;</span>
     </div>
-    <div class="card-body" id="qr-card-body">
+    <div class="card-body" id="qr-card-body" style="display:none">
       <p class="tip" style="margin-bottom:12px">
         Zugangsdaten des Cloud-Sync-Nutzers (z.&nbsp;B. <code>lgc-sync</code>) eingeben.
         Mitglieder scannen den QR-Code in der App &rarr; Cloud wird automatisch eingerichtet &mdash; ohne Admin-Zugang.
@@ -731,6 +731,11 @@
             <span class="cfg-hint">Schließen sich gegenseitig aus</span>
           </div>
           <div class="cfg-field-row">
+            <label>Reihenfolge</label>
+            <input type="number" id="tf-order" class="cfg-inp" min="1" placeholder="leer = hinten">
+            <span class="cfg-hint">Niedrigere Zahl = weiter vorne (Lücken erlaubt)</span>
+          </div>
+          <div class="cfg-field-row">
             <label>Optionen</label>
             <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
               <input type="checkbox" id="tf-pinned"> <span>Pinned (immer sichtbar)</span>
@@ -800,6 +805,11 @@
             <label for="cfg-screensaver">Screensaver</label>
             <input type="number" id="cfg-screensaver" min="10" class="cfg-inp">
             <span class="cfg-hint">Sekunden Inaktivität bis zum Screensaver</span>
+          </div>
+          <div class="cfg-field-row">
+            <label for="cfg-pin-clear">PIN-Reset</label>
+            <input type="number" id="cfg-pin-clear" min="0" class="cfg-inp">
+            <span class="cfg-hint">Sekunden bis unvollständige PIN gelöscht wird (0 = aus)</span>
           </div>
         </div>
 
@@ -1708,6 +1718,7 @@
     document.getElementById('tf-cooldown').value  = t.cooldownMs    ? Math.round(t.cooldownMs    / 60000) : '';
     document.getElementById('tf-autostart').value = (t.autoStartKeys || []).join(', ');
     document.getElementById('tf-mutex').value     = (t.mutexKeys     || []).join(', ');
+    document.getElementById('tf-order').value         = t.order != null ? t.order : '';
     document.getElementById('tf-pinned').checked      = !!t.pinned;
     document.getElementById('tf-requireszf').checked  = !!t.requiresZeitfenster;
     renderTypeFormZf(t.zeitfenster || {}, !!t.requiresZeitfenster);
@@ -1748,6 +1759,7 @@
     const cdMin   = parseInt(document.getElementById('tf-cooldown').value) || 0;
     const autoStr = document.getElementById('tf-autostart').value;
     const muxStr  = document.getElementById('tf-mutex').value;
+    const orderVal = parseInt(document.getElementById('tf-order').value);
     const pinned  = document.getElementById('tf-pinned').checked;
     const reqZf   = document.getElementById('tf-requireszf').checked;
 
@@ -1761,6 +1773,7 @@
     });
 
     const t = { key, label, logType, color };
+    if (!isNaN(orderVal) && orderVal > 0) t.order = orderVal;
     if (pinned)          t.pinned = true;
     if (reqZf)           t.requiresZeitfenster = true;
     if (maxMin > 0)      t.maxDurationMs = maxMin * 60000;
@@ -1912,6 +1925,7 @@
       document.getElementById('cfg-admin-pin').value    = cfg.adminPin ?? '';
       document.getElementById('cfg-day-boundary').value = cfg.dayBoundaryHour ?? 4;
       document.getElementById('cfg-screensaver').value  = cfg.screensaverSeconds ?? 60;
+      document.getElementById('cfg-pin-clear').value    = cfg.pinClearSeconds ?? 5;
 
       // Per-device overrides aus typeOverrides mergen (neue Format)
       // Fallback: legacy types-Array aus alter Gerätekonfig
@@ -1953,6 +1967,7 @@
     }
     const dayBoundary = parseInt(document.getElementById('cfg-day-boundary').value) || 4;
     const screensaver = parseInt(document.getElementById('cfg-screensaver').value) || 60;
+    const pinClear    = parseInt(document.getElementById('cfg-pin-clear').value) || 0;
 
     // Per-device typeOverrides (nur disabled + zeitfenster)
     const typeOverrides = {};
@@ -1965,7 +1980,7 @@
 
     // Nur gerätespezifische Felder speichern — types/cloud/defaultUsers nie in Gerätekonfig
     const { defaultUsers: _du, removedUsers: _ru, cloud: _cl, types: _ty, ...cfgBase } = (_cfgFull || {});
-    const merged = { ...cfgBase, dayBoundaryHour: dayBoundary, screensaverSeconds: screensaver };
+    const merged = { ...cfgBase, dayBoundaryHour: dayBoundary, screensaverSeconds: screensaver, pinClearSeconds: pinClear };
     if (Object.keys(typeOverrides).length) merged.typeOverrides = typeOverrides;
     if (adminPin) merged.adminPin = adminPin;
 
