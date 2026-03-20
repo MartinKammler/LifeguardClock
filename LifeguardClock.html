@@ -2187,7 +2187,9 @@ function getUsers() {
     return defaults;
   }
 
-  // Gelöschte Einträge aus stored entfernen
+  // Strukturell ungültige Einträge verwerfen, dann gelöschte entfernen
+  stored = stored.filter(u => u && typeof u.id === 'string' && u.id
+                            && typeof u.name === 'string');
   stored = stored.filter(u => !removeIds.has(u.id));
   // Fehlende Default-Einträge ergänzen (bereits gefiltert und geklont)
   const storedIds = new Set(stored.map(u => u.id));
@@ -2233,7 +2235,11 @@ function saveUsers(list) {
     if (!rawTypes) return;
     const cloudTypes = JSON.parse(rawTypes);
     if (!Array.isArray(cloudTypes) || cloudTypes.length === 0) return;
-    CONFIG.types = cloudTypes.map(t => {
+    // Strukturell ungültige Typ-Einträge verwerfen (fehlendes key oder logType)
+    const validTypes = cloudTypes.filter(t => t && typeof t.key === 'string' && t.key
+                                              && typeof t.logType === 'string' && t.logType);
+    if (validTypes.length === 0) return;
+    CONFIG.types = validTypes.map(t => {
       const ov = typeOverrides[t.key];
       if (!ov) return t;
       const merged = { ...t };
@@ -3073,12 +3079,14 @@ function renderDashboardHTML(user) {
         <div class="group-notice" id="notice-${type.key}"></div>
         <div class="group-btns">
           <button class="action-btn btn-start" id="start-${type.key}"
-            onclick="handleAction('${type.key}','start')">
+            data-type="${escHtml(type.key)}" data-action="start"
+            onclick="handleAction(this.dataset.type,this.dataset.action)">
             <span class="btn-icon">&#x25B6;</span>
             <span class="btn-lbl">Beginnen</span>
           </button>
           <button class="action-btn btn-stop" id="stop-${type.key}"
-            onclick="handleAction('${type.key}','stop')">
+            data-type="${escHtml(type.key)}" data-action="stop"
+            onclick="handleAction(this.dataset.type,this.dataset.action)">
             <span class="btn-icon">&#x23F9;</span>
             <span class="btn-lbl">Beenden</span>
           </button>
@@ -4125,10 +4133,12 @@ function renderStundenOverview() {
     }).join('');
 
     const stopBtn = `<button class="btn-user-stop" ${hasActive ? '' : 'disabled'}
-      onclick="stopUserSessions('${uid}','${name.replace(/'/g,'\\\'')}')"
+      data-uid="${escHtml(uid)}" data-name="${escHtml(name)}"
+      onclick="stopUserSessions(this.dataset.uid,this.dataset.name)"
       title="Alle aktiven Sitzungen beenden">&#x23F9; Ausstempeln</button>`;
     const editBtn = `<button class="btn-user-edit"
-      onclick="openEditModal('${name.replace(/'/g,'\\\'')}')"
+      data-name="${escHtml(name)}"
+      onclick="openEditModal(this.dataset.name)"
       title="Eintr&auml;ge bearbeiten">&#x270E; Bearbeiten</button>`;
 
     return `<tr>
@@ -4211,7 +4221,7 @@ function renderModalEntries() {
       ? `<span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-3)">${fmtDuration(e.dauer_ms)}</span>`
       : '';
     return `<tr class="${del ? 'deleted' : ''}">
-      <td><span class="badge badge-${tc}">${tl}</span></td>
+      <td><span class="badge badge-${tc}">${escHtml(tl)}</span></td>
       <td><span class="badge badge-${ac}">${al}</span>${durStr}</td>
       <td><input class="edit-ts" type="datetime-local" step="1" value="${ts}"
           ${del ? 'disabled' : ''} onchange="updateEntryTs(${i},this.value)"></td>
@@ -5148,9 +5158,9 @@ document.addEventListener('dragstart',       e => e.preventDefault());
 document.addEventListener('selectstart',     e => e.preventDefault());
 // Layout ist position:fixed – kein globales touchmove-preventDefault nötig
 
-// ── Orientierung sperren (Querformat bevorzugt für Tablets) ──
+// ── Orientierung sperren (Portrait – konsistent mit Manifest und CSS-Fallback) ──
 try {
-  screen.orientation?.lock?.('landscape').catch(() => {});
+  screen.orientation?.lock?.('portrait').catch(() => {});
 } catch {}
 
 
@@ -5389,8 +5399,15 @@ async function startQrScanner() {
   if (typeof jsQR === 'undefined') {
     await new Promise((resolve, reject) => {
       const s = document.createElement('script');
-      s.src = 'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js';
-      s.onload = resolve; s.onerror = reject;
+      // Lokale Kopie bevorzugen (Offline/Kiosk); CDN als Fallback
+      s.src = 'jsqr.min.js';
+      s.onload = resolve;
+      s.onerror = () => {
+        const fb = document.createElement('script');
+        fb.src = 'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js';
+        fb.onload = resolve; fb.onerror = reject;
+        document.head.appendChild(fb);
+      };
       document.head.appendChild(s);
     });
   }

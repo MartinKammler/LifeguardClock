@@ -848,11 +848,19 @@
           const iso = `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
           const has = daySet.has(iso);
           html += `<div class="cal-day${has ? ' has-data' : ''}"
-            ${has ? `onclick="jumpToDay('${iso}')" title="${fmtDateShort(iso)}"` : ''}
+            ${has ? `data-iso="${iso}" title="${fmtDateShort(iso)}"` : ''}
           >${d}</div>`;
         }
       }
-      document.getElementById('cal-grid').innerHTML = html;
+      // Altes Element durch frisches ersetzen – verhindert akkumulierte Event-Listener
+      const oldGrid = document.getElementById('cal-grid');
+      const calGrid = oldGrid.cloneNode(false);
+      calGrid.innerHTML = html;
+      calGrid.addEventListener('click', e => {
+        const iso = e.target.closest('[data-iso]')?.dataset.iso;
+        if (iso) jumpToDay(iso);
+      });
+      oldGrid.replaceWith(calGrid);
     }
 
     function jumpToDay(iso) {

@@ -430,7 +430,7 @@ function buildTypeMaps() {
 function populateTypSelect() {
   const sel = document.getElementById('add-typ');
   sel.innerHTML = _TYPES.map(t =>
-    `<option value="${t.logType}">${t.label}</option>`
+    `<option value="${escHtml(t.logType)}">${escHtml(t.label)}</option>`
   ).join('');
 }
 
@@ -925,7 +925,7 @@ function renderTimeline() {
   const usedLogTypes = new Set(log.map(e => e.typ));
   const legendHtml = '<div class="tl-legend">' +
     _TYPES.filter(ti => usedLogTypes.has(ti.logType)).map(ti =>
-      `<div class="tl-legend-item"><div class="tl-legend-dot" style="background:${ti.main}"></div>${ti.label}</div>`
+      `<div class="tl-legend-item"><div class="tl-legend-dot" style="background:${ti.main}"></div>${escHtml(ti.label)}</div>`
     ).join('') +
     '</div>';
 
@@ -956,7 +956,7 @@ function renderTimeline() {
           const left = ((s - tMin) / tRange * 100).toFixed(2);
           const width = ((en - s) / tRange * 100).toFixed(2);
           segs += `<div class="tl-seg" style="left:${left}%;width:${width}%;background:${ti.main}"
-            title="${person} · ${ti.label} · ${fmtTime(openStart.zeitstempel)}–${fmtTime(e.zeitstempel)} (${fmtMs(e.dauer_ms)})"></div>`;
+            title="${escHtml(person)} · ${escHtml(ti.label)} · ${fmtTime(openStart.zeitstempel)}–${fmtTime(e.zeitstempel)} (${fmtMs(e.dauer_ms)})"></div>`;
           openStart = null;
         }
       }
@@ -970,7 +970,7 @@ function renderTimeline() {
       rowsHtml += `<div class="tl-row">
         <div class="tl-label">
           <div class="tl-person" title="${escHtml(person)}">${escHtml(person)}</div>
-          <div class="tl-ltype" style="color:${ti.main}">${ti.label}</div>
+          <div class="tl-ltype" style="color:${ti.main}">${escHtml(ti.label)}</div>
         </div>
         <div class="tl-track">${segs}</div>
       </div>`;
@@ -978,7 +978,7 @@ function renderTimeline() {
   }
 
   el.innerHTML = `<div class="tl-header">
-      <span class="tl-date">${logData.logicalDay || ''}</span>
+      <span class="tl-date">${escHtml(logData.logicalDay || '')}</span>
       <span class="tl-range">${fmtTime(new Date(tMin).toISOString())} – ${fmtTime(new Date(tMax).toISOString())}</span>
     </div>
     ${legendHtml}

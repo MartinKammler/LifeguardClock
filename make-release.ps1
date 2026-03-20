@@ -2,7 +2,7 @@
 # Aufruf: .\make-release.ps1 [-Version "0.4"]
 
 param(
-    [string]$Version = "0.6"
+    [string]$Version = "0.7"
 )
 
 $ErrorActionPreference = 'Stop'
@@ -17,6 +17,7 @@ $include = @(
     "editor.html",
     # einmalpins.html enthält echte Namen/PINs → wird nicht ins Release gepackt
     "sw.js",
+    "jsqr.min.js",
     "manifest.json",
     "Logo.png",
     "Logo-icon.png",

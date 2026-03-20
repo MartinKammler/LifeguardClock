@@ -42,11 +42,12 @@ function escHtml(s) {
    SW-Logik extrahiert (ohne Service Worker Globals)
    ══════════════════════════════════════════════════════════════ */
 
-const CACHE_NAME = 'lgc-shell-v9';
+const CACHE_NAME = 'lgc-shell-v11';
 const APP_SHELL = [
   './LifeguardClock.html',
   './manifest.json',
   './Logo.png',
+  './jsqr.min.js',
 ];
 // Basename-Matching: kompatibel mit GitHub Pages Subdirectory (z. B. /repo/LifeguardClock.html)
 const APP_SHELL_NAMES = new Set(APP_SHELL.map(p => p.split('/').pop()));

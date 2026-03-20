@@ -4,6 +4,27 @@ Alle relevanten Änderungen pro Release. Format orientiert sich an [Keep a Chang
 
 ---
 
+## [Unreleased]
+
+### Hinzugefügt
+
+- **jsQR lokal gebündelt** (`jsqr.min.js`): QR-Scanner lädt jsQR jetzt aus dem lokalen Paket statt direkt vom CDN; CDN bleibt als Fallback erhalten — funktioniert jetzt auch im Offline-/Kiosk-Betrieb ohne initiale Internetverbindung; `jsqr.min.js` ist Teil des Release-Pakets und wird vom Service Worker (Cache `lgc-shell-v11`) gecacht
+
+### Behoben
+
+- **XSS-Escaping editor.html Timeline**: Typ-Labels (`ti.label`) in Legende, Zeilen-Header und Segment-`title`-Attributen, sowie `logicalDay` im Timeline-Header jetzt über `escHtml()` escaped — verhindert HTML-Injection durch manipulierte Cloud-Typen oder Logdateien
+- **dashboard.html `jumpToDay` onclick entfernt**: Kalender-Tage nutzen jetzt `data-iso`-Attribute + Event-Delegation statt inline `onclick="jumpToDay('...')"` — kein inline-JS mehr im Kalender; Event-Listener wird via `cloneNode` + `replaceWith` einmalig gesetzt um Akkumulation bei mehrfachem `renderAll()` zu verhindern
+- **Inline-onclick `handleAction`**: `type.key` wird jetzt über `data-type`/`data-action`-Attribute übergeben statt direkt in den onclick-String interpoliert
+- **Schema-Validierung `lgc_users`**: Einträge ohne `id` (string, nicht leer) oder ohne `name` (string) werden in `getUsers()` verworfen
+- **Schema-Validierung Cloud-Typen**: Typ-Einträge ohne `key` oder `logType` in `lgc_cloud_types` werden vor der Übernahme in `CONFIG.types` gefiltert
+- **Service Worker Cache-Version** auf `lgc-shell-v11` erhöht um `jsqr.min.js` in den App-Shell-Cache aufzunehmen
+
+### Tests
+
+- **`test_LifeguardClock.html`**: Suite 35 `getUsers() Schema-Validierung` (6 Fälle); Suite 36 `filterValidCloudTypes()` (7 Fälle); Suite 37 `escHtml XSS-Escaping` (7 Fälle)
+
+---
+
 ## [0.7] – 2026-03-20
 
 ### Hinzugefügt
@@ -20,9 +41,12 @@ Alle relevanten Änderungen pro Release. Format orientiert sich an [Keep a Chang
 
 ### Behoben
 
+- **Service Worker Cache-Version** auf `lgc-shell-v10` erhöht — erzwingt Cache-Update auf installierten PWAs so dass der neue jsQR-Scanner ausgeliefert wird statt des gecachten v0.6-Stands (mit BarcodeDetector)
 - **Service Worker cached `/remote.php/` im Proxy-Modus**: Wenn die App über den lokalen Proxy (`localhost`) läuft, wurden same-origin `/remote.php/…`-Requests fälschlicherweise in den Cache geschrieben — jetzt immer Network-Only
-- **XSS-Escaping editor.html**: `e.nutzer` im Edit-Input-`value`-Attribut und in der Anzeigespalte, `ti.label` im Typ-Badge, `t.logType`/`t.label` im Typ-Dropdown und Cloud-Picker-`href` / Dateiname jetzt konsequent über `escHtml()` escaped
+- **XSS-Escaping editor.html**: `e.nutzer` im Edit-Input-`value`-Attribut und in der Anzeigespalte, `ti.label` im Typ-Badge, `t.logType`/`t.label` im Typ-Dropdown und Cloud-Picker-`href` / Dateiname jetzt konsequent über `escHtml()` escaped; `populateTypSelect()` escaped jetzt `t.logType` und `t.label`
 - **XSS-Escaping dashboard.html**: Typ-Labels (`T_INFO[t]?.label`) in Übersichts-, Tages-, Wochen- und Personen-Tabellen sowie Personennamen in Tages- und Wochen-Tabellenzeilen jetzt escaped
+- **XSS-Escaping LifeguardClock.html**: `tl` (Typ-Label) im Badge der Edit-Modal-Tabelle escaped; `stopUserSessions`- und `openEditModal`-Buttons nutzen jetzt `data-uid`/`data-name`-Attribute statt unsicherer String-Interpolation im `onclick`-Handler (verhindert JS-Injection durch Sonderzeichen in Benutzernamen)
+- **Orientierungs-Inkonsistenz**: `screen.orientation.lock()` rief bisher `'landscape'` auf — widerspricht Manifest (`"orientation": "portrait"`) und CSS-Fallback (zeigt „Bitte Gerät drehen" im Querformat); jetzt `'portrait'`
 - **Event-Listener-Leak dashboard.html**: `renderPersonFilter()` hat bei jedem `renderAll()`-Aufruf einen neuen Click-Handler am `#person-filter`-Element registriert — Listener wird jetzt einmalig beim Initialisieren gesetzt
 - **Versionsdrift**: `APP_VERSION` in `LifeguardClock.html` auf `'0.7'` aktualisiert
 
