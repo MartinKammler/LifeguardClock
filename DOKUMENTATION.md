@@ -562,21 +562,37 @@ Nicht kompatibel (kein WebDAV): Google Drive, Dropbox, iCloud Drive, OneDrive Co
 
 ### Cloud-Sync – Log-Dateien
 
-Jedes Gerät schreibt seine eigenen Dateien in den Ordner `LifeguardClock/` auf den WebDAV-Server:
+Alle Dateien landen im Ordner `LifeguardClock/` auf dem WebDAV-Server:
 
 | Datei                                    | Inhalt                                         |
 |------------------------------------------|------------------------------------------------|
 | `lgc_types.json`                  | Zentrale Stempel-Typ-Definitionen (alle Geräte)|
 | `lgc_users.json`                  | Nutzerliste, PINs, Berechtigungen (alle Geräte)|
 | `lgc_config_<deviceId>.json`      | Geräte-Overrides: deaktivierte Typen, Zeitfenster |
-| `lgc_[deviceId]_YYYY-MM-DD.json`  | Tages-Snapshot dieses Geräts                   |
+| `lgc_pif_<userId>_YYYY-MM.json`   | Persönliche Stempel-Daten pro Nutzer (monatlich)|
+| `lgc_[deviceId]_YYYY-MM-DD.json`  | Tages-Snapshot dieses Geräts (Vollbackup)      |
 | `lgc_[deviceId]_latest.json`      | Aktuellster Stand (wird bei jedem Sync ersetzt)|
 
 Die `deviceId` stammt aus `CONFIG.deviceId` (z. B. `steg`) oder wird automatisch als
 lesbarer Kurzname generiert (`ipad-3f7a`, `android-9b2c` usw.).
 
-**Multi-Gerät:** Mehrere Geräte können gleichzeitig stempeln und laden ihre Dateien
-unabhängig voneinander hoch. Das Auswertungs-Dashboard kann alle Gerätedateien zusammenführen.
+**Multi-Gerät:** Jeder Nutzer hat eine eigene PIF-Datei (`lgc_pif_<userId>_YYYY-MM.json`).
+Beim Login wird diese aus der Cloud geladen — der aktive Stempel-Status ist damit auf allen
+Geräten sofort konsistent (einstempeln auf Gerät A, ausstempeln auf Gerät B funktioniert korrekt).
+Die Geräte-Snapshots (`lgc_[deviceId]_*.json`) dienen weiterhin als Vollbackup.
+
+**PIF-Dateiformat** (`lgc_pif_<userId>_YYYY-MM.json`):
+
+```json
+{
+  "version":  1,
+  "userId":   "abc-1234",
+  "userName": "Max Muster",
+  "month":    "2026-03",
+  "exported": "2026-03-19T14:30:00.000Z",
+  "entries":  [ ...Log-Einträge nur dieses Nutzers... ]
+}
+```
 
 Im Admin-Bereich wird die aktive Geräte-ID angezeigt, damit jeder sein Gerät zuordnen kann.
 

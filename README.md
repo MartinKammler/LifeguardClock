@@ -95,7 +95,7 @@ Läuft lokal im Browser, liest JSON-Dateien aus dem Cloud-Sync-Ordner ein.
 - Tabs: Übersicht · Tage · Wochen · Personen · Export
 - Korrelationsanalyse Anwesenheit ↔ Wachdienst / Sanitätsdienst
 - CSV-Export (Rohdaten, Wochensummen, Gesamtsummen)
-- Unterstützt Multi-Gerät: liest alle `lgc_*_DATUM.json`-Dateien zusammen
+- Unterstützt Multi-Gerät: liest `lgc_pif_*`-Dateien (per Nutzer) und `lgc_*_DATUM.json`-Dateien (per Gerät), dedupliziert automatisch
 
 ### `editor.html` — Log-Editor
 
@@ -132,8 +132,9 @@ Nutzerdaten liegen zentral auf dem WebDAV-Server als `LifeguardClock/lgc_users.j
 config.js (pro Gerät)              → Cloud-Zugangsdaten, deviceId, lokale Einstellungen
 lgc_types.json (Cloud)             → Stempel-Typ-Definitionen (alle Geräte teilen diese)
 lgc_users.json (Cloud)             → Nutzerliste, PINs, Berechtigungen (alle Geräte teilen diese)
-lgc_config_<deviceId>.json (Cloud) → Geräte-Overrides (deaktivierte Typen, Zeitfenster)
-lgc_[id]_DATUM.json (Cloud)        → Tages-Logdaten (pro Gerät)
+lgc_config_<deviceId>.json (Cloud)   → Geräte-Overrides (deaktivierte Typen, Zeitfenster)
+lgc_pif_<userId>_YYYY-MM.json (Cloud) → Persönliche Stempel-Daten pro Nutzer (monatlich)
+lgc_[id]_DATUM.json (Cloud)          → Tages-Logdaten pro Gerät (Vollbackup)
 ```
 
 ---
@@ -175,7 +176,7 @@ Fertige Presets: [`presets/config.dlrg.js`](presets/config.dlrg.js) · [`presets
 ## Cloud-Sync
 
 Nutzt WebDAV — kompatibel mit Nextcloud, ownCloud, Hetzner Storage Box, Strato HiDrive u. a.
-Jedes Gerät schreibt eigene Dateien (`lgc_[deviceId]_DATUM.json`), das Dashboard führt sie zusammen.
+Jeder Nutzer hat eine eigene PIF-Datei (`lgc_pif_<userId>_YYYY-MM.json`) für geräteübergreifend konsistenten Stempel-Status. Geräte-Snapshots (`lgc_[deviceId]_DATUM.json`) dienen als Vollbackup.
 
 ---
 

@@ -4,6 +4,35 @@ Alle relevanten Änderungen pro Release. Format orientiert sich an [Keep a Chang
 
 ---
 
+## [0.7] – 2026-03-20
+
+### Hinzugefügt
+
+- **Per-User Cloud-Dateien (PIF)**: Jeder Nutzer bekommt eine eigene Cloud-Datei `lgc_pif_<userId>_YYYY-MM.json` — Stempel-Einträge werden sofort nach jedem Stempeln dorthin geschrieben; beim Login wird die Datei aus der Cloud geladen und mit dem lokalen Stand gemergt → aktiver Status ist jetzt geräteübergreifend konsistent (einstempeln auf Gerät A, ausstempeln auf Gerät B funktioniert korrekt)
+
+### Geändert
+
+- **QR-Scanner**: BarcodeDetector durch jsQR ersetzt — funktioniert jetzt auf allen Browsern (Firefox, Safari/iOS, ältere Android-WebViews); jsQR wird bei Bedarf von CDN nachgeladen (`jsdelivr.net`)
+- **Dashboard Cloud- und Datei-Laden**: Erkennt und lädt jetzt beide Dateitypen — `lgc_pif_*` (per Nutzer) und `lgc_*_DATUM.json` (per Gerät); Einträge werden geräteübergreifend dedupliziert um Doppelzählung zu vermeiden wenn beide Quellen geladen werden
+- **Kachel-Layout Landscape-Tablets**: `@media (max-height: 640px)` sorgt dafür dass genau 3 Stempelkacheln auf den Schirm passen (getestet auf Fire 7, 1024×600 px) — überschreibt die 768px-Desktop-Paddings die vorher 52px Bottom-Abstand erzwangen; Kachelhöhe via `height: calc((100vh - 148px) / 3)`, Schriften und Buttons kompakter
+- **Editor Cloud-Laden**: Zeigt ausschließlich `lgc_pif_*`-Dateien im Dropdown — Gerätedateien können weiterhin per lokalem Datei-Picker geladen werden; PIF-Format wird korrekt geladen (`entries` → `log`) und gespeichert; Typen werden beim Cloud-Laden automatisch aus `lgc_types.json` aktualisiert (`lgc_cloud_types`-Fallback in `buildTypeMaps`)
+- **About-Dialog**: Splash-Logo vergrößert (240 px), GitHub-Link ergänzt
+
+### Behoben
+
+- **Service Worker cached `/remote.php/` im Proxy-Modus**: Wenn die App über den lokalen Proxy (`localhost`) läuft, wurden same-origin `/remote.php/…`-Requests fälschlicherweise in den Cache geschrieben — jetzt immer Network-Only
+- **XSS-Escaping editor.html**: `e.nutzer` im Edit-Input-`value`-Attribut und in der Anzeigespalte, `ti.label` im Typ-Badge, `t.logType`/`t.label` im Typ-Dropdown und Cloud-Picker-`href` / Dateiname jetzt konsequent über `escHtml()` escaped
+- **XSS-Escaping dashboard.html**: Typ-Labels (`T_INFO[t]?.label`) in Übersichts-, Tages-, Wochen- und Personen-Tabellen sowie Personennamen in Tages- und Wochen-Tabellenzeilen jetzt escaped
+- **Event-Listener-Leak dashboard.html**: `renderPersonFilter()` hat bei jedem `renderAll()`-Aufruf einen neuen Click-Handler am `#person-filter`-Element registriert — Listener wird jetzt einmalig beim Initialisieren gesetzt
+- **Versionsdrift**: `APP_VERSION` in `LifeguardClock.html` auf `'0.7'` aktualisiert
+
+### Tests
+
+- **`test_LifeguardClock.html`**: Suite 34 für `mergeUserEntries` — 6 Testfälle (leere Eingabe, null, neue Einträge, Duplikate, Mischung, Sortierung)
+- **`test_sw.html`**: Neuer Testfall „same-origin `/remote.php/` (Proxy-Modus localhost) → network-only"
+
+---
+
 ## [0.6] – 2026-03-19
 
 ### Hinzugefügt
@@ -24,7 +53,28 @@ Alle relevanten Änderungen pro Release. Format orientiert sich an [Keep a Chang
 - **`config.js`**: `types`-Array dient nur noch als lokaler Fallback; globale Typen werden aus `lgc_types.json` geladen
 - **`silentConfigCheck`**: Prüft jetzt zusätzlich `lgc_types.json` — bei Änderung automatischer Reload; fehlende Gerätekonfiguration löst Auto-Push aus
 - **Orientierungssperre**: JS `screen.orientation.lock()` entfernt — PWA-Manifest übernimmt Portrait-Erzwingung ohne Animations-Flackern beim Start
-- **Service Worker**: Cache auf `lgc-shell-v8` erhöht
+- **Service Worker**: Cross-Origin-Requests (Cloud/WebDAV beliebiger Anbieter) werden nicht mehr gecacht — vorher war nur Nextclouds `/remote.php/` explizit ausgenommen; basename-Matching für App-Shell ist jetzt kompatibel mit GitHub Pages Subdirectory-Deployment; Cache auf `lgc-shell-v9`
+- **`genId()` in `admin.html`**: Nutzer-IDs werden jetzt via `crypto.randomUUID()` erzeugt (Fallback: `Date.now() + random`), statt nur `Date.now()` — keine Kollisionen bei schnellen Mehrfachaktionen
+
+### Behoben
+
+- **Monatswechsel-Bug**: Auto-Stop an der Tagesgrenze (z. B. 04:00 Uhr) hat am Monatsende falsche Dauern (0 ms) erzeugt, weil `calcDurationMs` und `getTypeStartMs` nur den aktuellen Monats-Log durchsuchten — jetzt wird auch der Vormonats-Log einbezogen (`getPrevLog`)
+- **User-Rename**: Umbenennen eines Nutzers hat alle bisherigen Log- und Backup-Einträge unter dem alten Namen belassen — Auswertungen zeigten dieselbe Person doppelt; alle `lgc_log_*`- und `lgc_backup_*`-Einträge werden jetzt beim Umbenennen mitgezogen
+- **Cloud-Sync überschreibt lokale PINs**: Startup-Sync hat lokal gesetzte PINs (Hash+Salt) mit dem Cloud-Stand überschrieben, wenn dort noch eine OTP-Version stand — neues Merge-Verhalten bevorzugt die lokale Version sofern der Nutzer seine PIN bereits gesetzt hat
+- **Cloud-PIN-Reset nicht wirksam**: Admin-Reset in `admin.html` (PIN löschen + `mustChangePIN: true`) wurde auf Geräten ignoriert, die bereits einen lokalen Hash hatten — expliziter Admin-Reset (kein `salt` in Cloud) gewinnt jetzt immer
+- **CSV Formula Injection**: Felder wie Nutzername und Typ-Bezeichnung in CSV-Exporten wurden ohne Schutz gegen Formel-Injection ausgegeben; `=`, `+`, `-`, `@`, Tab, CR als Zell-Präfix werden jetzt neutralisiert — betrifft Haupt-App und Dashboard
+- **Basic Auth bricht bei Nicht-ASCII-Credentials**: `btoa()` direkt auf Klartext aufgerufen; Umlaute oder andere Nicht-ASCII-Zeichen in Nextcloud-Passwörtern konnten die Verbindung brechen — jetzt `btoa(unescape(encodeURIComponent(...)))` in `LifeguardClock.html` (8 Stellen) und `admin.html`
+
+### Sicherheit
+
+- **`einmalpins.html` aus Release-ZIP entfernt**: Datei enthält echte Mitgliedernamen und aktive Einmal-PINs und darf nie verteilt werden (war bereits in `.gitignore`, fehlte aber im Release-Script)
+- **`fully-settings.json` aus Release-ZIP entfernt**: Enthält verschlüsselte Kiosk- und Remote-Admin-Passwörter sowie den Betreibernamen — gerätespezifisch, nicht für Weitergabe geeignet (war bereits in `.gitignore`)
+
+### Tests
+
+- **`test_sw.html`**: Routing-Logik auf neuen SW-Stand aktualisiert (Cross-Origin → `network-only`, basename-Matching, `lgc-shell-v9`)
+- **`test_admin.html`**: `authHeader` verwendet jetzt Unicode-sicheres Encoding; neuer Testfall für Umlaute in Credentials
+- **`test_LifeguardClock.html`**: Suite 21 (Push-Export) korrigiert — `types` dürfen nicht mehr im Geräte-Export stehen; Kettenreaktion-Regressionstest als in v0.6 strukturell behoben dokumentiert
 
 ---
 

@@ -45,6 +45,12 @@ self.addEventListener('fetch', event => {
     return;
   }
 
+  // Same-Origin /remote.php/ (WebDAV via lokalem Proxy): nie cachen
+  if (url.pathname.startsWith('/remote.php/')) {
+    event.respondWith(fetch(event.request));
+    return;
+  }
+
   // Network-First: config.js (gleiches Origin, aber immer frisch laden)
   if (url.pathname.endsWith('/config.js')) {
     event.respondWith(networkFirst(event.request));

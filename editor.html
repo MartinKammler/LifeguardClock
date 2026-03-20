@@ -251,6 +251,7 @@
       </div>
       <div class="table-footer">
         <button class="btn btn-primary" id="btn-add-pair">+ Eintragspaar hinzufügen</button>
+        <button class="btn btn-danger" id="btn-clear-all">&#x1F5D1; Alle löschen</button>
       </div>
     </div>
 
@@ -291,6 +292,26 @@
     </div>
   </dialog>
 
+  <!-- ── Clear-all confirm modal ────────────────────────────────── -->
+  <dialog id="modal-clear">
+    <div class="modal-hdr" style="color:var(--danger)">&#x26A0; Alle Einträge löschen?</div>
+    <div class="modal-body">
+      <p style="font-size:14px;line-height:1.6;color:var(--text-2)">
+        Hiermit werden <strong id="clear-count" style="color:var(--text)">alle</strong> Einträge
+        aus der geladenen Datei unwiderruflich entfernt.<br><br>
+        Die Datei wird <em>nicht</em> automatisch gespeichert — du kannst danach noch abbrechen,
+        indem du die Seite neu lädst.
+      </p>
+      <p style="font-size:13px;color:var(--danger);font-weight:700;margin-top:4px">
+        Diese Aktion kann nicht rückgängig gemacht werden.
+      </p>
+    </div>
+    <div class="modal-ftr">
+      <button class="btn" id="clear-cancel">Abbrechen</button>
+      <button class="btn btn-danger" id="clear-confirm">Ja, alle löschen</button>
+    </div>
+  </dialog>
+
   <!-- ── Cloud picker modal ──────────────────────────────────────── -->
   <dialog id="modal-cloud">
     <div class="modal-hdr">&#x2601; Datei aus Cloud laden</div>
@@ -325,6 +346,7 @@ let activeTab    = 'table';
 let editingId    = null;   // id of row currently in inline edit mode
 let cloudFileUrl = null;   // URL der geladenen Cloud-Datei (null = lokal)
 let cloudDirty   = false;  // true wenn ungespeicherte Änderungen gegenüber Cloud
+let cloudIsPIF   = false;  // true wenn geladene Cloud-Datei ein PIF (lgc_pif_*) ist
 
 // ─── Typ-Farb-Palette (passend zu LifeguardClock.html) ────────────────────────────
 const COLOR_PALETTE = {
@@ -356,12 +378,19 @@ function buildTypeMaps() {
   const seen = new Set();
   const result = [];
 
-  // 1. Aus lgc_type_config (localStorage, gesetzt von LifeguardClock.html) oder CONFIG.types
+  // 1. Aus lgc_type_config (localStorage, gesetzt von LifeguardClock.html),
+  //    dann lgc_cloud_types (direkte Cloud-Quelle), dann CONFIG.types als Fallback
   let _cfgTypes = null;
   try {
     const stored = JSON.parse(localStorage.getItem('lgc_type_config') || '[]');
     if (stored.length > 0) _cfgTypes = stored;
   } catch (e) {}
+  if (!_cfgTypes) {
+    try {
+      const cloud = JSON.parse(localStorage.getItem('lgc_cloud_types') || '[]');
+      if (cloud.length > 0) _cfgTypes = cloud.filter(t => !t.disabled);
+    } catch (e) {}
+  }
   if (!_cfgTypes) {
     try { if (Array.isArray(CONFIG?.types)) _cfgTypes = CONFIG.types.filter(t => !t.disabled); } catch(e) {}
   }
@@ -525,15 +554,18 @@ async function openCloudPicker() {
     const xml = await res.text();
     const hrefs = [...xml.matchAll(/<[^>]*:href[^>]*>([^<]+)<\/[^>]*:href>/g)]
       .map(m => decodeURIComponent(m[1].trim()))
-      .filter(h => /lgc_.*\d{4}-\d{2}-\d{2}\.json$/.test(h))
+      .filter(h => /lgc_pif_.+_\d{4}-\d{2}\.json$/.test(h))
       .sort((a, b) => b.localeCompare(a));
-    if (hrefs.length === 0) { alert('Keine Dateien in der Cloud gefunden.'); return; }
+    if (hrefs.length === 0) {
+      alert('Keine PIF-Dateien in der Cloud gefunden.\nBitte erst mit LifeguardClock stempeln um Nutzerdaten zu erzeugen.\n\nLegacy-Gerätedateien können weiterhin über „Datei öffnen" geladen werden.');
+      return;
+    }
     const sel = document.getElementById('cloud-file-select');
     sel.innerHTML = hrefs.map(h => {
       const name = h.split('/').pop();
-      const m = name.match(/lgc_(.+?)_(\d{4}-\d{2}-\d{2})\.json$/);
+      const m    = name.match(/^lgc_pif_(.+)_(\d{4}-\d{2})\.json$/);
       const label = m ? `${m[2]}  –  ${m[1]}` : name;
-      return `<option value="${h}">${label}</option>`;
+      return `<option value="${escHtml(h)}">${escHtml(label)}</option>`;
     }).join('');
     document.getElementById('modal-cloud').showModal();
   } catch(e) {
@@ -541,6 +573,24 @@ async function openCloudPicker() {
   } finally {
     btn.disabled = false; btn.textContent = '\u2601 Cloud';
   }
+}
+
+// ─── Typen aus Cloud holen und localStorage aktualisieren ─────────────────────
+async function refreshTypesFromCloud() {
+  const creds = getCloudCreds();
+  if (!creds) return;
+  try {
+    const r = await fetch(`${cloudDavBase(creds)}/lgc_types.json`,
+      { headers: { Authorization: cloudAuth(creds) }, cache: 'no-store' });
+    if (!r.ok) return;
+    const data = await r.json();
+    if (!Array.isArray(data.types) || data.types.length === 0) return;
+    // lgc_type_config überschreiben damit buildTypeMaps die frischen Farben nimmt
+    localStorage.setItem('lgc_cloud_types', JSON.stringify(data.types));
+    localStorage.setItem('lgc_type_config', JSON.stringify(
+      data.types.filter(t => !t.disabled).map(t => ({ logType: t.logType, label: t.label, color: t.color }))
+    ));
+  } catch {}
 }
 
 // ─── Cloud: Datei laden ───────────────────────────────────────────────────────
@@ -552,11 +602,14 @@ async function loadFromCloud(href) {
     ? href
     : (creds.url.trim().replace(/\/$/, '') + (href.startsWith('/') ? href : '/' + href));
   try {
-    const r = await fetch(fileUrl, { headers: { Authorization: auth } });
+    const [r] = await Promise.all([
+      fetch(fileUrl, { headers: { Authorization: auth } }),
+      refreshTypesFromCloud(),
+    ]);
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const json = await r.json();
-    logData = json;
-    if (!Array.isArray(logData.log)) logData.log = [];
+    cloudIsPIF = !!(json.version === 1 && json.userId && Array.isArray(json.entries));
+    logData    = { ...json, log: cloudIsPIF ? json.entries : (json.log || []) };
     cloudFileUrl = fileUrl;
     cloudDirty   = false;
     history = []; histIdx = -1; editingId = null; filterPerson = null;
@@ -577,6 +630,7 @@ async function saveToCloud() {
   btn.disabled = true; btn.textContent = '\u23F3 Speichere\u2026';
   try {
     const out = { ...logData, exported: new Date().toISOString(), count: logData.log.length };
+    if (cloudIsPIF) { out.entries = out.log; delete out.log; }
     const r = await fetch(cloudFileUrl, {
       method: 'PUT',
       headers: { Authorization: cloudAuth(creds), 'Content-Type': 'application/json' },
@@ -596,9 +650,9 @@ async function saveToCloud() {
 async function loadFile(file) {
   try {
     const json = JSON.parse(await file.text());
-    logData = json;
-    if (!Array.isArray(logData.log)) logData.log = [];
-    cloudFileUrl = null; cloudDirty = false;
+    const isPIF = !!(json.version === 1 && json.userId && Array.isArray(json.entries));
+    logData      = { ...json, log: isPIF ? json.entries : (json.log || []) };
+    cloudFileUrl = null; cloudDirty = false; cloudIsPIF = false;
     history = []; histIdx = -1; editingId = null; filterPerson = null;
     buildTypeMaps();
     populateTypSelect();
@@ -808,12 +862,12 @@ function renderTable(issues) {
     const editOpts = [
       ...(_TYPE_MAP[e.typ] ? [] : [ti]),
       ..._TYPES,
-    ].map(t => `<option value="${t.logType}"${e.typ===t.logType?' selected':''}>${t.label}</option>`).join('');
+    ].map(t => `<option value="${escHtml(t.logType)}"${e.typ===t.logType?' selected':''}>${escHtml(t.label)}</option>`).join('');
 
     if (isEditing) {
       html += `<tr class="edit-row" data-id="${e.id}">
         <td><span class="${hasIssue ? 'pair-warn' : 'pair-ok'}">${hasIssue ? '⚠' : '✓'}</span></td>
-        <td><input class="edit-input" id="ei-nutzer" list="known-persons-list" value="${e.nutzer}" style="min-width:140px"></td>
+        <td><input class="edit-input" id="ei-nutzer" list="known-persons-list" value="${escHtml(e.nutzer)}" style="min-width:140px"></td>
         <td><select class="edit-input" id="ei-typ" style="min-width:150px">${editOpts}</select></td>
         <td><select class="edit-input" id="ei-aktion">
           <option value="start"${e.aktion==='start'?' selected':''}>start</option>
@@ -829,8 +883,8 @@ function renderTable(issues) {
     } else {
       html += `<tr class="${hasIssue ? 'row-warn' : ''}" data-id="${e.id}">
         <td><span class="${hasIssue ? 'pair-warn' : 'pair-ok'}" title="${hasIssue ? 'Kein passendes Gegenstück' : 'Paar vollständig'}">${hasIssue ? '⚠' : '✓'}</span></td>
-        <td>${e.nutzer || '<em style="color:var(--text-3)">—</em>'}</td>
-        <td><span class="badge-typ" style="background:${ti.dim};color:${ti.main}">${ti.label}</span></td>
+        <td>${e.nutzer ? escHtml(e.nutzer) : '<em style="color:var(--text-3)">—</em>'}</td>
+        <td><span class="badge-typ" style="background:${ti.dim};color:${ti.main}">${escHtml(ti.label)}</span></td>
         <td><span class="badge-aktion ${e.aktion}">${e.aktion}</span></td>
         <td class="ts-cell">${fmtDatetime(e.zeitstempel)}</td>
         <td class="dur-cell">${e.aktion==='stop' ? fmtMs(e.dauer_ms) : '—'}</td>
@@ -1009,6 +1063,22 @@ document.getElementById('log-tbody').addEventListener('click', e => {
   if (delBtn) {
     if (confirm('Eintrag löschen?')) deleteEntry(Number(delBtn.dataset.id));
   }
+});
+
+// Clear all
+document.getElementById('btn-clear-all').addEventListener('click', () => {
+  if (!logData) return;
+  const count = logData.log.length;
+  if (!count) { alert('Keine Einträge vorhanden.'); return; }
+  document.getElementById('clear-count').textContent =
+    count + (count === 1 ? ' Eintrag' : ' Einträge');
+  document.getElementById('modal-clear').showModal();
+});
+document.getElementById('clear-cancel').addEventListener('click', () =>
+  document.getElementById('modal-clear').close());
+document.getElementById('clear-confirm').addEventListener('click', () => {
+  document.getElementById('modal-clear').close();
+  commit(() => { logData.log = []; });
 });
 
 // Add pair

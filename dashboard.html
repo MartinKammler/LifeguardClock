@@ -605,16 +605,37 @@
 
     // ─── Laden ───────────────────────────────────────────────────────────────
     async function processFiles(fileList) {
-      const entries = [];
-      const seenFiles = new Set();
+      const entries      = [];
+      const seenFiles    = new Set();
+      const seenEntryIds = new Set();  // verhindert Doppelzählung wenn PIF + Gerätedatei geladen
       for (const file of fileList) {
-        if (!/^lgc_.*\d{4}-\d{2}-\d{2}\.json$/.test(file.name)) continue;
-        if (seenFiles.has(file.name)) continue;  // Duplikat überspringen
+        const isPIF    = /^lgc_pif_.+_\d{4}-\d{2}\.json$/.test(file.name);
+        const isDevice = /^lgc_.*\d{4}-\d{2}-\d{2}\.json$/.test(file.name);
+        if (!isPIF && !isDevice) continue;
+        if (seenFiles.has(file.name)) continue;
         seenFiles.add(file.name);
         try {
           const json = JSON.parse(await file.text());
-          const day = json.logicalDay || (file.name.match(/(\d{4}-\d{2}-\d{2})/)||[])[1];
-          if (day && Array.isArray(json.log)) entries.push({ day, log: json.log });
+          if (isPIF) {
+            const byDay = {};
+            for (const e of (json.entries || [])) {
+              if (!e.id || seenEntryIds.has(e.id)) continue;
+              seenEntryIds.add(e.id);
+              const day = e.zeitstempel?.slice(0, 10);
+              if (!day) continue;
+              (byDay[day] ??= []).push(e);
+            }
+            for (const [day, log] of Object.entries(byDay)) entries.push({ day, log });
+          } else {
+            const day = json.logicalDay || (file.name.match(/(\d{4}-\d{2}-\d{2})/)||[])[1];
+            if (day && Array.isArray(json.log)) {
+              const log = json.log.filter(e => {
+                if (!e.id || seenEntryIds.has(e.id)) return false;
+                seenEntryIds.add(e.id); return true;
+              });
+              if (log.length) entries.push({ day, log });
+            }
+          }
         } catch { /* überspringe kaputte Datei */ }
       }
       if (entries.length === 0) {
@@ -715,7 +736,7 @@
 
       document.getElementById('summary-cards').innerHTML = TYPES.map(typ => `
         <div class="card" style="${tStyle(typ)}">
-          <div class="card-label">${T_INFO[typ]?.label || typ}</div>
+          <div class="card-label">${escHtml(T_INFO[typ]?.label || typ)}</div>
           <div class="card-value">${fmtH(totals[typ])}<span class="card-unit">h</span></div>
           <div class="card-sub">${DB.days.length} Tage · ${DB.persons.length} Personen</div>
         </div>
@@ -738,7 +759,7 @@
         const top = topFor(typ);
         return `
           <div class="top-list">
-            <div class="top-list-hdr" style="${tStyle(typ)}">&#x1F3C6; Top ${T_INFO[typ]?.label || typ}</div>
+            <div class="top-list-hdr" style="${tStyle(typ)}">&#x1F3C6; Top ${escHtml(T_INFO[typ]?.label || typ)}</div>
             ${top.length === 0
               ? '<div class="top-item" style="color:var(--text-3)">Keine Daten</div>'
               : top.map(([name, d], i) => `
@@ -784,7 +805,7 @@
         const pct = Math.round(Math.abs(r) * 100);
         return `
           <div class="corr-item" style="${tStyle(t)}">
-            <div class="corr-label">Anwesenheit &#x2194; ${T_INFO[t]?.label || t}</div>
+            <div class="corr-label">Anwesenheit &#x2194; ${escHtml(T_INFO[t]?.label || t)}</div>
             <div class="corr-bar-wrap">
               <div class="corr-bar" style="width:${pct}%;background:var(--type-color)"></div>
             </div>
@@ -861,7 +882,7 @@
         hasAny = true;
         for (const t of TYPES) totals[t] = (totals[t]||0) + (d[t]||0);
         return `<tr>
-          <td>${p}</td>
+          <td>${escHtml(p)}</td>
           ${TYPES.map(t => `<td class="col-type" style="${tColor(t)}">${fmtMs(d[t])}</td>`).join('')}
         </tr>`;
       }).filter(Boolean);
@@ -870,7 +891,7 @@
         <table class="data-table">
           <thead><tr>
             <th>Person</th>
-            ${TYPES.map(t => `<th class="col-type" style="${tColor(t)}">${T_INFO[t]?.label||t}</th>`).join('')}
+            ${TYPES.map(t => `<th class="col-type" style="${tColor(t)}">${escHtml(T_INFO[t]?.label||t)}</th>`).join('')}
           </tr></thead>
           <tbody>
             ${rows.length > 0
@@ -916,7 +937,7 @@
         if (!TYPES.some(t => d[t] > 0)) return '';
         for (const t of TYPES) totals[t] = (totals[t]||0) + (d[t]||0);
         return `<tr>
-          <td>${p}</td>
+          <td>${escHtml(p)}</td>
           ${TYPES.map(t => `<td class="col-type" style="${tColor(t)}">${fmtMs(d[t])}</td>`).join('')}
         </tr>`;
       }).filter(Boolean);
@@ -925,7 +946,7 @@
         <table class="data-table">
           <thead><tr>
             <th>Person</th>
-            ${TYPES.map(t => `<th class="col-type" style="${tColor(t)}">${T_INFO[t]?.label||t}</th>`).join('')}
+            ${TYPES.map(t => `<th class="col-type" style="${tColor(t)}">${escHtml(T_INFO[t]?.label||t)}</th>`).join('')}
           </tr></thead>
           <tbody>
             ${rows.length > 0
@@ -947,15 +968,16 @@
         <button class="person-btn${p === activePerson ? ' active' : ''}"
           data-person="${escHtml(p)}">${escHtml(p)}</button>
       `).join('');
-      document.getElementById('person-filter').addEventListener('click', e => {
-        const btn = e.target.closest('.person-btn');
-        if (!btn) return;
-        activePerson = btn.dataset.person;
-        document.querySelectorAll('.person-btn').forEach(b =>
-          b.classList.toggle('active', b.dataset.person === activePerson));
-        renderPersonDetail();
-      });
     }
+
+    document.getElementById('person-filter').addEventListener('click', e => {
+      const btn = e.target.closest('.person-btn');
+      if (!btn) return;
+      activePerson = btn.dataset.person;
+      document.querySelectorAll('.person-btn').forEach(b =>
+        b.classList.toggle('active', b.dataset.person === activePerson));
+      renderPersonDetail();
+    });
 
     function renderPersonDetail() {
       if (!activePerson || !DB) return;
@@ -983,7 +1005,7 @@
               ? Math.round(totals[typ] / anwMs * 100) : null;
             return `
             <div class="card" style="${tStyle(typ)}">
-              <div class="card-label">${T_INFO[typ]?.label||typ}</div>
+              <div class="card-label">${escHtml(T_INFO[typ]?.label||typ)}</div>
               <div class="card-value">${fmtH(totals[typ])}<span class="card-unit">h</span></div>
               ${pct !== null ? `
               <div style="margin-top:8px">
@@ -999,7 +1021,7 @@
           <table class="data-table">
             <thead><tr>
               <th>Datum</th><th></th>
-              ${TYPES.map(t => `<th class="col-type" style="${tColor(t)}">${T_INFO[t]?.label||t}</th>`).join('')}
+              ${TYPES.map(t => `<th class="col-type" style="${tColor(t)}">${escHtml(T_INFO[t]?.label||t)}</th>`).join('')}
             </tr></thead>
             <tbody>
               ${rows.length > 0
@@ -1115,7 +1137,8 @@
 
         const hrefs = [...xml.matchAll(/<[^>]*:href[^>]*>([^<]+)<\/[^>]*:href>/g)]
           .map(m => decodeURIComponent(m[1].trim()))
-          .filter(h => /lgc_.*\d{4}-\d{2}-\d{2}\.json$/.test(h));
+          .filter(h => /lgc_pif_.+_\d{4}-\d{2}\.json$/.test(h) ||
+                       /lgc_.*\d{4}-\d{2}-\d{2}\.json$/.test(h));
 
         if (hrefs.length === 0) {
           btn.disabled = false; btn.textContent = '☁️ Cloud laden';
@@ -1123,11 +1146,13 @@
           return;
         }
 
-        const entries = [];
-        const seenHrefs = new Set();
+        const entries      = [];
+        const seenHrefs    = new Set();
+        const seenEntryIds = new Set();  // verhindert Doppelzählung wenn PIF + Gerätedatei
         for (const href of hrefs) {
-          if (seenHrefs.has(href)) continue;  // Duplikat überspringen
+          if (seenHrefs.has(href)) continue;
           seenHrefs.add(href);
+          const isPIF   = /lgc_pif_.+_\d{4}-\d{2}\.json$/.test(href);
           const fileUrl = IS_PROXY
             ? href
             : (creds.url.replace(/\/$/, '') + (href.startsWith('/') ? href : '/' + href));
@@ -1135,9 +1160,27 @@
             const r = await fetch(fileUrl, { headers: { Authorization: auth } });
             if (!r.ok) continue;
             const json = await r.json();
-            const m = href.match(/(\d{4}-\d{2}-\d{2})\.json$/);
-            const day = json.logicalDay || (m && m[1]);
-            if (day && Array.isArray(json.log)) entries.push({ day, log: json.log });
+            if (isPIF) {
+              const byDay = {};
+              for (const e of (json.entries || [])) {
+                if (!e.id || seenEntryIds.has(e.id)) continue;
+                seenEntryIds.add(e.id);
+                const day = e.zeitstempel?.slice(0, 10);
+                if (!day) continue;
+                (byDay[day] ??= []).push(e);
+              }
+              for (const [day, log] of Object.entries(byDay)) entries.push({ day, log });
+            } else {
+              const m   = href.match(/(\d{4}-\d{2}-\d{2})\.json$/);
+              const day = json.logicalDay || (m && m[1]);
+              if (day && Array.isArray(json.log)) {
+                const log = json.log.filter(e => {
+                  if (!e.id || seenEntryIds.has(e.id)) return false;
+                  seenEntryIds.add(e.id); return true;
+                });
+                if (log.length) entries.push({ day, log });
+              }
+            }
           } catch {}
         }
 
