@@ -17,7 +17,7 @@ if (typeof CONFIG === 'undefined') {
 'use strict';
 
 /* ── Typ-Schema-Validierung ────────────────────────────────── */
-const VALID_COLORS = new Set(['blue', 'green', 'amber', 'red', 'violet']);
+const VALID_COLORS = new Set(['blue', 'green', 'amber', 'red', 'violet', 'grey', 'orange', 'cyan', 'pink', 'lime']);
 const SAFE_KEY_RE  = /^[a-zA-Z0-9_-]+$/;
 
 function normalizeType(t) {
@@ -230,7 +230,7 @@ const TIME_KEYS = TYPES.filter(t => t.requiresZeitfenster).map(t => t.key);
 
 // Dynamische CSS-Badge-Klassen für Typ-Farben in Admin/Log-Ansicht
 function injectTypeCSS() {
-  const varMap = { blue: '--blue', green: '--green', amber: '--amber', red: '--red', violet: '--violet' };
+  const varMap = { blue: '--blue', green: '--green', amber: '--amber', red: '--red', violet: '--violet', grey: '--grey', orange: '--orange', cyan: '--cyan', pink: '--pink', lime: '--lime' };
   const lines  = TYPES.map(t => {
     const v = varMap[t.color] || '--green';
     return `.badge-${t.key} { background: var(${v}-dim); color: var(${v}); }`;
@@ -1980,7 +1980,7 @@ function renderStundenOverview() {
 
   if (!users.length) { el.innerHTML = ''; return; }
 
-  const colorToThClass = { blue: 'ov-th-blue', green: 'ov-th-green', amber: 'ov-th-amber', red: 'ov-th-red', violet: 'ov-th-violet' };
+  const colorToThClass = { blue: 'ov-th-blue', green: 'ov-th-green', amber: 'ov-th-amber', red: 'ov-th-red', violet: 'ov-th-violet', grey: 'ov-th-grey', orange: 'ov-th-orange', cyan: 'ov-th-cyan', pink: 'ov-th-pink', lime: 'ov-th-lime' };
   const cols = TYPES.map(t => ({
     logType: t.logType,
     thClass: colorToThClass[t.color] || 'ov-th-green',
