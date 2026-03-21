@@ -42,12 +42,17 @@ function escHtml(s) {
    SW-Logik extrahiert (ohne Service Worker Globals)
    ══════════════════════════════════════════════════════════════ */
 
-const CACHE_NAME = 'lgc-shell-v11';
+const CACHE_NAME = 'lgc-shell-v12';
 const APP_SHELL = [
   './LifeguardClock.html',
   './manifest.json',
   './Logo.png',
   './jsqr.min.js',
+  './lifeguardclock.js',
+  './admin-app.js',
+  './dashboard-app.js',
+  './editor-app.js',
+  './qrcode.min.js',
 ];
 // Basename-Matching: kompatibel mit GitHub Pages Subdirectory (z. B. /repo/LifeguardClock.html)
 const APP_SHELL_NAMES = new Set(APP_SHELL.map(p => p.split('/').pop()));
@@ -142,6 +147,18 @@ await test('Logo.png → cache-first', () => {
 await test('unbekannte Ressource → network-first (default)', () => {
   assertEqual(classifyRequest('https://example.com/dashboard.html'), 'network-first');
   assertEqual(classifyRequest('https://example.com/other.js'), 'network-first');
+});
+
+await test('lifeguardclock.js → cache-first (in APP_SHELL)', () => {
+  assertEqual(classifyRequest('https://example.com/lifeguardclock.js'), 'cache-first');
+});
+
+await test('admin-app.js → cache-first (in APP_SHELL)', () => {
+  assertEqual(classifyRequest('https://example.com/admin-app.js'), 'cache-first');
+});
+
+await test('qrcode.min.js → cache-first (in APP_SHELL)', () => {
+  assertEqual(classifyRequest('https://example.com/qrcode.min.js'), 'cache-first');
 });
 
 await test('admin.html → network-first (nicht in APP_SHELL)', () => {

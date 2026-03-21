@@ -6,22 +6,47 @@ Alle relevanten Änderungen pro Release. Format orientiert sich an [Keep a Chang
 
 ## [Unreleased]
 
+### Bekannte Restrisiken (bewusst akzeptiert)
+
+- **Admin-Passwort-Fallback**: Bei erstmaligem Setup oder gelöschtem Storage fällt die App auf ein bekanntes Default-Passwort zurück. Mittelfristig soll ein First-Run-Setup-Zwang eingeführt werden.
+- **Cloud-Credentials in `localStorage`**: WebDAV-Zugangsdaten liegen im Klartext im Browser-Storage. Empfehlung: dediziertes App-Passwort/Nebenkonto verwenden. Für Kiosk-Geräte mit physischer Zugangskontrolle akzeptabel.
+- **Kein Brute-Force-/Rate-Limit**: Admin-PIN und User-PIN haben keinen Sperrversuch-Zähler. Für lokale Geräte im DLRG-Kontext akzeptabel.
+- **Offline nur für Hauptapp**: Nur `LifeguardClock.html` ist im Service Worker APP_SHELL gecacht. `admin.html`, `dashboard.html`, `editor.html` werden typischerweise über den lokalen Proxy (`localhost`) genutzt und benötigen kein Offline-Caching.
+
+---
+
+## [0.8] – 2026-03-21
+
 ### Hinzugefügt
 
-- **jsQR lokal gebündelt** (`jsqr.min.js`): QR-Scanner lädt jsQR jetzt aus dem lokalen Paket statt direkt vom CDN; CDN bleibt als Fallback erhalten — funktioniert jetzt auch im Offline-/Kiosk-Betrieb ohne initiale Internetverbindung; `jsqr.min.js` ist Teil des Release-Pakets und wird vom Service Worker (Cache `lgc-shell-v11`) gecacht
+- **Content Security Policy (CSP)**: Alle 4 HTML-Dateien haben jetzt ein `<meta http-equiv="Content-Security-Policy">`-Tag mit `script-src 'self'` — Inline-Scripts und -Handler sind vollständig entfernt, XSS über Script-Injection wird vom Browser geblockt
+- **JS-Extraktion**: Inline-`<script>`-Blöcke aus allen HTML-Dateien in externe JS-Dateien ausgelagert: `lifeguardclock.js`, `admin-app.js`, `dashboard-app.js`, `editor-app.js`
+- **qrcode.min.js lokal gebündelt**: QR-Code-Generator in admin.html lädt jetzt aus lokalem Paket statt CDN
+- **jsQR lokal gebündelt** (`jsqr.min.js`): QR-Scanner lädt jsQR jetzt aus dem lokalen Paket statt direkt vom CDN; funktioniert jetzt auch im Offline-/Kiosk-Betrieb ohne initiale Internetverbindung
+- **Proxy-Layout (PC/localhost)**: Stempelkacheln werden im Browser bei `localhost` nebeneinander in fester Höhe (220 px) angezeigt statt hochskaliert auf Vollbild — übersichtlicher für die Web-Oberfläche
+
+### Geändert
+
+- **Alle Inline-onclick/onchange-Handler entfernt**: Statische Handler durch `addEventListener`, dynamische Handler durch Event-Delegation mit `data-*`-Attributen ersetzt — insgesamt ~44 Handler in LifeguardClock.html migriert
+- **Service Worker** (`sw.js`): Cache-Version auf `lgc-shell-v12`, APP_SHELL enthält alle 5 neuen JS-Dateien
+- **Fehlendes `#users-section`-Element**: `<div id="users-section">` im Tab Passwort ergänzt — `renderUsersSection()` hatte bisher ins Leere gerendert
 
 ### Behoben
 
-- **XSS-Escaping editor.html Timeline**: Typ-Labels (`ti.label`) in Legende, Zeilen-Header und Segment-`title`-Attributen, sowie `logicalDay` im Timeline-Header jetzt über `escHtml()` escaped — verhindert HTML-Injection durch manipulierte Cloud-Typen oder Logdateien
-- **dashboard.html `jumpToDay` onclick entfernt**: Kalender-Tage nutzen jetzt `data-iso`-Attribute + Event-Delegation statt inline `onclick="jumpToDay('...')"` — kein inline-JS mehr im Kalender; Event-Listener wird via `cloneNode` + `replaceWith` einmalig gesetzt um Akkumulation bei mehrfachem `renderAll()` zu verhindern
-- **Inline-onclick `handleAction`**: `type.key` wird jetzt über `data-type`/`data-action`-Attribute übergeben statt direkt in den onclick-String interpoliert
-- **Schema-Validierung `lgc_users`**: Einträge ohne `id` (string, nicht leer) oder ohne `name` (string) werden in `getUsers()` verworfen
-- **Schema-Validierung Cloud-Typen**: Typ-Einträge ohne `key` oder `logType` in `lgc_cloud_types` werden vor der Übernahme in `CONFIG.types` gefiltert
-- **Service Worker Cache-Version** auf `lgc-shell-v11` erhöht um `jsqr.min.js` in den App-Shell-Cache aufzunehmen
+- **PIN-Eingabe auf Touchscreens (Doppel-Auslösung)**: `touchend`-Handler auf dem Keypad prüft jetzt `e.cancelable` bevor `preventDefault()` aufgerufen wird; `click`-Handler ignoriert synthetische Clicks innerhalb von 500 ms nach `touchend` — verhindert doppelte Zifferneingabe bei nicht-cancelable Events (z. B. während Scroll-Geste auf Fire-Tablet / Silk)
+- **XSS-Escaping editor.html Timeline**: Typ-Labels (`ti.label`) in Legende, Zeilen-Header und Segment-`title`-Attributen, sowie `logicalDay` im Timeline-Header jetzt über `escHtml()` escaped
+- **dashboard.html `jumpToDay` onclick entfernt**: Kalender-Tage nutzen jetzt `data-iso`-Attribute + Event-Delegation
+- **Inline-onclick `handleAction`**: `type.key` wird jetzt über `data-type`/`data-action`-Attribute übergeben
+- **Schema-Validierung `lgc_users`**: Einträge ohne `id` oder `name` werden in `getUsers()` verworfen
+- **Schema-Validierung Cloud-Typen**: Zentrale `normalizeType()`-Funktion validiert und normalisiert alle Typ-Felder; `color` wird gegen Whitelist geprüft, `key` gegen `[a-zA-Z0-9_-]`; ungültige Arrays/Zahlen werden verworfen
+- **jsQR CDN-Fallback entfernt**: CDN-Nachlade-Versuch wurde durch CSP (`script-src 'self'`) sowieso blockiert — jetzt klarer Fehler statt stiller Fehlschlag
+- **Editor: negative Dauer beim Bearbeiten verhindert**: Stop-vor-Start-Validierung greift jetzt auch beim nachträglichen Editieren (nicht nur beim Hinzufügen)
+- **Editor: Import-Validierung**: `normalizeLogEntries()` filtert ungültige Einträge bei Cloud- und Datei-Imports (fehlende Pflichtfelder, ungültige Zeitstempel, unbekannte Aktionen)
 
 ### Tests
 
 - **`test_LifeguardClock.html`**: Suite 35 `getUsers() Schema-Validierung` (6 Fälle); Suite 36 `filterValidCloudTypes()` (7 Fälle); Suite 37 `escHtml XSS-Escaping` (7 Fälle)
+- **`test_sw.html`**: APP_SHELL + CACHE_NAME auf v12 aktualisiert; 3 neue Tests für neue JS-Dateien im Cache-Routing
 
 ---
 
