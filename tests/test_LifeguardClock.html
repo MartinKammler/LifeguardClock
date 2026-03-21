@@ -276,12 +276,27 @@ function getUsers() {
     return defaults;
   }
 
+  // Strukturell ungültige Einträge verwerfen, dann gelöschte entfernen
+  stored = stored.filter(u => u && typeof u.id === 'string' && u.id
+                            && typeof u.name === 'string');
   stored = stored.filter(u => !removeIds.has(u.id));
   const storedIds = new Set(stored.map(u => u.id));
   const newUsers  = defaults.filter(u => !storedIds.has(u.id)).map(u => ({...u}));
   const result    = newUsers.length ? [...stored, ...newUsers] : stored;
   localStorage.setItem('lgc_users', JSON.stringify(result));
   return result;
+}
+
+// Wie in applyCloudConfigOverlay: Typ-Einträge ohne key/logType verwerfen
+function filterValidCloudTypes(arr) {
+  if (!Array.isArray(arr) || arr.length === 0) return [];
+  return arr.filter(t => t && typeof t.key === 'string' && t.key
+                       && typeof t.logType === 'string' && t.logType);
+}
+
+// escHtml – 1:1 aus LifeguardClock.html
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
 // Neue per-typ Version (wie in LifeguardClock.html)
@@ -2151,6 +2166,157 @@ await test('Einträge werden nach id sortiert gespeichert', () => {
   assertEqual(log[0].id, 5,  'erster Eintrag soll id=5 haben');
   assertEqual(log[1].id, 30, 'zweiter Eintrag soll id=30 haben');
   resetStore();
+});
+
+/* ══════════════════════════════════════════════════════════════
+   Suite 35 – getUsers(): Schema-Validierung
+══════════════════════════════════════════════════════════════ */
+suite('35 – getUsers() Schema-Validierung');
+
+await test('null-Eintrag im Storage wird gefiltert', () => {
+  resetStore(); resetConfig();
+  localStorage.setItem('lgc_users', JSON.stringify([null]));
+  const users = getUsers();
+  // null-Eintrag weg, default_a ergänzt
+  assert(users.every(u => u !== null), 'null-Eintrag soll entfernt sein');
+  assert(users.some(u => u.id === 'default_a'), 'Default-User soll ergänzt werden');
+  resetStore();
+});
+
+await test('Eintrag ohne id wird gefiltert', () => {
+  resetStore(); resetConfig();
+  localStorage.setItem('lgc_users', JSON.stringify([{ name: 'Ghost', pin: '123456' }]));
+  const users = getUsers();
+  assert(!users.some(u => !u.id), 'Eintrag ohne id soll nicht vorhanden sein');
+  resetStore();
+});
+
+await test('Eintrag ohne name wird gefiltert', () => {
+  resetStore(); resetConfig();
+  localStorage.setItem('lgc_users', JSON.stringify([{ id: 'x1', pin: '123456' }]));
+  const users = getUsers();
+  assert(!users.some(u => u.id === 'x1'), 'Eintrag ohne name soll entfernt sein');
+  resetStore();
+});
+
+await test('id als Zahl (kein string) wird gefiltert', () => {
+  resetStore(); resetConfig();
+  localStorage.setItem('lgc_users', JSON.stringify([{ id: 42, name: 'Zahl-ID', pin: '111111' }]));
+  const users = getUsers();
+  assert(!users.some(u => u.id === 42), 'numerische id soll gefiltert werden');
+  resetStore();
+});
+
+await test('gültiger Eintrag bleibt erhalten', () => {
+  resetStore(); resetConfig();
+  localStorage.setItem('lgc_users', JSON.stringify([{ id: 'valid_1', name: 'Valid User', pin: '111111' }]));
+  const users = getUsers();
+  assert(users.some(u => u.id === 'valid_1'), 'gültiger Eintrag soll erhalten bleiben');
+  resetStore();
+});
+
+await test('Mix: gültig + ungültig → nur gültige bleiben', () => {
+  resetStore(); resetConfig();
+  localStorage.setItem('lgc_users', JSON.stringify([
+    { id: 'good', name: 'Good', pin: '111111' },
+    null,
+    { name: 'NoId' },
+    { id: 'noname' },
+    { id: 99, name: 'NumberId' },
+  ]));
+  const users = getUsers();
+  assert(users.some(u => u.id === 'good'), 'gültiger Eintrag bleibt');
+  assert(!users.some(u => !u || !u.id || typeof u.id !== 'string' || !u.name), 'keine ungültigen Einträge');
+  resetStore();
+});
+
+/* ══════════════════════════════════════════════════════════════
+   Suite 36 – filterValidCloudTypes(): Schema-Validierung
+══════════════════════════════════════════════════════════════ */
+suite('36 – filterValidCloudTypes() Schema-Validierung');
+
+await test('leeres Array → []', () => {
+  const result = filterValidCloudTypes([]);
+  assertEqual(result.length, 0, 'leeres Array → leeres Ergebnis');
+});
+
+await test('null → []', () => {
+  const result = filterValidCloudTypes(null);
+  assertEqual(result.length, 0, 'null → leeres Ergebnis');
+});
+
+await test('Eintrag ohne key wird gefiltert', () => {
+  const result = filterValidCloudTypes([{ logType: 'wache', label: 'Wache' }]);
+  assertEqual(result.length, 0, 'Eintrag ohne key soll gefiltert werden');
+});
+
+await test('Eintrag ohne logType wird gefiltert', () => {
+  const result = filterValidCloudTypes([{ key: 'wache', label: 'Wache' }]);
+  assertEqual(result.length, 0, 'Eintrag ohne logType soll gefiltert werden');
+});
+
+await test('null-Eintrag im Array wird gefiltert', () => {
+  const result = filterValidCloudTypes([null]);
+  assertEqual(result.length, 0, 'null-Eintrag soll gefiltert werden');
+});
+
+await test('gültiger Eintrag bleibt erhalten', () => {
+  const result = filterValidCloudTypes([{ key: 'wache', logType: 'wachdienst', label: 'Wache' }]);
+  assertEqual(result.length, 1, 'gültiger Eintrag soll erhalten bleiben');
+  assertEqual(result[0].key, 'wache', 'key korrekt');
+});
+
+await test('Mix: gültig + ungültig → nur gültige', () => {
+  const result = filterValidCloudTypes([
+    { key: 'a', logType: 'log_a', label: 'A' },
+    null,
+    { logType: 'log_b' },
+    { key: 'c' },
+    { key: 'd', logType: 'log_d' },
+  ]);
+  assertEqual(result.length, 2, 'nur 2 gültige Einträge');
+  assert(result.every(t => t.key && t.logType), 'alle Ergebnisse haben key und logType');
+});
+
+/* ══════════════════════════════════════════════════════════════
+   Suite 37 – escHtml: XSS-Escaping
+══════════════════════════════════════════════════════════════ */
+suite('37 – escHtml XSS-Escaping');
+
+await test('& wird escaped', () => {
+  assertEqual(escHtml('a & b'), 'a &amp; b');
+});
+
+await test('< und > werden escaped', () => {
+  assertEqual(escHtml('<script>'), '&lt;script&gt;');
+});
+
+await test('" wird escaped', () => {
+  assertEqual(escHtml('"hello"'), '&quot;hello&quot;');
+});
+
+await test("' bleibt unverändert (escHtml escaped keine Apostrophe)", () => {
+  // Apostrophe sind in doppelt-gequoteten HTML-Attributen sicher
+  assertEqual(escHtml("it's"), "it's");
+});
+
+await test('vollständiger XSS-Angriff wird neutralisiert', () => {
+  const input  = '<img src=x onerror="alert(1)">';
+  const output = escHtml(input);
+  assert(!output.includes('<'), 'keine spitzen Klammern im Output');
+  assert(!output.includes('"'), 'keine Anführungszeichen im Output');
+});
+
+await test('Benutzername mit Sonderzeichen', () => {
+  const name = `O'Brien & "Partner" <GmbH>`;
+  const out  = escHtml(name);
+  assert(!out.includes('<'),  'keine offenen Klammern');
+  assert(!out.includes('"'),  'keine Anführungszeichen');
+  assert(out.includes('&amp;'), '& escaped');
+});
+
+await test('Zahl wird als String escaped (kein Fehler)', () => {
+  assertEqual(escHtml(42), '42', 'Zahl zu String ohne Fehler');
 });
 
 /* ══════════════════════════════════════════════════════════════

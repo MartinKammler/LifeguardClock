@@ -5,11 +5,17 @@
    - Alles andere → Network-First mit Cache-Fallback
 */
 
-const CACHE_NAME = 'lgc-shell-v9';
+const CACHE_NAME = 'lgc-shell-v12';
 const APP_SHELL = [
   './LifeguardClock.html',
   './manifest.json',
   './Logo.png',
+  './jsqr.min.js',
+  './lifeguardclock.js',
+  './admin-app.js',
+  './dashboard-app.js',
+  './editor-app.js',
+  './qrcode.min.js',
 ];
 // Dateinamen der App-Shell für Matching (basename — kompatibel mit GitHub Pages Subdirectory)
 const APP_SHELL_NAMES = new Set(APP_SHELL.map(p => p.split('/').pop()));

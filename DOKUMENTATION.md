@@ -1330,16 +1330,18 @@ PowerShell-Skript, das ein ZIP-Archiv mit allen Dateien für eine Weitergabe erz
 Sensible Dateien (`config.js`, `admin_config.js`) werden bewusst ausgelassen.
 
 ```powershell
-.\make-release.ps1 -Version "0.3"
+.\make-release.ps1 -Version "0.8"
 ```
 
-Erzeugt `LifeguardClock-v0.3.zip` mit:
+Erzeugt `LifeguardClock-v0.8.zip` mit:
 
-- Allen HTML-Apps, `sw.js`, `manifest.json`, `Logo.png`
+- Allen HTML-Apps + externen JS-Dateien (`lifeguardclock.js`, `admin-app.js`, `dashboard-app.js`, `editor-app.js`)
+- `sw.js`, `manifest.json`, `Logo.png`, `jsqr.min.js`, `qrcode.min.js`
 - `config.example.js`, `admin_config.example.js`, Presets
-- `admin-server.py`, `admin-server.bat`, `fully-settings.json`
-- `README.md`, `DOKUMENTATION.md`, `LICENSE`
+- `admin-server.py`, `admin-server.bat`
+- `README.md`, `DOKUMENTATION.md`, `CHANGELOG.md`, `LICENSE`
+- Tests (`tests/`)
 
 > **Hinweis:** `CACHE_NAME` in `sw.js` vor einem Release auf die neue Version bumpen
-> (z. B. `lgc-shell-v3`), damit Nutzer nicht die gecachte alte Version erhalten.
+> (z. B. `lgc-shell-v12`), damit Nutzer nicht die gecachte alte Version erhalten.
 
