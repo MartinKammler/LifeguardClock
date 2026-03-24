@@ -503,6 +503,37 @@
     .cfg-details[open] summary { color: var(--text); margin-bottom: 4px; }
     .cfg-json-area { width: 100%; font-family: monospace; font-size: 12px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 10px; resize: vertical; margin-top: 6px; }
     /* Typen-Verwaltung */
+    /* ── Tabs ────────────────────────────────────────────────── */
+    .tab-nav {
+      display: flex;
+      gap: 0;
+      margin-bottom: 24px;
+      border-bottom: 1px solid var(--border);
+      overflow-x: hidden;
+      scrollbar-width: none;
+    }
+    .tab-nav::-webkit-scrollbar { display: none; }
+    .tab-btn {
+      flex: 1;
+      padding: 12px 18px;
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      color: var(--text-2);
+      cursor: pointer;
+      font-size: 0.9rem;
+      font-weight: 600;
+      font-family: inherit;
+      white-space: nowrap;
+      text-align: center;
+      margin-bottom: -1px;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    .tab-btn:hover { color: var(--text); }
+    .tab-btn.active { color: var(--blue); border-bottom-color: var(--blue); }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
     .cfg-type-row { padding: 10px 0; border-bottom: 1px solid var(--border); }
     .cfg-type-row:last-child { border-bottom: none; }
     .cfg-type-toggle { display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
@@ -550,6 +581,17 @@
     Bitte <code>admin_config.example.js</code> als <code>admin_config.js</code> kopieren und anpassen,
     oder Zugangsdaten unten manuell eingeben.
   </div>
+
+  <!-- Tab navigation -->
+  <nav class="tab-nav">
+    <button class="tab-btn" data-tab="cloud">&#x2601; Cloud &amp; QR</button>
+    <button class="tab-btn" data-tab="mitglieder">&#x1F465; Mitglieder</button>
+    <button class="tab-btn" data-tab="typen">&#x1F3F7; Typen &amp; Sonderzeiten</button>
+    <button class="tab-btn" data-tab="geraete">&#x1F4F1; Ger&auml;te</button>
+  </nav>
+
+  <!-- Tab: Cloud & QR -->
+  <div class="tab-panel" id="tab-cloud">
 
   <!-- Cloud card -->
   <div class="card" id="cloud-card">
@@ -617,6 +659,11 @@
     </div>
   </div>
 
+  </div><!-- /tab-cloud -->
+
+  <!-- Tab: Mitglieder -->
+  <div class="tab-panel" id="tab-mitglieder">
+
   <!-- Action bar -->
   <div class="action-bar">
     <button class="btn btn-primary" id="btn-add-user">+ Nutzer hinzuf&uuml;gen</button>
@@ -665,13 +712,18 @@
     </table>
   </div>
 
+  </div><!-- /tab-mitglieder -->
+
+  <!-- Tab: Typen & Sonderzeiten -->
+  <div class="tab-panel" id="tab-typen">
+
   <!-- Typen card -->
   <div class="card config-card" id="types-card">
     <div class="card-header" id="types-card-toggle">
       <span class="card-title">&#127991; Stempel-Typen</span>
       <span class="toggle-icon" id="types-toggle-icon">&#9662;</span>
     </div>
-    <div class="card-body" id="types-card-body" class="hidden">
+    <div class="card-body" id="types-card-body">
       <p class="note">Globale Typ-Definitionen &mdash; gelten f&uuml;r alle Ger&auml;te. Zeitfenster und &bdquo;Deaktiviert&ldquo; k&ouml;nnen pro Ger&auml;t &uuml;berschrieben werden.</p>
       <div class="cfg-row" style="margin-bottom:8px">
         <button class="btn btn-ghost" id="btn-types-load">&#x2601; Typen laden</button>
@@ -766,6 +818,50 @@
     </div>
   </div>
 
+  <!-- Events / Sonderzeiten card -->
+  <div class="card config-card" id="events-card">
+    <div class="card-header" id="events-card-toggle">
+      <span class="card-title">&#128197; Sonderzeiten / Events</span>
+      <span class="toggle-icon" id="events-toggle-icon">&#9662;</span>
+    </div>
+    <div class="card-body" id="events-card-body">
+      <p class="note">Tagesbezogene Zeitfenster-Overrides f&uuml;r besondere Anl&auml;sse (Veranstaltungen, Feiertage&nbsp;&hellip;). Pro Tag ist genau ein Event m&ouml;glich. Die Ger&auml;te &uuml;bernehmen &Auml;nderungen beim n&auml;chsten Cloud-Sync.</p>
+      <div class="cfg-row" style="margin-bottom:8px">
+        <button class="btn btn-ghost" id="btn-events-load">&#x2601; Events laden</button>
+        <button class="btn btn-green"  id="btn-events-save" disabled>&#x2191; In Cloud speichern</button>
+        <button class="btn btn-ghost"  id="btn-events-add">+ Event hinzuf&uuml;gen</button>
+        <span id="events-meta" style="font-size:0.8rem;color:var(--text-2);margin-left:8px"></span>
+      </div>
+      <div id="events-list"></div>
+
+      <!-- Inline-Formular für neues/bearbeitetes Event -->
+      <div id="event-form-wrap" style="display:none;margin-top:16px;padding:16px;background:var(--surface-3,#252532);border-radius:10px">
+        <div style="font-weight:700;margin-bottom:12px" id="event-form-title">Event bearbeiten</div>
+        <div class="cfg-fields">
+          <div class="cfg-field-row">
+            <label>Datum</label>
+            <input type="date" id="ef-date" class="cfg-inp">
+          </div>
+          <div class="cfg-field-row">
+            <label>Bezeichnung</label>
+            <input type="text" id="ef-label" class="cfg-inp" placeholder="z.B. Ostersonntag &ndash; Sonderdienst">
+          </div>
+          <!-- Zeitfenster-Grid wird dynamisch befüllt -->
+          <div id="ef-zf-grid" style="margin-top:12px"></div>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:12px">
+          <button class="btn btn-green" id="btn-event-form-save">Speichern</button>
+          <button class="btn btn-ghost" id="btn-event-form-cancel">Abbrechen</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  </div><!-- /tab-typen -->
+
+  <!-- Tab: Geräte -->
+  <div class="tab-panel" id="tab-geraete">
+
   <!-- Device config card -->
   <div class="card config-card" id="config-card">
     <div class="card-header" id="config-card-toggle">
@@ -839,6 +935,8 @@
       </div>
     </div>
   </div>
+
+  </div><!-- /tab-geraete -->
 
   <footer>
     LifeguardClock &ndash; Benutzerverwaltung | GPL v3 | Martin Kammler

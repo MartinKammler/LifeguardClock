@@ -7,8 +7,11 @@ if (typeof ADMIN_CONFIG === 'undefined') window.ADMIN_CONFIG = undefined;
 
   /* ── State ─────────────────────────────────────────── */
   let users = [];          // array of user objects (live)
+  let removedIds = [];     // Tombstone-Liste gelöschter Nutzer-IDs (wird in Cloud gespeichert)
   let usersVersion = 1;
   let _globalTypes = [];   // Globale Typen aus lgc_types.json (live)
+  let _events      = [];   // Events aus lgc_events.json (live)
+  let _eventEditIdx = null; // Index des gerade bearbeiteten Events (null = neu)
   let _editTypes = [];     // Typen der geladenen Gerätekonfig (per-device overrides)
   let usersExported = null;
   let saveTimer = null;
@@ -110,6 +113,24 @@ if (typeof ADMIN_CONFIG === 'undefined') window.ADMIN_CONFIG = undefined;
   // Läuft der Admin über den Python-Proxy (localhost)?
   // Dann relative URLs – kein CORS, der Proxy leitet weiter.
   const IS_PROXY = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+  const VALID_COLORS = new Set(['blue','green','amber','red','violet','grey','orange','cyan','pink','lime']);
+  function safeColor(c) { return VALID_COLORS.has(c) ? c : 'blue'; }
+
+  // Minimale Schema-Validatoren für Cloud-Daten
+  function _validUser(u) {
+    return u !== null && typeof u === 'object' &&
+      typeof u.id === 'string' && u.id.length > 0 &&
+      typeof u.name === 'string' && u.name.length > 0;
+  }
+  function _validType(t) {
+    return t !== null && typeof t === 'object' &&
+      typeof t.key === 'string' && t.key.length > 0 &&
+      typeof t.logType === 'string' && t.logType.length > 0;
+  }
+  function _validEvent(e) {
+    return e !== null && typeof e === 'object' &&
+      typeof e.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(e.date);
+  }
 
   function buildWebDavBase(creds) {
     if (IS_PROXY) {
@@ -166,6 +187,7 @@ if (typeof ADMIN_CONFIG === 'undefined') window.ADMIN_CONFIG = undefined;
       if (res.status === 404) {
         setStatus('green', 'Verbunden (neu)');
         users = [];
+        removedIds = []; // neuer Endpunkt – keine alten Tombstones übertragen
         renderTable();
         if (!silent) toast('Datei noch nicht vorhanden – wird beim ersten Speichern erstellt.', 'info');
         return;
@@ -174,7 +196,12 @@ if (typeof ADMIN_CONFIG === 'undefined') window.ADMIN_CONFIG = undefined;
       const data = await res.json();
       usersVersion = data.version || 1;
       usersExported = data.exported || null;
-      users = Array.isArray(data.users) ? data.users : [];
+      const rawUsers = Array.isArray(data.users) ? data.users : [];
+      users = rawUsers.filter(_validUser);
+      if (users.length !== rawUsers.length) {
+        console.warn(`[lgc-admin] loadUsers: ${rawUsers.length - users.length} ungültige Einträge verworfen`);
+      }
+      removedIds = Array.isArray(data.removedIds) ? data.removedIds : [];
       setStatus('green', 'Verbunden');
       renderTable();
       if (!silent) toast(`${users.length} Nutzer geladen.`, 'ok');
@@ -212,7 +239,8 @@ if (typeof ADMIN_CONFIG === 'undefined') window.ADMIN_CONFIG = undefined;
         version: usersVersion,
         exported: new Date().toISOString(),
         count: users.length,
-        users: users
+        users: users,
+        removedIds: removedIds,
       };
       const url = dirUrl + '/lgc_users.json';
       const res = await fetch(url, {
@@ -419,6 +447,7 @@ if (typeof ADMIN_CONFIG === 'undefined') window.ADMIN_CONFIG = undefined;
     if (!user) return;
     if (!confirm(`Nutzer "${user.name}" wirklich löschen?`)) return;
     users = users.filter(u => u.id !== userId);
+    if (!removedIds.includes(userId)) removedIds.push(userId);
     saveToCloud();
     renderTable();
     toast(`${user.name} gelöscht.`, 'info');
@@ -631,7 +660,29 @@ if (typeof ADMIN_CONFIG === 'undefined') window.ADMIN_CONFIG = undefined;
   });
 
   /* ── Startup ───────────────────────────────────────── */
+  /* ── Tab navigation ─────────────────────────────────── */
+  function switchTab(name) {
+    document.querySelectorAll('.tab-btn').forEach(b =>
+      b.classList.toggle('active', b.dataset.tab === name)
+    );
+    document.querySelectorAll('.tab-panel').forEach(p =>
+      p.classList.toggle('active', p.id === 'tab-' + name)
+    );
+    localStorage.setItem('lgc_admin_tab', name);
+  }
+
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+  });
+
+  /* ══════════════════════════════════════════════════════ */
+
   function init() {
+    // file://-Protokoll: sofort CORS-Warnung zeigen
+    if (location.protocol === 'file:') {
+      document.getElementById('cors-banner').style.display = '';
+    }
+
     // Warnung wenn admin_config.js fehlt und auch kein gespeicherter Key
     if (!window.ADMIN_CONFIG && !localStorage.getItem('lgc_cloud')) {
       document.getElementById('no-config-banner').style.display = '';
@@ -662,6 +713,11 @@ if (typeof ADMIN_CONFIG === 'undefined') window.ADMIN_CONFIG = undefined;
       cloudToggleIcon.classList.add('open');
     }
 
+    // Aktiven Tab wiederherstellen (Default: cloud wenn keine Credentials, sonst mitglieder)
+    const savedTab = localStorage.getItem('lgc_admin_tab') ||
+      (hasCreds ? 'mitglieder' : 'cloud');
+    switchTab(savedTab);
+
     // Nutzer beim Start laden (Fehler sichtbar anzeigen)
     if (creds && creds.url && creds.user && creds.pass) {
       loadUsers(false);
@@ -673,25 +729,55 @@ if (typeof ADMIN_CONFIG === 'undefined') window.ADMIN_CONFIG = undefined;
   init();
   renderDeviceList();
 
-  // Globale Typen beim Start automatisch laden
+  // Typen und Events beim Start automatisch laden
   (async () => {
     const creds = getCredentials();
     if (!creds) return;
+    const base = buildWebDavBase(creds);
+    const hdrs = { Authorization: authHeader(creds) };
+
+    // Typen laden
     try {
-      const res = await fetch(`${buildWebDavBase(creds)}/lgc_types.json`, {
-        headers: { Authorization: authHeader(creds) },
-      });
-      if (!res.ok) return;
-      const data = await res.json();
-      if (!Array.isArray(data.types) || data.types.length === 0) return;
-      _globalTypes = data.types.map(t => ({...t}));
-      if (!window.CONFIG) window.CONFIG = {};
-      window.CONFIG.types = _globalTypes;
-      renderGlobalTypesList();
-      renderTable();
-      buildNewPermChecks();
-      document.getElementById('types-meta').textContent =
-        `Stand: ${data.updated ? new Date(data.updated).toLocaleString('de-DE') : '?'}`;
+      const res = await fetch(`${base}/lgc_types.json`, { headers: hdrs });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.types)) {
+          _globalTypes = data.types.filter(_validType).map(t => ({...t}));
+          if (!window.CONFIG) window.CONFIG = {};
+          window.CONFIG.types = _globalTypes;
+          renderGlobalTypesList();
+          renderTable();
+          buildNewPermChecks();
+          document.getElementById('btn-types-save').disabled = false;
+          document.getElementById('types-meta').textContent =
+            `Stand: ${data.updated ? new Date(data.updated).toLocaleString('de-DE') : '?'}`;
+        }
+      } else if (res.status === 404 && Array.isArray(window.CONFIG?.types) && window.CONFIG.types.length > 0) {
+        // Datei noch nicht in Cloud – aus lokalem config.js vorbefüllen
+        _globalTypes = window.CONFIG.types.map(t => ({...t}));
+        renderGlobalTypesList();
+        renderTable();
+        buildNewPermChecks();
+        document.getElementById('btn-types-save').disabled = false;
+        document.getElementById('types-meta').textContent = 'Aus config.js – noch nicht in Cloud gespeichert';
+      }
+    } catch (e) {
+      toast('Typen laden fehlgeschlagen: ' + e.message, 'err');
+    }
+
+    // Events laden
+    try {
+      const res = await fetch(`${base}/lgc_events.json`, { headers: hdrs });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.events)) {
+          _events = data.events.filter(_validEvent).map(e => ({...e}));
+          renderEventsList();
+          document.getElementById('btn-events-save').disabled = false;
+          document.getElementById('events-meta').textContent =
+            `Stand: ${data.updated ? new Date(data.updated).toLocaleString('de-DE') : '?'}`;
+        }
+      }
     } catch {}
   })();
 
@@ -826,7 +912,7 @@ if (typeof ADMIN_CONFIG === 'undefined') window.ADMIN_CONFIG = undefined;
     body.classList.toggle('hidden');
     icon.classList.toggle('open');
   });
-  document.getElementById('types-card-body').classList.add('hidden');
+  document.getElementById('types-toggle-icon').classList.add('open');
 
   function renderGlobalTypesList() {
     const list = document.getElementById('types-list');
@@ -836,7 +922,7 @@ if (typeof ADMIN_CONFIG === 'undefined') window.ADMIN_CONFIG = undefined;
     }
     list.innerHTML = _globalTypes.map((t, idx) => `
       <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">
-        <span style="width:16px;height:16px;border-radius:50%;background:var(--${escHtml(t.color)},var(--blue));flex-shrink:0"></span>
+        <span style="width:16px;height:16px;border-radius:50%;background:var(--${safeColor(t.color)});flex-shrink:0"></span>
         <span style="font-weight:600;min-width:120px">${escHtml(t.label || t.key)}</span>
         <code style="font-size:11px;color:var(--text-3)">${escHtml(t.key)}</code>
         ${t.permissionKey ? `<span style="font-size:11px;padding:2px 6px;border-radius:4px;background:var(--surface-3)">${escHtml(t.permissionKey)}</span>` : ''}
@@ -972,13 +1058,27 @@ if (typeof ADMIN_CONFIG === 'undefined') window.ADMIN_CONFIG = undefined;
         headers: { Authorization: authHeader(creds) },
       });
       if (res.status === 404) {
-        toast('lgc_types.json noch nicht vorhanden – Typen neu erstellen und speichern.', 'info');
+        if (Array.isArray(window.CONFIG?.types) && window.CONFIG.types.length > 0) {
+          _globalTypes = window.CONFIG.types.map(t => ({...t}));
+          renderGlobalTypesList();
+          renderTable();
+          buildNewPermChecks();
+          document.getElementById('btn-types-save').disabled = false;
+          document.getElementById('types-meta').textContent = 'Aus config.js – noch nicht in Cloud gespeichert';
+          toast('lgc_types.json nicht gefunden – Typen aus config.js geladen. Bitte speichern.', 'info');
+        } else {
+          toast('lgc_types.json noch nicht vorhanden – Typen hier erstellen und speichern.', 'info');
+        }
         return;
       }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       if (!Array.isArray(data.types)) throw new Error('Ungültiges Format');
-      _globalTypes = data.types.map(t => ({...t}));
+      const rawTypes = data.types.filter(_validType);
+      if (rawTypes.length !== data.types.length) {
+        console.warn(`[lgc-admin] types load: ${data.types.length - rawTypes.length} ungültige Einträge verworfen`);
+      }
+      _globalTypes = rawTypes.map(t => ({...t}));
       if (!window.CONFIG) window.CONFIG = {};
       window.CONFIG.types = _globalTypes;
       renderGlobalTypesList();
@@ -1055,9 +1155,7 @@ if (typeof ADMIN_CONFIG === 'undefined') window.ADMIN_CONFIG = undefined;
   const cfgCardBody   = document.getElementById('config-card-body');
   const cfgToggleIcon = document.getElementById('config-toggle-icon');
 
-  // Start collapsed
-  cfgCardBody.classList.add('hidden');
-  cfgToggleIcon.classList.remove('open');
+  cfgToggleIcon.classList.add('open');
 
   cfgCardToggle.addEventListener('click', () => {
     cfgCardBody.classList.toggle('hidden');
@@ -1194,6 +1292,198 @@ if (typeof ADMIN_CONFIG === 'undefined') window.ADMIN_CONFIG = undefined;
     document.getElementById('qr-user').value = user;
     document.getElementById('qr-pass').value = pass;
   });
+
+  /* ══════════════════════════════════════════════════════
+     Events / Sonderzeiten (lgc_events.json)
+  ══════════════════════════════════════════════════════ */
+
+  // Toggle
+  document.getElementById('events-card-toggle').addEventListener('click', () => {
+    const body = document.getElementById('events-card-body');
+    const icon = document.getElementById('events-toggle-icon');
+    body.classList.toggle('hidden');
+    icon.classList.toggle('open');
+  });
+  document.getElementById('events-toggle-icon').classList.add('open');
+
+  function renderEventsList() {
+    const list = document.getElementById('events-list');
+    if (_events.length === 0) {
+      list.innerHTML = '<p class="note" style="margin:0">Keine Events &ndash; aus Cloud laden oder neu erstellen.</p>';
+      return;
+    }
+    const sorted = [..._events].sort((a, b) => a.date.localeCompare(b.date));
+    const rows = sorted.map((ev, i) => {
+      const origIdx = _events.indexOf(ev);
+      const types = ev.zeitfenster ? Object.keys(ev.zeitfenster) : [];
+      const typesStr = types.length
+        ? types.map(k => {
+            const zf = ev.zeitfenster[k];
+            return `<span style="font-size:0.78rem;color:var(--text-2)">${escHtml(k)}&nbsp;${escHtml(zf.start)}–${escHtml(zf.end)}</span>`;
+          }).join('&ensp;')
+        : '<span style="font-size:0.78rem;color:var(--text-3)">keine Overrides</span>';
+      return `<div class="type-row" data-ev-idx="${origIdx}">
+        <span style="font-family:monospace;font-size:0.85rem;min-width:90px">${escHtml(ev.date)}</span>
+        <span style="flex:1;min-width:0">${escHtml(ev.label || '—')}</span>
+        <span style="flex:2;min-width:0;display:flex;flex-wrap:wrap;gap:4px">${typesStr}</span>
+        <button class="btn btn-ghost btn-xs btn-ev-edit" data-ev-idx="${origIdx}">&#x270F;</button>
+        <button class="btn btn-ghost btn-xs btn-ev-del"  data-ev-idx="${origIdx}">&#x1F5D1;</button>
+      </div>`;
+    });
+    list.innerHTML = rows.join('');
+  }
+
+  function getZfTypes() {
+    // Typen mit requiresZeitfenster aus globalTypes oder window.CONFIG
+    const src = (_globalTypes.length ? _globalTypes : window.CONFIG?.types) ?? [];
+    return src.filter(t => t.requiresZeitfenster);
+  }
+
+  function buildEventZfGrid(zeitfenster) {
+    const types = getZfTypes();
+    if (!types.length) {
+      return '<p class="note" style="margin:0;font-size:0.8rem">Keine Typen mit Zeitfenster vorhanden &ndash; zuerst Typen laden.</p>';
+    }
+    return types.map(t => {
+      const zf = zeitfenster?.[t.key];
+      const checked = !!zf;
+      const start   = zf?.start ?? '07:00';
+      const end     = zf?.end   ?? '21:00';
+      return `<div class="cfg-field-row" style="align-items:center;gap:8px">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;min-width:140px">
+          <input type="checkbox" class="ef-zf-check" data-key="${escHtml(t.key)}" ${checked ? 'checked' : ''}>
+          <span>${escHtml(t.label || t.key)}</span>
+        </label>
+        <input type="time" class="cfg-inp ef-zf-start" data-key="${escHtml(t.key)}" value="${escHtml(start)}" style="width:100px" ${checked ? '' : 'disabled'}>
+        <span style="color:var(--text-3)">–</span>
+        <input type="time" class="cfg-inp ef-zf-end"   data-key="${escHtml(t.key)}" value="${escHtml(end)}"   style="width:100px" ${checked ? '' : 'disabled'}>
+      </div>`;
+    }).join('');
+  }
+
+  function openEventForm(idx) {
+    _eventEditIdx = idx ?? null;
+    const ev = idx !== null ? _events[idx] : null;
+    document.getElementById('event-form-title').textContent = ev ? 'Event bearbeiten' : 'Neues Event';
+    document.getElementById('ef-date').value  = ev?.date  ?? '';
+    document.getElementById('ef-label').value = ev?.label ?? '';
+    document.getElementById('ef-zf-grid').innerHTML = buildEventZfGrid(ev?.zeitfenster ?? {});
+    // Checkboxen steuern Inputs
+    document.querySelectorAll('.ef-zf-check').forEach(cb => {
+      cb.addEventListener('change', () => {
+        const key = cb.dataset.key;
+        document.querySelector(`.ef-zf-start[data-key="${key}"]`).disabled = !cb.checked;
+        document.querySelector(`.ef-zf-end[data-key="${key}"]`).disabled   = !cb.checked;
+      });
+    });
+    document.getElementById('event-form-wrap').style.display = '';
+    document.getElementById('ef-date').focus();
+  }
+
+  function closeEventForm() {
+    document.getElementById('event-form-wrap').style.display = 'none';
+    _eventEditIdx = null;
+  }
+
+  document.getElementById('btn-events-add').addEventListener('click', () => openEventForm(null));
+
+  document.getElementById('btn-event-form-cancel').addEventListener('click', closeEventForm);
+
+  document.getElementById('btn-event-form-save').addEventListener('click', () => {
+    const date  = document.getElementById('ef-date').value.trim();
+    const label = document.getElementById('ef-label').value.trim();
+    if (!date) { toast('Bitte ein Datum eingeben.', 'warn'); return; }
+    // Datum-Duplikat prüfen
+    const dupIdx = _events.findIndex((e, i) => e.date === date && i !== _eventEditIdx);
+    if (dupIdx !== -1) { toast(`Für ${date} existiert bereits ein Event.`, 'warn'); return; }
+    // Zeitfenster einsammeln
+    const zeitfenster = {};
+    document.querySelectorAll('.ef-zf-check:checked').forEach(cb => {
+      const key   = cb.dataset.key;
+      const start = document.querySelector(`.ef-zf-start[data-key="${key}"]`).value;
+      const end   = document.querySelector(`.ef-zf-end[data-key="${key}"]`).value;
+      if (start && end) zeitfenster[key] = { start, end };
+    });
+    const ev = { date, label, zeitfenster };
+    if (_eventEditIdx !== null) {
+      _events[_eventEditIdx] = ev;
+    } else {
+      _events.push(ev);
+    }
+    closeEventForm();
+    renderEventsList();
+    document.getElementById('btn-events-save').disabled = false;
+    toast('Event gespeichert – noch nicht in Cloud.', 'info');
+  });
+
+  document.getElementById('events-list').addEventListener('click', e => {
+    const editBtn = e.target.closest('.btn-ev-edit');
+    const delBtn  = e.target.closest('.btn-ev-del');
+    if (editBtn) { openEventForm(Number(editBtn.dataset.evIdx)); return; }
+    if (delBtn) {
+      const idx = Number(delBtn.dataset.evIdx);
+      const ev  = _events[idx];
+      if (!confirm(`Event ${ev.date} "${ev.label || ''}" löschen?`)) return;
+      _events.splice(idx, 1);
+      renderEventsList();
+      document.getElementById('btn-events-save').disabled = false;
+    }
+  });
+
+  document.getElementById('btn-events-load').addEventListener('click', async () => {
+    const creds = getCredentials();
+    if (!creds) { toast('Keine Zugangsdaten.', 'err'); return; }
+    const btn = document.getElementById('btn-events-load');
+    btn.disabled = true; btn.textContent = '…';
+    try {
+      const res = await fetch(`${buildWebDavBase(creds)}/lgc_events.json`, {
+        headers: { Authorization: authHeader(creds) },
+      });
+      if (res.status === 404) {
+        toast('lgc_events.json noch nicht vorhanden – Events neu erstellen und speichern.', 'info');
+        return;
+      }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (!Array.isArray(data.events)) throw new Error('Ungültiges Format');
+      _events = data.events.filter(_validEvent).map(e => ({...e}));
+      renderEventsList();
+      document.getElementById('btn-events-save').disabled = false;
+      document.getElementById('events-meta').textContent =
+        `Stand: ${data.updated ? new Date(data.updated).toLocaleString('de-DE') : '?'}`;
+      toast(`${_events.length} Event(s) geladen.`, 'ok');
+    } catch (e) {
+      toast('Fehler: ' + e.message, 'err');
+    } finally {
+      btn.disabled = false; btn.textContent = '☁ Events laden';
+    }
+  });
+
+  document.getElementById('btn-events-save').addEventListener('click', async () => {
+    const creds = getCredentials();
+    if (!creds) { toast('Keine Zugangsdaten.', 'err'); return; }
+    const btn = document.getElementById('btn-events-save');
+    btn.disabled = true; btn.textContent = '…';
+    try {
+      const base    = buildWebDavBase(creds);
+      await fetch(base, { method: 'MKCOL', headers: { Authorization: authHeader(creds) } }).catch(() => {});
+      const payload = JSON.stringify({ version: 1, updated: new Date().toISOString(), events: _events }, null, 2);
+      const res = await fetch(`${base}/lgc_events.json`, {
+        method: 'PUT',
+        headers: { Authorization: authHeader(creds), 'Content-Type': 'application/json' },
+        body: payload,
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      document.getElementById('events-meta').textContent = `Stand: ${new Date().toLocaleString('de-DE')}`;
+      toast('Events gespeichert – Geräte übernehmen beim nächsten Cloud-Sync.', 'ok');
+    } catch (e) {
+      toast('Fehler: ' + e.message, 'err');
+    } finally {
+      btn.disabled = false; btn.textContent = '↑ In Cloud speichern';
+    }
+  });
+
+  /* ══════════════════════════════════════════════════════ */
 
   // QR erzeugen
   document.getElementById('btn-gen-qr').addEventListener('click', () => {

@@ -4,14 +4,68 @@ Alle relevanten Änderungen pro Release. Format orientiert sich an [Keep a Chang
 
 ---
 
-## [Unreleased]
+## [0.9] – 2026-03-23
+
+### Hinzugefügt
+
+- **Sonderevents / `lgc_events.json`**: Neues Cloud-Dokument für tagesbasierte Zeitfenster-Overrides — Admin legt Events mit Datum, Label und Typ-Zeitfenstern an; Stempeluhr lädt beim Cloud-Sync das aktive Event für heute und wendet dessen Zeitfenster mit höchster Priorität an (Event > localStorage-Override > Typ-Default > globaler Default)
+- **Event-Badge im Dashboard-Header**: Kleines `📅`-Symbol rechts der Uhrzeit zeigt an, wenn heute ein Sonderevent aktiv ist (Tooltip: Event-Label); wird per `updateEventBanner()` bei jedem Sync aktualisiert
+- **Events-Verwaltung in admin.html**: Neue Karte „Sonderzeiten-Events" im Tab „Typen & Sonderzeiten" — vollständiges CRUD (Anlegen, Bearbeiten, Löschen) mit Datum-Picker und Typ-spezifischen Start-/End-Zeiten für alle konfigurierten Typen; Duplikat-Schutz (max. 1 Event pro Tag)
+- **Admin Tab-Navigation**: admin.html in 4 Tabs reorganisiert: „☁ Cloud & QR", „👥 Mitglieder", „🏷 Typen & Sonderzeiten", „📱 Geräte" — Tab-Zustand wird in localStorage gespeichert und beim Reload wiederhergestellt
+- **Desktop-Layout (IS_DESKTOP)**: Stempelkacheln werden auf Nicht-Touch-Geräten mit ≥ 1024 px Bildschirmbreite automatisch nebeneinander angezeigt (max. 3 pro Reihe, 300 px Höhe) — unabhängig von der Zugriffs-URL (nicht mehr nur auf `localhost`)
+- **Typen-Fallback aus `config.js`**: Wenn `lgc_types.json` in der Cloud noch nicht existiert (HTTP 404), werden die Typen aus `CONFIG.types` automatisch vorbefüllt — einmaliges „In Cloud speichern" genügt zur Erstanlage; gilt für Auto-Load beim Start und für den manuellen „Typen laden"-Button
+
+### Geändert
+
+- **10 Farben vollständig**: `orange`, `cyan`, `pink`, `lime` jetzt in allen vier relevanten Stellen konsistent: `VALID_COLORS`, `varMap` (CSS-Variablen in Kacheln), `colorToThClass` (Stunden-Übersicht), `.ov-th-*`-CSS-Klassen
+- **Service Worker**: Cache-Version auf `lgc-shell-v13` erhöht — erzwingt Update auf allen installierten PWAs
+
+### Behoben
+
+- **Admin-Karten beim Start zugeklappt**: Cloud- und Typen-Karten in admin.html wurden beim Start mit zugeklappter Karte aber offenem Icon angezeigt (doppeltes `class`-Attribut im HTML); Typen-Karte startet jetzt korrekt offen
+- **Auto-Load Typen fehlerfrei**: Netzwerkfehler beim automatischen Typen-Laden beim Start werden jetzt als Toast angezeigt statt silent ignoriert; `btn-types-save` wird beim Auto-Load korrekt aktiviert
+
+### Tests
+
+- **`test_LifeguardClock.html`**: Suite 38 `ACTIVE_EVENT Zeitfenster-Override` (5 Fälle); Suite 39 `normalizeType/VALID_COLORS alle 10 Farben` (16 Fälle inkl. Per-Farbe-Loop); Suite 40 `colorToThClass/varMap Vollständigkeit` (23 Fälle inkl. Per-Farbe-Loops)
+- **`test_admin.html`**: `assertNull`/`assertNotNull`-Hilfsfunktionen ergänzt; Suite 7 `Events – Datum-Matching` (5 Fälle); Suite 8 `Events – Duplikat-Schutz` (5 Fälle)
+- **`test_sw.html`**: CACHE_NAME auf `lgc-shell-v13` aktualisiert
+
+---
+
+## [0.9.1] – 2026-03-23
+
+### Sicherheitsfixes (Security-Review v0.9)
+
+- **QR-Bootstrap Bestätigungsdialog** (Issue 1): Gescannter `lgc://cloud?`-QR-Code wird nicht mehr blind übernommen — neues Overlay zeigt Server-URL und Benutzernamen, Nutzer muss explizit bestätigen; `escHtml()` schützt die Anzeige
+- **Rate-Limit PIN + Admin-Passwort** (Issue 3): 3 aufeinanderfolgende Fehlversuche lösen eine 5-Minuten-Sperre aus; Fehlermeldung zeigt verbleibende Versuche bzw. Restdauer; Zähler wird bei Erfolg zurückgesetzt; gilt sowohl für den PIN-Keypad als auch für den Admin-Passwort-Dialog
+- **CSS-Kontext-Injection `t.color`** (Issue 5): `safeColor()`-Whitelist in `admin-app.js` prüft alle 10 erlaubten CSS-Farbnamen; unbekannte Werte werden auf `'blue'` zurückgesetzt
+- **Nutzerdrift / Tombstone** (Issue 6): `removedIds`-Array in `lgc_users.json` verhindert, dass vom Admin gelöschte Nutzer auf anderen Geräten wieder auftauchen; `deleteUser` in admin-app.js schreibt IDs in die Tombstone-Liste, `mergeCloudUsers` filtert sie aus der lokal-only-Liste
+- **Schema-Validierung Cloud-Daten** (Issue 4): Neue Minimal-Validatoren `_validCloudUser`, `_validCloudType`, `_validCloudEvent` in `lifeguardclock.js` und `_validUser`, `_validType` in `admin-app.js` — ungültige Einträge (Nutzer: fehlendes `id`/`name`; Typen: fehlendes `key`/`logType`; Events: fehlendes ISO-Datum) werden mit `console.warn` verworfen, bevor Daten in localStorage gespeichert werden; betrifft `syncUsersFromCloud`, `syncCloudConfig` (Types + Events) und `loadUsers`/Types-Load in admin
+- **Selektive catch-Blöcke** (Issue 9): Netzwerkfehler (`TypeError` / fetch-Meldung) bleiben still; unerwartete Parse-/Logik-Fehler werden mit `console.warn('[lgc] ...')` sichtbar gemacht
+- **admin-server.py: Multi-Threading + Root-Redirect** (Issue 8): `HTTPServer` auf `ThreadingHTTPServer` umgestellt — parallele Browser-Anfragen (PROPFIND + GET) werden nicht mehr gestapelt; GET `/` leitet automatisch auf `/admin.html` weiter
+
+### Tests
+
+- **`test_LifeguardClock.html`**: Suite 41 `mergeCloudUsers mit removedIds` (5 Fälle); Suite 42 `_validCloudUser/_validCloudType/_validCloudEvent` (15 Fälle); Suite 43 `Rate-Limit Zähler/Lockout-Logik` (5 Fälle) — Sperrzeit auf 5 Minuten korrigiert
+- **`test_admin.html`**: Suite 9 `safeColor CSS-Injection-Schutz` (5 Fälle); Suite 10 `_validUser/_validType Schema-Validierung` (11 Fälle)
+- **`test_sw.html`**: CACHE_NAME auf `lgc-shell-v14` aktualisiert
+
+### Geändert
+
+- **Service Worker**: Cache-Version auf `lgc-shell-v14` erhöht — erzwingt Update auf allen installierten PWAs
+
+### Behoben (Review 2)
+
+- **Lockout-Sperrzeit konsistent auf 5 Minuten**: Kommentar, UI-Meldung (`submitAdminPw`) und Test-Suite 43 stimmten nicht mit `RATE_LOCKOUT_MS = 5 * 60 * 1000` überein — alle auf 5 Minuten vereinheitlicht
+- **Admin Auto-Load leere Typen**: Auto-Load beim Start ignorierte leere `lgc_types.json` (Guard `length > 0`) — wird jetzt wie der manuelle Load-Button behandelt; leeres Array löscht korrekt die lokale Typ-Liste; ungültige Einträge werden per `_validType` gefiltert
+- **CSS-Variablen-Tippfehler** (`LifeguardClock.html`): `var(--surface2)` → `var(--surface-2)`, `var(--muted)` → `var(--text-2)` — QR-Scanner-Overlay-Eingabefeld und Trennlinie wurden wegen unbekannter Variablen ohne korrekte Hintergrundfarbe gerendert
+- **jsQR Lazy-Load Fehlerbehandlung**: Fehlt oder ist `jsqr.min.js` beschädigt, blieb der QR-Scanner-Overlay in halbem Zustand stehen — jetzt: `stopQrScanner()` + `showManualCloudForm()` auf Ladefehler
 
 ### Bekannte Restrisiken (bewusst akzeptiert)
 
 - **Admin-Passwort-Fallback**: Bei erstmaligem Setup oder gelöschtem Storage fällt die App auf ein bekanntes Default-Passwort zurück. Mittelfristig soll ein First-Run-Setup-Zwang eingeführt werden.
 - **Cloud-Credentials in `localStorage`**: WebDAV-Zugangsdaten liegen im Klartext im Browser-Storage. Empfehlung: dediziertes App-Passwort/Nebenkonto verwenden. Für Kiosk-Geräte mit physischer Zugangskontrolle akzeptabel.
-- **Kein Brute-Force-/Rate-Limit**: Admin-PIN und User-PIN haben keinen Sperrversuch-Zähler. Für lokale Geräte im DLRG-Kontext akzeptabel.
-- **Offline nur für Hauptapp**: Nur `LifeguardClock.html` ist im Service Worker APP_SHELL gecacht. `admin.html`, `dashboard.html`, `editor.html` werden typischerweise über den lokalen Proxy (`localhost`) genutzt und benötigen kein Offline-Caching.
 
 ---
 

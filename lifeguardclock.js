@@ -155,7 +155,7 @@ function getDeviceId() {
   return id;
 }
 const DEVICE_ID   = getDeviceId();
-const APP_VERSION = '0.8';
+const APP_VERSION = '0.9.1';
 
 /* ── Proxy-Erkennung (admin-server.py auf localhost) ─────────
    Wenn die App über den lokalen Python-Proxy läuft, werden alle
@@ -163,7 +163,8 @@ const APP_VERSION = '0.8';
    kein CORS-Problem, URL-Feld optional.
 */
 const IS_PROXY = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
-if (IS_PROXY) document.body.classList.add('proxy-layout');
+const IS_DESKTOP = IS_PROXY || (!('ontouchstart' in window) && window.screen.width >= 1024);
+if (IS_DESKTOP) document.body.classList.add('proxy-layout');
 
 /* ── Cloud-Konfiguration aus config.js übernehmen (nur wenn noch leer)
    Bedingung: user gesetzt (url ist im Proxy-Modus optional) */
@@ -248,9 +249,10 @@ localStorage.setItem('lgc_type_config', JSON.stringify(
 ));
 
 /* ── STATE ──────────────────────────────────────────────────── */
-let currentUser = null;
-let pinBuffer   = '';
-let idleTimer   = null;
+let currentUser  = null;
+let pinBuffer    = '';
+let idleTimer    = null;
+let ACTIVE_EVENT = null;  // Event für heute aus lgc_events.json
 let idleCount   = CONFIG.autoLogoutSeconds ?? 20;
 const IDLE_SECONDS = CONFIG.autoLogoutSeconds ?? 20;
 
@@ -330,13 +332,26 @@ function getZFDefaultForType(type) {
   return (CONFIG.zeitfensterDefaults?.[dayKey]) ?? { start: '07:00', end: '21:00' };
 }
 
-// Heutiges Zeitfenster für einen Typ (tages-Override aus localStorage oder Default)
+// Heutiges Zeitfenster für einen Typ
+// Priorität: 1) Event-Override aus Cloud  2) localStorage-Override  3) Typ-/Global-Default
 function getZeitfensterForType(type) {
+  if (ACTIVE_EVENT?.zeitfenster?.[type.key]) return ACTIVE_EVENT.zeitfenster[type.key];
   try {
     const s = JSON.parse(localStorage.getItem('lgc_zeitfenster') || 'null');
     if (s && s.date === todayISO() && s.types?.[type.key]) return s.types[type.key];
   } catch {}
   return getZFDefaultForType(type);
+}
+
+function updateEventBanner() {
+  const el = document.getElementById('event-badge');
+  if (!el) return;
+  if (ACTIVE_EVENT) {
+    el.title   = ACTIVE_EVENT.label || 'Sonderevent heute';
+    el.style.display = '';
+  } else {
+    el.style.display = 'none';
+  }
 }
 
 // Heutiges Override für einen Typ speichern
@@ -709,6 +724,7 @@ function resetPinIdleTimer() {
 
 function pushDigit(d) {
   if (pinBuffer.length >= PIN_LEN) return;
+  if (Date.now() < _pinLockUntil) return; // Eingabe gesperrt
   pinBuffer += d;
   refreshDots();
   resetPinIdleTimer();
@@ -717,15 +733,47 @@ function pushDigit(d) {
 
 function popDigit() {
   if (!pinBuffer.length) return;
+  if (Date.now() < _pinLockUntil) return; // Eingabe gesperrt
   pinBuffer = pinBuffer.slice(0, -1);
   refreshDots();
   document.getElementById('pin-error').textContent = '';
   resetPinIdleTimer();
 }
 
+// ── Rate-Limiting: 3 Fehlversuche → 5 Minuten Sperre ───────────────────────
+const RATE_MAX_FAILS   = 3;
+const RATE_LOCKOUT_MS  = 5 * 60 * 1000; // 5 Minuten
+
+let _pinFailCount    = 0;
+let _pinLockUntil    = 0;
+let _pinLockTimer    = null;
+
+function _showPinLockout() {
+  document.getElementById('screen-login')?.classList.add('locked');
+}
+function _hidePinLockout() {
+  document.getElementById('screen-login')?.classList.remove('locked');
+  document.getElementById('pin-dots')?.classList.remove('locked');
+  document.getElementById('pin-error').textContent = '';
+}
+let _adminPwFailCount = 0;
+let _adminPwLockUntil = 0;
+
+function _rateLockoutMinutes(until) {
+  return Math.ceil((until - Date.now()) / 60000);
+}
+
 let _pinSubmitting = false;
 async function submitPIN() {
   if (_pinSubmitting) return;
+
+  // Sperre prüfen
+  if (Date.now() < _pinLockUntil) {
+    _showPinLockout();
+    clearPIN();
+    return;
+  }
+
   _pinSubmitting = true;
   try {
     if (pinBuffer === ADMIN_PIN) {
@@ -738,6 +786,7 @@ async function submitPIN() {
       if (await verifyPIN(pinBuffer, u)) { matchedUser = u; break; }
     }
     if (matchedUser) {
+      _pinFailCount = 0; // Reset bei Erfolg
       currentUser = matchedUser;
       clearPIN();
       if (matchedUser.mustChangePIN) {
@@ -746,12 +795,24 @@ async function submitPIN() {
         openDashboard();
       }
     } else {
-      document.getElementById('pin-error').textContent = 'Ungültige PIN';
-      const dots = document.getElementById('pin-dots');
-      dots.classList.remove('shake');
-      void dots.offsetWidth; // reflow to restart animation
-      dots.classList.add('shake');
-      setTimeout(() => { dots.classList.remove('shake'); clearPIN(); }, 520);
+      _pinFailCount++;
+      if (_pinFailCount >= RATE_MAX_FAILS) {
+        _pinLockUntil = Date.now() + RATE_LOCKOUT_MS;
+        _pinFailCount = 0;
+        clearPIN();
+        _showPinLockout();
+        if (_pinLockTimer) clearTimeout(_pinLockTimer);
+        _pinLockTimer = setTimeout(_hidePinLockout, RATE_LOCKOUT_MS);
+      } else {
+        const left = RATE_MAX_FAILS - _pinFailCount;
+        document.getElementById('pin-error').textContent =
+          `Ungültige PIN (noch ${left} Versuch${left !== 1 ? 'e' : ''})`;
+        const dots = document.getElementById('pin-dots');
+        dots.classList.remove('shake');
+        void dots.offsetWidth; // reflow to restart animation
+        dots.classList.add('shake');
+        setTimeout(() => { dots.classList.remove('shake'); clearPIN(); }, 520);
+      }
     }
   } finally {
     _pinSubmitting = false;
@@ -1631,15 +1692,30 @@ async function silentConfigCheck() {
     const rt = await fetch(`${cloudDavBase(cfg)}/lgc_types.json`, noCache);
     if (rt.ok) {
       const typesData = await rt.json();
-      if (Array.isArray(typesData.types) && typesData.types.length > 0) {
+      const validTypes = Array.isArray(typesData.types) ? typesData.types.filter(_validCloudType) : [];
+      // Auch leere Liste übernehmen (Admin hat alle Typen gelöscht)
+      // Nur bei komplett fehlerhafter Datei (kein Array) nichts tun
+      if (Array.isArray(typesData.types)) {
         const current  = localStorage.getItem('lgc_cloud_types') || '[]';
-        const incoming = JSON.stringify(typesData.types);
+        const incoming = JSON.stringify(validTypes);
         if (current !== incoming) {
           localStorage.setItem('lgc_cloud_types', incoming);
           location.reload();
           return;
         }
       }
+    }
+  } catch {}
+  // ── Sonderzeiten / Events laden ──────────────────────────────
+  try {
+    const re = await fetch(`${cloudDavBase(cfg)}/lgc_events.json`, noCache);
+    if (re.ok) {
+      const evData = await re.json();
+      // Immer auswerten – auch leere/bereinigte Liste setzt ACTIVE_EVENT zurück
+      const validEvents = Array.isArray(evData.events) ? evData.events.filter(_validCloudEvent) : [];
+      const today = todayISO();
+      ACTIVE_EVENT = validEvents.find(e => e.date === today) ?? null;
+      updateEventBanner();
     }
   } catch {}
   // ── Gerätespezifische Konfiguration prüfen ───────────────────
@@ -1657,7 +1733,10 @@ async function silentConfigCheck() {
     }
     localStorage.setItem('lgc_config_cloud', JSON.stringify(data.config));
     location.reload();
-  } catch {}
+  } catch (e) {
+    const isNetworkErr = e instanceof TypeError || (e.message || '').includes('fetch');
+    if (!isNetworkErr) console.warn('[lgc] syncCloudConfig Gerätekonfig Fehler:', e.message);
+  }
 }
 
 async function pullConfigFromCloud() {
@@ -1699,8 +1778,27 @@ function resetConfigCloud() {
 /* ── NUTZER-STARTUP-SYNC ────────────────────────────────────── */
 // Merged Cloud-Nutzerliste mit lokalen Daten:
 // - Cloud ist maßgeblich für neue Nutzer und Admin-PIN-Resets
+// ── Cloud-Schema-Validatoren ─────────────────────────────────────────────────
+// Minimale strukturelle Prüfung – nur die Pflichtfelder, keine Business-Logik.
+function _validCloudUser(u) {
+  return u !== null && typeof u === 'object' &&
+    typeof u.id === 'string' && u.id.length > 0 &&
+    typeof u.name === 'string' && u.name.length > 0;
+}
+function _validCloudType(t) {
+  return t !== null && typeof t === 'object' &&
+    typeof t.key === 'string' && t.key.length > 0 &&
+    typeof t.logType === 'string' && t.logType.length > 0;
+}
+function _validCloudEvent(e) {
+  return e !== null && typeof e === 'object' &&
+    typeof e.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(e.date);
+}
+
 // - Lokal gesetzte PINs (salt vorhanden, kein mustChangePIN) bleiben erhalten
-function mergeCloudUsers(cloudUsers) {
+// - removedIds: Tombstone-Liste aus Cloud – lokal-only Nutzer mit dieser ID werden entfernt
+function mergeCloudUsers(cloudUsers, removedIds = []) {
+  const removed  = new Set(removedIds);
   const local    = getUsers();
   const localMap = Object.fromEntries(local.map(u => [u.id, u]));
   const result   = [];
@@ -1720,8 +1818,10 @@ function mergeCloudUsers(cloudUsers) {
     }
     delete localMap[cu.id];
   }
-  // Lokal-only Nutzer behalten (noch nicht in Cloud gespeichert)
-  for (const lu of Object.values(localMap)) result.push(lu);
+  // Lokal-only Nutzer behalten – AUSSER wenn Admin sie explizit gelöscht hat (Tombstone)
+  for (const lu of Object.values(localMap)) {
+    if (!removed.has(lu.id)) result.push(lu);
+  }
   return result;
 }
 
@@ -1736,8 +1836,14 @@ async function syncUsersFromCloud(silent = false) {
     });
     if (!r.ok) return false;
     const data = await r.json();
-    if (!Array.isArray(data.users) || !data.users.length) return false;
-    const merged = mergeCloudUsers(data.users);
+    if (!Array.isArray(data.users)) return false;
+    const validUsers = data.users.filter(_validCloudUser);
+    if (validUsers.length !== data.users.length) {
+      console.warn(`[lgc] syncUsersFromCloud: ${data.users.length - validUsers.length} ungültige Einträge verworfen`);
+    }
+    data.users = validUsers;
+    const cloudRemovedIds = Array.isArray(data.removedIds) ? data.removedIds : [];
+    const merged = mergeCloudUsers(data.users, cloudRemovedIds);
     localStorage.setItem('lgc_users', JSON.stringify(merged));
     USERS.length = 0;
     merged.forEach(u => USERS.push(u));
@@ -1754,7 +1860,11 @@ async function syncUsersFromCloud(silent = false) {
     }
     if (!silent) showToast('Nutzerdaten aus Cloud synchronisiert');
     return true;
-  } catch { return false; }
+  } catch (e) {
+    const isNetworkErr = e instanceof TypeError || (e.message || '').includes('fetch');
+    if (!isNetworkErr) console.warn('[lgc] syncUsersFromCloud Fehler:', e.message);
+    return false;
+  }
 }
 
 // Called from the rendered HTML buttons
@@ -2365,11 +2475,31 @@ function cancelAdminPw() {
 
 async function submitAdminPw() {
   const input = document.getElementById('admin-pw-input');
+  const errEl = document.getElementById('admin-pw-err');
+
+  // Sperre prüfen
+  if (Date.now() < _adminPwLockUntil) {
+    const mins = _rateLockoutMinutes(_adminPwLockUntil);
+    if (errEl) errEl.textContent = `Gesperrt für ${mins} Minute${mins !== 1 ? 'n' : ''}`;
+    input.value = '';
+    return;
+  }
+
   if (await verifyAdminPw(input.value)) {
+    _adminPwFailCount = 0; // Reset bei Erfolg
     cancelAdminPw();
     openAdmin();
   } else {
-    document.getElementById('admin-pw-err').textContent = 'Falsches Passwort.';
+    _adminPwFailCount++;
+    if (_adminPwFailCount >= RATE_MAX_FAILS) {
+      _adminPwLockUntil = Date.now() + RATE_LOCKOUT_MS;
+      _adminPwFailCount = 0;
+      if (errEl) errEl.textContent = 'Zu viele Fehlversuche – gesperrt für 5 Minuten';
+    } else {
+      const left = RATE_MAX_FAILS - _adminPwFailCount;
+      if (errEl) errEl.textContent =
+        `Falsches Passwort (noch ${left} Versuch${left !== 1 ? 'e' : ''})`;
+    }
     input.value = '';
     input.focus();
   }
@@ -3267,13 +3397,19 @@ async function startQrScanner() {
   status.textContent = 'QR-Code in Kamera halten…';
 
   if (typeof jsQR === 'undefined') {
-    await new Promise((resolve, reject) => {
-      const s = document.createElement('script');
-      s.src = 'jsqr.min.js';
-      s.onload = resolve;
-      s.onerror = () => reject(new Error('jsqr.min.js fehlt oder ist beschädigt'));
-      document.head.appendChild(s);
-    });
+    try {
+      await new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = 'jsqr.min.js';
+        s.onload = resolve;
+        s.onerror = () => reject(new Error('jsqr.min.js fehlt oder ist beschädigt'));
+        document.head.appendChild(s);
+      });
+    } catch {
+      stopQrScanner();
+      showManualCloudForm();
+      return;
+    }
   }
 
   const canvas = document.createElement('canvas');
@@ -3319,6 +3455,8 @@ function submitManualCloud() {
   pushConfigToCloud(true);
 }
 
+let _pendingQrCfg = null;
+
 function handleQrResult(raw) {
   const PREFIX = 'lgc://cloud?';
   const status = document.getElementById('qr-scan-status');
@@ -3336,12 +3474,34 @@ function handleQrResult(raw) {
     setTimeout(startQrScanner, 2000);
     return;
   }
-  localStorage.setItem('lgc_cloud', JSON.stringify(cfg));
+  stopQrScanner();
+  _pendingQrCfg = cfg;
+  const detail = document.getElementById('qr-confirm-detail');
+  if (detail) {
+    detail.innerHTML =
+      `<strong>Server:</strong> ${escHtml(cfg.url)}<br>` +
+      `<strong>Benutzer:</strong> ${escHtml(cfg.user)}`;
+  }
+  document.getElementById('qr-confirm-overlay')?.classList.add('visible');
+}
+
+function confirmQrSetup() {
+  if (!_pendingQrCfg) return;
+  localStorage.setItem('lgc_cloud', JSON.stringify(_pendingQrCfg));
+  _pendingQrCfg = null;
+  document.getElementById('qr-confirm-overlay')?.classList.remove('visible');
   closeCloudSetup();
   checkCloudSetupButton();
   showToast('☁ Cloud konfiguriert');
   syncUsersFromCloud(true);
   pushConfigToCloud(true); // Gerät in Cloud registrieren → sofort in Admin sichtbar
+}
+
+function cancelQrSetup() {
+  _pendingQrCfg = null;
+  document.getElementById('qr-confirm-overlay')?.classList.remove('visible');
+  // Scanner neu starten damit Nutzer nochmal scannen kann
+  setTimeout(startQrScanner, 300);
 }
 
 // ── Portrait-Lock: Manifest übernimmt bei installierter PWA.
@@ -3374,6 +3534,8 @@ document.getElementById('btn-submit-admin-pw')?.addEventListener('click', submit
 document.getElementById('btn-admin-pw-cloud')?.addEventListener('click', () => {
   cancelAdminPw(); openCloudSetup();
 });
+document.getElementById('btn-qr-confirm-cancel')?.addEventListener('click', cancelQrSetup);
+document.getElementById('btn-qr-confirm-ok')?.addEventListener('click', confirmQrSetup);
 
 // Splash + Meine-Stunden Overlay: Klick auf Hintergrund schließt
 document.getElementById('splash-overlay')?.addEventListener('click', e => {
