@@ -4,38 +4,23 @@
   <meta charset="UTF-8">
   <title>LifeguardClock Editor – Unit Tests</title>
   <style>
-    :root { --bg:#09090d; --bg2:#13131a; --bg3:#1e1e2a; --border:#2a2a3a;
-            --text:#e8e8f0; --text-2:#a0a0b8; --text-3:#606078;
-            --ok:#22c55e; --fail:#ef4444; }
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: 'Courier New', monospace; background: var(--bg); color: var(--text);
-           padding: 24px; font-size: 13px; line-height: 1.6; }
-    h1   { font-size: 20px; font-weight: 800; margin-bottom: 4px; }
-    .sub { color: var(--text-3); font-size: 12px; margin-bottom: 24px; }
+    body { font-family: monospace; background: #0d0d12; color: #ccc; margin: 0; padding: 20px; }
+    h1   { color: #fff; font-size: 1.1rem; margin-bottom: 16px; }
     .suite { margin-bottom: 20px; }
-    .suite-title { font-size: 14px; font-weight: 700; color: var(--text-2);
-                   padding: 8px 12px; background: var(--bg2);
-                   border-left: 3px solid var(--border); margin-bottom: 4px;
-                   border-radius: 0 6px 6px 0; }
-    .suite-title.all-ok   { border-left-color: var(--ok); }
-    .suite-title.has-fail { border-left-color: var(--fail); }
-    .test { padding: 4px 12px 4px 20px; border-bottom: 1px solid var(--bg3); }
-    .test.ok   { color: var(--ok); }
-    .test.fail { color: var(--fail); font-weight: 600; }
-    .detail    { color: var(--text-3); font-size: 11px; padding-left: 20px; }
-    .summary { margin-top: 24px; padding: 16px 20px;
-               background: var(--bg2); border-radius: 10px; font-size: 14px; }
-    .summary .big { font-size: 26px; font-weight: 800; }
-    .ok-text   { color: var(--ok); }
-    .fail-text { color: var(--fail); }
+    .suite-title { color: #7eb8f7; font-size: .9rem; margin-bottom: 6px; font-weight: bold; }
+    .pass { color: #4caf7d; }
+    .fail { color: #f76e6e; }
+    .result { font-size: .82rem; margin: 2px 0 2px 12px; }
+    #summary { margin-top: 24px; font-size: 1rem; font-weight: bold; padding: 10px; border-radius: 6px; }
+    .all-pass { background: #1a3a28; color: #4caf7d; }
+    .has-fail  { background: #3a1a1a; color: #f76e6e; }
   </style>
 </head>
 <body>
-  <h1>LifeguardClock Editor – Unit Tests</h1>
-  <div class="sub">Funktionen aus editor.html · Render-Funktionen sind gestubbt</div>
-  <div id="output"></div>
-  <div class="summary" id="summary"></div>
-  <input id="inp-logical-day" type="hidden">
+<h1>LifeguardClock Editor – Unit Tests</h1>
+<div id="output"></div>
+<div id="summary"></div>
+<input id="inp-logical-day" type="hidden">
 
 <script>
 // ─── Test-Harness ─────────────────────────────────────────────────────────────
@@ -51,22 +36,24 @@ function eq(desc, expected, actual) {
 function ok(desc, bool) { eq(desc, true, !!bool); }
 function render() {
   const out = document.getElementById('output');
-  let html = '';
   for (const s of _suites) {
-    const failed = s.tests.filter(t => !t.ok).length;
-    html += `<div class="suite">
-      <div class="suite-title ${failed===0?'all-ok':'has-fail'}">${s.name} — ${s.tests.filter(t=>t.ok).length}/${s.tests.length} ✓</div>`;
+    const div = document.createElement('div');
+    div.className = 'suite';
+    div.innerHTML = `<div class="suite-title">${s.name}</div>`;
     for (const t of s.tests) {
-      html += `<div class="test ${t.ok?'ok':'fail'}">${t.ok?'✓':'✗'} ${t.desc}</div>`;
-      if (t.detail) html += `<div class="detail">↳ ${t.detail}</div>`;
+      const d = document.createElement('div');
+      d.className = `result ${t.ok ? 'pass' : 'fail'}`;
+      d.textContent = `${t.ok ? '✓' : '✗'} ${t.desc}${t.detail ? ' — ' + t.detail : ''}`;
+      div.appendChild(d);
     }
-    html += `</div>`;
+    out.appendChild(div);
   }
-  out.innerHTML = html;
-  const allOk = _passed === _total;
-  document.getElementById('summary').innerHTML =
-    `<span class="big ${allOk?'ok-text':'fail-text'}">${_passed}/${_total}</span>
-     &nbsp; Tests bestanden &nbsp;·&nbsp; ${_total-_passed} fehlgeschlagen`;
+  const failed = _total - _passed;
+  const sum = document.getElementById('summary');
+  sum.className = failed === 0 ? 'all-pass' : 'has-fail';
+  sum.textContent = failed === 0
+    ? `✓ Alle ${_passed} Tests bestanden`
+    : `✗ ${failed} von ${_total} Tests fehlgeschlagen`;
 }
 
 // ─── Stubs (DOM / Render) ─────────────────────────────────────────────────────
