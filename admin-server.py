@@ -18,6 +18,7 @@ import urllib.error
 import ssl
 import re
 import os
+from http.server import ThreadingHTTPServer
 
 PORT = 8080
 
@@ -112,6 +113,11 @@ class ProxyHandler(http.server.SimpleHTTPRequestHandler):
             self.send_error(502, f'Proxy-Fehler: {e}')
 
     def do_GET(self):
+        if self.path in ('/', ''):
+            self.send_response(302)
+            self.send_header('Location', '/admin.html')
+            self.end_headers()
+            return
         if self._is_local():
             super().do_GET()
         else:
@@ -162,7 +168,7 @@ if __name__ == '__main__':
     print('  Beenden       : Strg+C')
     print()
 
-    server = http.server.HTTPServer(('127.0.0.1', PORT), ProxyHandler)
+    server = ThreadingHTTPServer(('127.0.0.1', PORT), ProxyHandler)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

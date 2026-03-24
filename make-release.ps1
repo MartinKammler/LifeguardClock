@@ -2,7 +2,7 @@
 # Aufruf: .\make-release.ps1 [-Version "0.4"]
 
 param(
-    [string]$Version = "0.8"
+    [string]$Version = "0.9.1"
 )
 
 $ErrorActionPreference = 'Stop'
@@ -34,6 +34,7 @@ $include = @(
     "README.md",
     "DOKUMENTATION.md",
     "CHANGELOG.md",
+    "RELEASE_NOTES.md",
     "LICENSE",
     "presets\config.dlrg.js",
     "presets\config.simple.js",

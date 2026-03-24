@@ -226,7 +226,10 @@ function getZFDefaultForType(type) {
   if (type?.zeitfenster) return type.zeitfenster[dayKey] ?? null;
   return (CONFIG.zeitfensterDefaults?.[dayKey]) ?? { start: '07:00', end: '21:00' };
 }
+let ACTIVE_EVENT = null; // wird durch Tests gesetzt/zurückgesetzt
+
 function getZeitfensterForType(type) {
+  if (ACTIVE_EVENT?.zeitfenster?.[type.key]) return ACTIVE_EVENT.zeitfenster[type.key];
   try {
     const s = JSON.parse(localStorage.getItem('lgc_zeitfenster') || 'null');
     if (s && s.date === todayISO() && s.types?.[type.key]) return s.types[type.key];
@@ -256,6 +259,34 @@ function isWithinZeitfensterForType(type) {
 }
 
 const TIME_KEYS = TYPES.filter(t => t.requiresZeitfenster).map(t => t.key);
+
+/* ── Farb-Schema (1:1 aus lifeguardclock.js) ─────────────────── */
+const VALID_COLORS = new Set(['blue','green','amber','red','violet','grey','orange','cyan','pink','lime']);
+const SAFE_KEY_RE  = /^[a-zA-Z0-9_-]+$/;
+const ALL_10_COLORS = ['blue','green','amber','red','violet','grey','orange','cyan','pink','lime'];
+
+function normalizeType(t) {
+  if (!t || typeof t.key !== 'string' || !SAFE_KEY_RE.test(t.key)) return null;
+  if (typeof t.logType !== 'string' || !t.logType) return null;
+  const n = { key: t.key, logType: t.logType };
+  n.label = (typeof t.label === 'string' && t.label) ? t.label : t.key;
+  n.color = VALID_COLORS.has(t.color) ? t.color : 'green';
+  if (typeof t.pinned === 'boolean') n.pinned = t.pinned;
+  if (typeof t.requiresZeitfenster === 'boolean') n.requiresZeitfenster = t.requiresZeitfenster;
+  if (t.zeitfenster && typeof t.zeitfenster === 'object') n.zeitfenster = t.zeitfenster;
+  return n;
+}
+
+const colorToThClass = {
+  blue: 'ov-th-blue', green: 'ov-th-green', amber: 'ov-th-amber', red: 'ov-th-red',
+  violet: 'ov-th-violet', grey: 'ov-th-grey', orange: 'ov-th-orange',
+  cyan: 'ov-th-cyan', pink: 'ov-th-pink', lime: 'ov-th-lime',
+};
+const varMap = {
+  blue: '--blue', green: '--green', amber: '--amber', red: '--red',
+  violet: '--violet', grey: '--grey', orange: '--orange',
+  cyan: '--cyan', pink: '--pink', lime: '--lime',
+};
 
 let USERS = [{ id: 'test_user', name: 'Test User' }];
 function saveUsers(list) {
@@ -2317,6 +2348,360 @@ await test('Benutzername mit Sonderzeichen', () => {
 
 await test('Zahl wird als String escaped (kein Fehler)', () => {
   assertEqual(escHtml(42), '42', 'Zahl zu String ohne Fehler');
+});
+
+/* ══════════════════════════════════════════════════════════════
+   Suite 38 – ACTIVE_EVENT: Cloud-Event überschreibt Zeitfenster
+══════════════════════════════════════════════════════════════ */
+suite('38 – ACTIVE_EVENT: Event-Override für Zeitfenster');
+
+const _typeZF = { key: 'wachdienst', logType: 'wachdienst', requiresZeitfenster: true };
+
+await test('ohne ACTIVE_EVENT → normales Default-Zeitfenster', () => {
+  ACTIVE_EVENT = null;
+  resetStore();
+  const zf = getZeitfensterForType(_typeZF);
+  assert(zf !== null, 'Zeitfenster soll nicht null sein');
+  assert(typeof zf.start === 'string' && typeof zf.end === 'string', 'start und end müssen Strings sein');
+});
+
+await test('ACTIVE_EVENT mit passendem Type-Key → Override wird zurückgegeben', () => {
+  ACTIVE_EVENT = { date: todayISO(), label: 'Test', zeitfenster: { wachdienst: { start: '09:00', end: '18:00' } } };
+  const zf = getZeitfensterForType(_typeZF);
+  assertEqual(zf.start, '09:00', 'start soll vom Event kommen');
+  assertEqual(zf.end,   '18:00', 'end soll vom Event kommen');
+  ACTIVE_EVENT = null;
+});
+
+await test('ACTIVE_EVENT ohne Eintrag für diesen Type → Default greift', () => {
+  ACTIVE_EVENT = { date: todayISO(), label: 'Test', zeitfenster: { sanitaet: { start: '10:00', end: '16:00' } } };
+  resetStore();
+  const zf = getZeitfensterForType(_typeZF); // wachdienst ist nicht im Event
+  // Soll Default liefern, nicht null
+  assert(zf !== null, 'Soll Default-Zeitfenster liefern, nicht null');
+  assert(zf.start !== '10:00', 'Soll nicht das sanitaet-Fenster liefern');
+  ACTIVE_EVENT = null;
+});
+
+await test('ACTIVE_EVENT hat Vorrang vor localStorage-Override', () => {
+  saveZeitfensterForType('wachdienst', '06:00', '12:00');
+  ACTIVE_EVENT = { date: todayISO(), label: 'Test', zeitfenster: { wachdienst: { start: '09:00', end: '22:00' } } };
+  const zf = getZeitfensterForType(_typeZF);
+  assertEqual(zf.start, '09:00', 'Event hat Vorrang vor localStorage');
+  ACTIVE_EVENT = null;
+  resetStore();
+});
+
+await test('ACTIVE_EVENT null → localStorage-Override greift weiter', () => {
+  saveZeitfensterForType('wachdienst', '06:00', '12:00');
+  ACTIVE_EVENT = null;
+  const zf = getZeitfensterForType(_typeZF);
+  assertEqual(zf.start, '06:00', 'localStorage-Override soll greifen wenn kein Event');
+  resetStore();
+});
+
+/* ══════════════════════════════════════════════════════════════
+   Suite 39 – normalizeType / VALID_COLORS: alle 10 Farben
+══════════════════════════════════════════════════════════════ */
+suite('39 – normalizeType: VALID_COLORS mit allen 10 Farben');
+
+await test('alle 10 Farben sind in VALID_COLORS enthalten', () => {
+  for (const c of ALL_10_COLORS) {
+    assert(VALID_COLORS.has(c), `Farbe "${c}" fehlt in VALID_COLORS`);
+  }
+});
+
+await test('VALID_COLORS hat genau 10 Einträge', () => {
+  assertEqual(VALID_COLORS.size, 10, `VALID_COLORS hat ${VALID_COLORS.size} statt 10 Farben`);
+});
+
+for (const color of ALL_10_COLORS) {
+  await test(`normalizeType behält Farbe "${color}"`, () => {
+    const t = normalizeType({ key: 'test', logType: 'test', color });
+    assertNotNull(t, 'normalizeType soll nicht null liefern');
+    assertEqual(t.color, color, `Farbe soll "${color}" bleiben`);
+  });
+}
+
+await test('unbekannte Farbe → Fallback "green"', () => {
+  const t = normalizeType({ key: 'test', logType: 'test', color: 'lila' });
+  assertEqual(t.color, 'green', 'Unbekannte Farbe soll auf green fallen');
+});
+
+await test('normalizeType ohne key → null', () => {
+  assertNull(normalizeType({ logType: 'x', color: 'blue' }), 'Kein key → null');
+});
+
+await test('normalizeType mit ungültigem key (Sonderzeichen) → null', () => {
+  assertNull(normalizeType({ key: 'bad key!', logType: 'x' }), 'Ungültiger key → null');
+});
+
+await test('normalizeType ohne logType → null', () => {
+  assertNull(normalizeType({ key: 'ok' }), 'Kein logType → null');
+});
+
+/* ══════════════════════════════════════════════════════════════
+   Suite 40 – colorToThClass / varMap: Vollständigkeit
+══════════════════════════════════════════════════════════════ */
+suite('40 – colorToThClass / varMap: alle 10 Farben abgebildet');
+
+await test('colorToThClass hat genau 10 Einträge', () => {
+  assertEqual(Object.keys(colorToThClass).length, 10, 'colorToThClass soll 10 Einträge haben');
+});
+
+await test('varMap hat genau 10 Einträge', () => {
+  assertEqual(Object.keys(varMap).length, 10, 'varMap soll 10 Einträge haben');
+});
+
+for (const color of ALL_10_COLORS) {
+  await test(`colorToThClass["${color}"] → "ov-th-${color}"`, () => {
+    assertEqual(colorToThClass[color], `ov-th-${color}`, `colorToThClass["${color}"] falsch`);
+  });
+  await test(`varMap["${color}"] → "--${color}"`, () => {
+    assertEqual(varMap[color], `--${color}`, `varMap["${color}"] falsch`);
+  });
+}
+
+await test('colorToThClass Fallback für unbekannte Farbe liefert undefined (kein stiller Fehler erwartet)', () => {
+  // Der Fallback in renderStundenOverview ist: colorToThClass[t.color] || 'ov-th-green'
+  const fallback = colorToThClass['lila'] || 'ov-th-green';
+  assertEqual(fallback, 'ov-th-green', 'Unbekannte Farbe soll auf ov-th-green fallen');
+});
+
+/* ══════════════════════════════════════════════════════════════
+   Suite 41 – mergeCloudUsers mit removedIds (Tombstone)
+══════════════════════════════════════════════════════════════ */
+suite('41 – mergeCloudUsers: removedIds-Tombstone');
+
+// 1:1 aus lifeguardclock.js
+function mergeCloudUsers(cloudUsers, removedIds = []) {
+  const removed  = new Set(removedIds);
+  const local    = getUsers();
+  const localMap = Object.fromEntries(local.map(u => [u.id, u]));
+  const result   = [];
+  for (const cu of cloudUsers) {
+    const lu = localMap[cu.id];
+    if (!lu) {
+      result.push(cu);
+    } else {
+      const adminReset = cu.mustChangePIN === true && !cu.salt;
+      if (lu.salt && !lu.mustChangePIN && !adminReset) {
+        result.push({ ...cu, pin: lu.pin, salt: lu.salt, mustChangePIN: false });
+      } else {
+        result.push(cu);
+      }
+    }
+    delete localMap[cu.id];
+  }
+  for (const lu of Object.values(localMap)) {
+    if (!removed.has(lu.id)) result.push(lu);
+  }
+  return result;
+}
+
+await test('lokal-only Nutzer bleibt erhalten wenn nicht in removedIds', () => {
+  resetStore(); resetConfig();
+  localStorage.setItem('lgc_users', JSON.stringify([
+    { id: 'local_only', name: 'Lokal', pin: '111111', mustChangePIN: false },
+  ]));
+  const merged = mergeCloudUsers([], []);
+  assert(merged.some(u => u.id === 'local_only'), 'lokal-only soll erhalten bleiben');
+  resetStore(); resetConfig();
+});
+
+await test('lokal-only Nutzer wird entfernt wenn in removedIds (Tombstone)', () => {
+  resetStore(); resetConfig();
+  localStorage.setItem('lgc_users', JSON.stringify([
+    { id: 'deleted_user', name: 'Gelöscht', pin: '111111', mustChangePIN: false },
+  ]));
+  const merged = mergeCloudUsers([], ['deleted_user']);
+  assert(!merged.some(u => u.id === 'deleted_user'), 'gelöschter Nutzer darf nicht mehr auftauchen');
+  resetStore(); resetConfig();
+});
+
+await test('Cloud-Nutzer wird übernommen wenn noch nicht lokal vorhanden', () => {
+  resetStore(); resetConfig();
+  localStorage.setItem('lgc_users', JSON.stringify([]));
+  const cloudUser = { id: 'new_cloud', name: 'Neu', pin: '222222', mustChangePIN: true };
+  const merged = mergeCloudUsers([cloudUser], []);
+  assert(merged.some(u => u.id === 'new_cloud'), 'neuer Cloud-Nutzer soll aufgenommen werden');
+  resetStore(); resetConfig();
+});
+
+await test('lokal gesetzte PIN bleibt erhalten wenn kein Admin-Reset', () => {
+  resetStore(); resetConfig();
+  localStorage.setItem('lgc_users', JSON.stringify([
+    { id: 'usr1', name: 'User 1', pin: 'LOCAL_HASH', salt: 'SALT', mustChangePIN: false },
+  ]));
+  const cloudUser = { id: 'usr1', name: 'User 1 (aktualisiert)', pin: 'CLOUD_HASH', salt: null, mustChangePIN: false };
+  const merged = mergeCloudUsers([cloudUser], []);
+  const u = merged.find(u => u.id === 'usr1');
+  assertEqual(u.pin, 'LOCAL_HASH', 'lokal gesetzte PIN soll erhalten bleiben');
+  assertEqual(u.salt, 'SALT', 'lokaler Salt soll erhalten bleiben');
+  assertEqual(u.name, 'User 1 (aktualisiert)', 'Namensänderung aus Cloud soll übernommen werden');
+  resetStore(); resetConfig();
+});
+
+await test('Admin-Reset (mustChangePIN=true ohne salt in Cloud) überschreibt lokale PIN', () => {
+  resetStore(); resetConfig();
+  localStorage.setItem('lgc_users', JSON.stringify([
+    { id: 'usr2', name: 'User 2', pin: 'LOCAL_HASH', salt: 'SALT', mustChangePIN: false },
+  ]));
+  const cloudUser = { id: 'usr2', name: 'User 2', pin: 'NEW_OTP', salt: null, mustChangePIN: true };
+  const merged = mergeCloudUsers([cloudUser], []);
+  const u = merged.find(u => u.id === 'usr2');
+  assertEqual(u.pin, 'NEW_OTP', 'Admin-Reset soll lokale PIN überschreiben');
+  assertEqual(u.mustChangePIN, true, 'mustChangePIN soll true bleiben');
+  resetStore(); resetConfig();
+});
+
+/* ══════════════════════════════════════════════════════════════
+   Suite 42 – Cloud-Schema-Validatoren
+══════════════════════════════════════════════════════════════ */
+suite('42 – _validCloudUser / _validCloudType / _validCloudEvent');
+
+// 1:1 aus lifeguardclock.js
+function _validCloudUser(u) {
+  return u !== null && typeof u === 'object' &&
+    typeof u.id === 'string' && u.id.length > 0 &&
+    typeof u.name === 'string' && u.name.length > 0;
+}
+function _validCloudType(t) {
+  return t !== null && typeof t === 'object' &&
+    typeof t.key === 'string' && t.key.length > 0 &&
+    typeof t.logType === 'string' && t.logType.length > 0;
+}
+function _validCloudEvent(e) {
+  return e !== null && typeof e === 'object' &&
+    typeof e.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(e.date);
+}
+
+// _validCloudUser
+await test('_validCloudUser: gültiger Nutzer → true', () => {
+  assert(_validCloudUser({ id: 'u1', name: 'Max', pin: '123' }), 'gültiger Nutzer soll true sein');
+});
+await test('_validCloudUser: null → false', () => {
+  assert(!_validCloudUser(null), 'null soll false sein');
+});
+await test('_validCloudUser: fehlendes id → false', () => {
+  assert(!_validCloudUser({ name: 'Max' }), 'fehlendes id soll false sein');
+});
+await test('_validCloudUser: leeres id → false', () => {
+  assert(!_validCloudUser({ id: '', name: 'Max' }), 'leeres id soll false sein');
+});
+await test('_validCloudUser: fehlendes name → false', () => {
+  assert(!_validCloudUser({ id: 'u1' }), 'fehlendes name soll false sein');
+});
+await test('_validCloudUser: id als Zahl → false', () => {
+  assert(!_validCloudUser({ id: 42, name: 'Max' }), 'numerische id soll false sein');
+});
+
+// _validCloudType
+await test('_validCloudType: gültiger Typ → true', () => {
+  assert(_validCloudType({ key: 'wachdienst', logType: 'wachdienst', label: 'Wachdienst' }), 'gültiger Typ soll true sein');
+});
+await test('_validCloudType: null → false', () => {
+  assert(!_validCloudType(null), 'null soll false sein');
+});
+await test('_validCloudType: fehlendes key → false', () => {
+  assert(!_validCloudType({ logType: 'wachdienst' }), 'fehlendes key soll false sein');
+});
+await test('_validCloudType: fehlendes logType → false', () => {
+  assert(!_validCloudType({ key: 'wachdienst' }), 'fehlendes logType soll false sein');
+});
+
+// _validCloudEvent
+await test('_validCloudEvent: gültiges Event → true', () => {
+  assert(_validCloudEvent({ date: '2026-07-04', label: 'Test' }), 'gültiges Event soll true sein');
+});
+await test('_validCloudEvent: null → false', () => {
+  assert(!_validCloudEvent(null), 'null soll false sein');
+});
+await test('_validCloudEvent: fehlendes date → false', () => {
+  assert(!_validCloudEvent({ label: 'Test' }), 'fehlendes date soll false sein');
+});
+await test('_validCloudEvent: ungültiges Datumsformat → false', () => {
+  assert(!_validCloudEvent({ date: '04.07.2026' }), 'DD.MM.YYYY soll false sein');
+  assert(!_validCloudEvent({ date: '2026/07/04' }), 'Slashes soll false sein');
+  assert(!_validCloudEvent({ date: 'heute' }), 'Freitext soll false sein');
+});
+await test('_validCloudEvent: korrekte ISO-Datumsstrings → true', () => {
+  assert(_validCloudEvent({ date: '2026-01-01' }), '2026-01-01 soll gültig sein');
+  assert(_validCloudEvent({ date: '2099-12-31' }), '2099-12-31 soll gültig sein');
+});
+
+/* ══════════════════════════════════════════════════════════════
+   Suite 43 – Rate-Limit: Zähler- und Sperr-Logik
+══════════════════════════════════════════════════════════════ */
+suite('43 – Rate-Limit: Zähler und Lockout-Logik');
+
+// Extrahierte Logik (spiegelt submitPIN / submitAdminPw wider)
+const RATE_MAX_FAILS  = 3;
+const RATE_LOCKOUT_MS = 5 * 60 * 1000;
+
+function _rateLockoutMinutes(until) {
+  return Math.ceil((until - Date.now()) / 60000);
+}
+
+function simulateRateLimit() {
+  let failCount = 0;
+  let lockUntil = 0;
+  return {
+    attempt(success) {
+      if (Date.now() < lockUntil) return 'locked';
+      if (success) { failCount = 0; return 'ok'; }
+      failCount++;
+      if (failCount >= RATE_MAX_FAILS) {
+        lockUntil = Date.now() + RATE_LOCKOUT_MS;
+        failCount = 0;
+        return 'lockout';
+      }
+      return 'fail:' + (RATE_MAX_FAILS - failCount);
+    },
+    isLocked() { return Date.now() < lockUntil; },
+    getLockUntil() { return lockUntil; },
+  };
+}
+
+await test('3 Fehlversuche lösen Sperre aus', () => {
+  const rl = simulateRateLimit();
+  assertEqual(rl.attempt(false), 'fail:2', 'nach 1. Fehlversuch: noch 2');
+  assertEqual(rl.attempt(false), 'fail:1', 'nach 2. Fehlversuch: noch 1');
+  assertEqual(rl.attempt(false), 'lockout', 'nach 3. Fehlversuch: lockout');
+  assert(rl.isLocked(), 'Sperre soll aktiv sein');
+});
+
+await test('Erfolg setzt Fehlerzähler zurück', () => {
+  const rl = simulateRateLimit();
+  rl.attempt(false);
+  rl.attempt(false);
+  assertEqual(rl.attempt(true), 'ok', 'Erfolg nach 2 Fehlern soll ok zurückgeben');
+  // Jetzt wieder bei 0 – weitere 2 Fehlversuche sollten nicht sperren
+  assertEqual(rl.attempt(false), 'fail:2', 'nach Reset: noch 2');
+  assertEqual(rl.attempt(false), 'fail:1', 'nach Reset: noch 1');
+  assert(!rl.isLocked(), 'Sperre soll noch nicht aktiv sein');
+});
+
+await test('während Sperre wird kein neuer Versuch registriert', () => {
+  const rl = simulateRateLimit();
+  rl.attempt(false); rl.attempt(false); rl.attempt(false); // → lockout
+  assertEqual(rl.attempt(false), 'locked', 'während Sperre soll locked zurückgegeben werden');
+  assertEqual(rl.attempt(true),  'locked', 'auch Erfolg soll während Sperre geblockt werden');
+});
+
+await test('_rateLockoutMinutes gibt aufgerundete Minuten zurück', () => {
+  const in5min = Date.now() + 5 * 60 * 1000;
+  const mins = _rateLockoutMinutes(in5min);
+  assert(mins >= 4 && mins <= 6, `Restdauer soll ~5 min sein, war: ${mins}`);
+});
+
+await test('Sperrzeit dauert 5 Minuten', () => {
+  const rl = simulateRateLimit();
+  rl.attempt(false); rl.attempt(false); rl.attempt(false);
+  const until = rl.getLockUntil();
+  const diff  = until - Date.now();
+  assert(diff >= RATE_LOCKOUT_MS - 100 && diff <= RATE_LOCKOUT_MS + 100,
+    `Sperrzeit soll ${RATE_LOCKOUT_MS}ms sein, war: ${diff}ms`);
 });
 
 /* ══════════════════════════════════════════════════════════════

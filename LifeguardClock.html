@@ -202,7 +202,7 @@
       padding: 16px;
     }
     #qr-manual-form input {
-      background: var(--surface2);
+      background: var(--surface-2);
       border: 1px solid var(--border);
       border-radius: .5rem;
       color: var(--text);
@@ -215,7 +215,7 @@
       align-items: center;
       gap: 8px;
       padding: 0 16px;
-      color: var(--muted);
+      color: var(--text-2);
       font-size: .75rem;
     }
     #qr-manual-divider::before,
@@ -260,6 +260,33 @@
       font-weight: 500;
     }
 
+    /* PIN Lockout */
+    #pin-lockout {
+      display: none;
+    }
+    #screen-login.locked .pin-block,
+    #screen-login.locked #keypad {
+      display: none;
+    }
+    #screen-login.locked #pin-lockout {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+    }
+    .pin-lockout-icon {
+      font-size: 48px;
+      line-height: 1;
+    }
+    .pin-lockout-label {
+      font-size: 22px;
+      font-weight: 700;
+      color: var(--red);
+      letter-spacing: 2px;
+      text-transform: uppercase;
+    }
+
     /* PIN area */
     .pin-block {
       display: flex;
@@ -293,6 +320,11 @@
       background: var(--amber);
       border-color: var(--amber);
       transform: scale(1.2);
+    }
+    .pin-dots.locked .pin-dot {
+      background: var(--red);
+      border-color: var(--red);
+      transform: scale(1.1);
       box-shadow: 0 0 8px var(--amber-dim);
     }
 
@@ -448,6 +480,14 @@
       color: var(--text-3);
       letter-spacing: 0;
       white-space: nowrap;
+    }
+
+    #event-badge {
+      font-size: 16px;
+      line-height: 1;
+      cursor: default;
+      opacity: 0.85;
+      flex-shrink: 0;
     }
 
     .idle-counter {
@@ -1016,25 +1056,23 @@
 
     /* ─── PROXY-LAYOUT (PC / localhost) ──────────────────────── */
     /* Kacheln wachsen nicht auf Vollbild-Höhe; feste angenehme Höhe */
-    body.proxy-layout .action-group {
-      min-height: 0;
-      height: 220px;
-    }
     body.proxy-layout .actions-pinned,
     body.proxy-layout .actions-scroll {
       flex-direction: row;
       flex-wrap: wrap;
-      gap: 12px;
+      gap: 14px;
       padding: 16px 20px;
     }
     body.proxy-layout .action-group {
-      flex: 1 1 260px;
-      max-width: 380px;
+      min-height: 0;
+      height: 300px;
+      flex: 1 1 calc(33.333% - 10px);
+      max-width: calc(33.333% - 10px);
     }
-    body.proxy-layout .group-title  { font-size: 15px; }
+    body.proxy-layout .group-title        { font-size: 16px; }
     body.proxy-layout .group-elapsed-time { font-size: 20px; }
-    body.proxy-layout .btn-icon     { font-size: 22px; }
-    body.proxy-layout .btn-lbl      { font-size: 13px; }
+    body.proxy-layout .btn-icon           { font-size: 30px; }
+    body.proxy-layout .btn-lbl            { font-size: 14px; }
 
     /* ─── PINNED: inaktiv → "Beginnen" volle Breite ─────────── */
     #actions-pinned .action-group:not(.is-active) .group-btns {
@@ -1268,6 +1306,11 @@
     .ov-th-red    { color: var(--red)    !important; }
     .ov-th-amber  { color: var(--amber)  !important; }
     .ov-th-violet { color: var(--violet) !important; }
+    .ov-th-grey   { color: var(--grey)   !important; }
+    .ov-th-orange { color: var(--orange) !important; }
+    .ov-th-cyan   { color: var(--cyan)   !important; }
+    .ov-th-pink   { color: var(--pink)   !important; }
+    .ov-th-lime   { color: var(--lime)   !important; }
 
     /* Alle ausstempeln */
     .btn-stopall {
@@ -1719,6 +1762,43 @@
     .admin-pw-err  { font-size: 12px; color: var(--red);   text-align: center; font-weight: 600; min-height: 15px; }
     .admin-pw-btns { display: flex; gap: 8px; }
 
+    /* ─── QR-BESTÄTIGUNG OVERLAY ───────────────────────── */
+    #qr-confirm-overlay {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.82);
+      z-index: 600;
+      display: flex; align-items: center; justify-content: center;
+      opacity: 0; pointer-events: none;
+      transition: opacity 0.22s ease;
+    }
+    #qr-confirm-overlay.visible { opacity: 1; pointer-events: all; }
+    .qr-confirm-card {
+      background: var(--surface);
+      border: 1px solid var(--border-2);
+      border-radius: var(--r-l);
+      padding: 28px 24px 22px;
+      width: min(480px, 92vw);
+      display: flex; flex-direction: column; gap: 14px;
+    }
+    .qr-confirm-title {
+      font-size: 12px; font-weight: 700; color: var(--text-2);
+      text-transform: uppercase; letter-spacing: 1px; text-align: center;
+    }
+    .qr-confirm-detail {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: var(--r-s);
+      padding: 12px 14px;
+      font-size: 12px; color: var(--text-2);
+      word-break: break-all; line-height: 1.6;
+    }
+    .qr-confirm-detail strong { color: var(--text); }
+    .qr-confirm-warn {
+      font-size: 11px; color: var(--amber); text-align: center;
+      font-weight: 600;
+    }
+    .qr-confirm-btns { display: flex; gap: 8px; }
+
     /* ─── PIN-ÄNDERN OVERLAY ───────────────────────────── */
     #pin-change-overlay {
       position: fixed; inset: 0;
@@ -1923,6 +2003,11 @@
     <div class="pin-error" id="pin-error"></div>
   </div>
 
+  <div id="pin-lockout">
+    <div class="pin-lockout-icon">&#x1F512;</div>
+    <div class="pin-lockout-label">Gesperrt</div>
+  </div>
+
   <div class="keypad" id="keypad">
     <button class="key" data-digit="1">1</button>
     <button class="key" data-digit="2">2</button>
@@ -1977,6 +2062,7 @@
     </div>
     <div class="hdr-clock-row">
       <div class="hdr-clock" id="dash-clock">00:00:00</div>
+      <div id="event-badge" style="display:none" title="">&#x1F4C5;</div>
       <button class="btn-my-hours" id="btn-my-hours">&#x23F1; Meine Stunden</button>
       <div class="idle-counter" id="idle-counter"><span id="idle-num">20</span>s</div>
     </div>
@@ -2124,6 +2210,19 @@
       <button class="btn-usr-save"   style="flex:2"  id="btn-submit-admin-pw">&#x2713; Best&auml;tigen</button>
     </div>
     <button class="btn-setup-cloud" style="margin-top:12px;width:100%" id="btn-admin-pw-cloud">&#x2601; Cloud einrichten</button>
+  </div>
+</div>
+
+<!-- QR-Bestätigung Overlay -->
+<div id="qr-confirm-overlay">
+  <div class="qr-confirm-card">
+    <div class="qr-confirm-title">&#x1F4F7; Cloud-Konfiguration &uuml;bernehmen?</div>
+    <div class="qr-confirm-detail" id="qr-confirm-detail"></div>
+    <div class="qr-confirm-warn">Nur best&auml;tigen, wenn du diesen QR-Code selbst gescannt hast.</div>
+    <div class="qr-confirm-btns">
+      <button class="btn-usr-cancel" style="flex:1"  id="btn-qr-confirm-cancel">Abbrechen</button>
+      <button class="btn-usr-save"   style="flex:2"  id="btn-qr-confirm-ok">&#x2713; &Uuml;bernehmen</button>
+    </div>
   </div>
 </div>
 

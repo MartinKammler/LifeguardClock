@@ -40,6 +40,12 @@ function assert(cond, msg) { if (!cond) throw new Error(msg || 'Assertion failed
 function assertEqual(a, b, msg) {
   if (a !== b) throw new Error(msg || `Expected ${JSON.stringify(b)}, got ${JSON.stringify(a)}`);
 }
+function assertNull(v, msg) {
+  if (v !== null) throw new Error((msg || '') + ` — erwartet null, bekommen: ${JSON.stringify(v)}`);
+}
+function assertNotNull(v, msg) {
+  if (v === null || v === undefined) throw new Error((msg || '') + ' — erwartet nicht null/undefined');
+}
 
 /* ── Functions under test (extracted from admin.html) ─────────── */
 function genOtp() {
@@ -64,6 +70,21 @@ function otpUsers(users) {
 
 function authHeader(creds) {
   return 'Basic ' + btoa(unescape(encodeURIComponent(creds.user + ':' + creds.pass)));
+}
+
+// 1:1 aus admin-app.js
+const VALID_COLORS = new Set(['blue','green','amber','red','violet','grey','orange','cyan','pink','lime']);
+function safeColor(c) { return VALID_COLORS.has(c) ? c : 'blue'; }
+
+function _validUser(u) {
+  return u !== null && typeof u === 'object' &&
+    typeof u.id === 'string' && u.id.length > 0 &&
+    typeof u.name === 'string' && u.name.length > 0;
+}
+function _validType(t) {
+  return t !== null && typeof t === 'object' &&
+    typeof t.key === 'string' && t.key.length > 0 &&
+    typeof t.logType === 'string' && t.logType.length > 0;
 }
 
 /* ═══════════════════════════════════════════════════════════════ */
@@ -246,6 +267,174 @@ await test('Name umbenennen', () => {
   const newName = 'Neu Umbenannt';
   user.name = newName;
   assertEqual(user.name, newName);
+});
+
+/* ── Suite 7: Events – Datum-Matching ────────────────────────── */
+suite('Events – Datum-Matching (lgc_events.json)');
+
+// Hilfsfunktion: wie die Stempeluhr das aktive Event sucht
+function findActiveEvent(events, todayStr) {
+  return events.find(e => e.date === todayStr) ?? null;
+}
+
+await test('findet Event für heutiges Datum', () => {
+  const today = '2026-06-15';
+  const events = [
+    { date: '2026-06-14', label: 'Gestern',  zeitfenster: {} },
+    { date: '2026-06-15', label: 'Heute',    zeitfenster: { wachdienst: { start: '09:00', end: '20:00' } } },
+    { date: '2026-06-16', label: 'Morgen',   zeitfenster: {} },
+  ];
+  const ev = findActiveEvent(events, today);
+  assert(ev !== null, 'Event soll gefunden werden');
+  assertEqual(ev.label, 'Heute', 'Falsches Event gefunden');
+});
+
+await test('gibt null wenn kein Event für heute', () => {
+  const today = '2026-06-15';
+  const events = [
+    { date: '2026-06-14', label: 'Gestern', zeitfenster: {} },
+    { date: '2026-06-16', label: 'Morgen',  zeitfenster: {} },
+  ];
+  const ev = findActiveEvent(events, today);
+  assertNull(ev, 'Soll null liefern wenn kein Event für heute');
+});
+
+await test('gibt null für leere Event-Liste', () => {
+  assertNull(findActiveEvent([], '2026-06-15'), 'Leere Liste → null');
+});
+
+await test('Event-Zeitfenster enthält korrekten Typ-Override', () => {
+  const today = '2026-07-04';
+  const events = [{ date: today, label: 'Schulfest', zeitfenster: { wachdienst: { start: '08:00', end: '22:00' }, sanitaet: { start: '08:00', end: '22:00' } } }];
+  const ev = findActiveEvent(events, today);
+  assertNotNull(ev, 'Event soll gefunden werden');
+  assertEqual(ev.zeitfenster.wachdienst.start, '08:00');
+  assertEqual(ev.zeitfenster.sanitaet.end,     '22:00');
+});
+
+await test('Event ohne zeitfenster-Feld ist strukturell gültig', () => {
+  const today = '2026-07-04';
+  const events = [{ date: today, label: 'Feier' }];
+  const ev = findActiveEvent(events, today);
+  assertNotNull(ev, 'Event ohne zeitfenster soll trotzdem gefunden werden');
+  // zeitfenster ist optional – kein TypeError erwartet
+  const zf = ev.zeitfenster?.wachdienst ?? null;
+  assertNull(zf, 'Kein Zeitfenster-Override → null');
+});
+
+/* ── Suite 8: Events – Duplikat-Schutz ───────────────────────── */
+suite('Events – Duplikat-Schutz (max. 1 Event pro Tag)');
+
+// Hilfsfunktion: wie admin-app.js prüft ob Datum schon belegt ist
+function isDuplicateDate(events, date, editIdx) {
+  return events.findIndex((e, i) => e.date === date && i !== editIdx) !== -1;
+}
+
+await test('kein Duplikat bei leerer Liste', () => {
+  assert(!isDuplicateDate([], '2026-06-15', null), 'Leere Liste → kein Duplikat');
+});
+
+await test('kein Duplikat wenn nur das eigene Event vorhanden (editIdx greift)', () => {
+  const events = [{ date: '2026-06-15', label: 'A' }];
+  assert(!isDuplicateDate(events, '2026-06-15', 0), 'Eigenes Event soll nicht als Duplikat gelten');
+});
+
+await test('Duplikat erkannt wenn anderes Event gleiche Datum hat', () => {
+  const events = [
+    { date: '2026-06-15', label: 'A' },
+    { date: '2026-06-16', label: 'B' },
+  ];
+  // Neues Event (editIdx=null) mit bereits belegtem Datum
+  assert(isDuplicateDate(events, '2026-06-15', null), 'Duplikat soll erkannt werden');
+});
+
+await test('kein Duplikat für unterschiedliche Daten', () => {
+  const events = [{ date: '2026-06-15', label: 'A' }];
+  assert(!isDuplicateDate(events, '2026-06-20', null), 'Unterschiedliches Datum → kein Duplikat');
+});
+
+await test('Duplikat-Prüfung ignoriert richtigen editIdx', () => {
+  const events = [
+    { date: '2026-06-15', label: 'A' },
+    { date: '2026-06-15', label: 'Doppelt' }, // Sollte nicht vorkommen, aber defensiv testen
+  ];
+  // Bearbeitung von Index 0 – der Eintrag bei Index 1 macht es zum Duplikat
+  assert(isDuplicateDate(events, '2026-06-15', 0), 'Index-1-Eintrag soll als Duplikat erkannt werden');
+});
+
+/* ── Suite 9: safeColor ───────────────────────────────────────── */
+suite('safeColor – CSS-Kontext-Injection-Schutz');
+
+await test('VALID_COLORS enthält genau 10 Einträge', () => {
+  assertEqual(VALID_COLORS.size, 10, 'VALID_COLORS soll 10 Farben enthalten');
+});
+
+await test('bekannte Farbe wird unverändert zurückgegeben', () => {
+  for (const c of ['blue','green','amber','red','violet','grey','orange','cyan','pink','lime']) {
+    assertEqual(safeColor(c), c, `"${c}" soll zurückgegeben werden`);
+  }
+});
+
+await test('unbekannte Farbe → "blue"', () => {
+  assertEqual(safeColor('lila'),    'blue', 'lila → blue');
+  assertEqual(safeColor('purple'),  'blue', 'purple → blue');
+  assertEqual(safeColor(''),        'blue', 'leer → blue');
+});
+
+await test('CSS-Injection-Versuch → "blue"', () => {
+  assertEqual(safeColor('red; background: url(evil)'), 'blue', 'CSS-Injection → blue');
+  assertEqual(safeColor('</style><script>alert(1)'),   'blue', 'HTML-Injection → blue');
+  assertEqual(safeColor('var(--hack)'),                'blue', 'CSS-var-Injection → blue');
+});
+
+await test('null/undefined → "blue"', () => {
+  assertEqual(safeColor(null),      'blue', 'null → blue');
+  assertEqual(safeColor(undefined), 'blue', 'undefined → blue');
+});
+
+/* ── Suite 10: _validUser / _validType ───────────────────────── */
+suite('_validUser / _validType – Schema-Validierung (admin-app.js)');
+
+await test('_validUser: gültiger Nutzer → true', () => {
+  assert(_validUser({ id: 'u1', name: 'Max' }), 'gültiger Nutzer → true');
+});
+await test('_validUser: null → false', () => {
+  assert(!_validUser(null), 'null → false');
+});
+await test('_validUser: fehlendes id → false', () => {
+  assert(!_validUser({ name: 'Max' }), 'fehlendes id → false');
+});
+await test('_validUser: leeres id → false', () => {
+  assert(!_validUser({ id: '', name: 'Max' }), 'leeres id → false');
+});
+await test('_validUser: fehlendes name → false', () => {
+  assert(!_validUser({ id: 'u1' }), 'fehlendes name → false');
+});
+await test('_validUser: id als Zahl → false', () => {
+  assert(!_validUser({ id: 42, name: 'Max' }), 'numerische id → false');
+});
+
+await test('_validType: gültiger Typ → true', () => {
+  assert(_validType({ key: 'wachdienst', logType: 'wachdienst', label: 'Wachdienst' }), 'gültiger Typ → true');
+});
+await test('_validType: null → false', () => {
+  assert(!_validType(null), 'null → false');
+});
+await test('_validType: fehlendes key → false', () => {
+  assert(!_validType({ logType: 'wachdienst' }), 'fehlendes key → false');
+});
+await test('_validType: fehlendes logType → false', () => {
+  assert(!_validType({ key: 'wachdienst' }), 'fehlendes logType → false');
+});
+await test('_validType: Mix gültig + ungültig nur gültige bleiben', () => {
+  const types = [
+    { key: 'wachdienst', logType: 'wachdienst', label: 'Wachdienst' },
+    null,
+    { logType: 'wachdienst' },
+    { key: 'sanitaet' },
+  ].filter(_validType);
+  assertEqual(types.length, 1, 'nur 1 gültiger Typ');
+  assertEqual(types[0].key, 'wachdienst', 'korrekter key');
 });
 
 /* ── Render ───────────────────────────────────────────────────── */

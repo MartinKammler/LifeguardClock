@@ -37,7 +37,7 @@ Alle Daten werden lokal im Browser gespeichert (localStorage). Es wird kein Serv
 
 | Eigenschaft       | Wert                                                     |
 |-------------------|----------------------------------------------------------|
-| Hauptdatei        | `LifeguardClock.html` (HTML, CSS und JS vollständig eingebettet)  |
+| Hauptdatei        | `LifeguardClock.html` + `lifeguardclock.js` (HTML/CSS in HTML, JS extern seit v0.8) |
 | Konfiguration     | `config.js` (separat, vor `LifeguardClock.html` geladen)          |
 | Framework         | Keines – reines HTML / CSS / JavaScript                  |
 | Kryptographie     | WebCrypto API (SHA-256, `crypto.getRandomValues`)        |
@@ -283,7 +283,7 @@ HTML-Seite (`einmalpins.html`) geöffnet werden.
 
 1. Ziffern eintippen – Punkte füllen sich von links.
 2. Nach der **6. Ziffer** wird die PIN automatisch geprüft – kein Bestätigungsknopf nötig.
-3. **Falsche PIN**: Shake-Animation, Fehlermeldung, automatisches Zurücksetzen.
+3. **Falsche PIN**: Shake-Animation, Fehlermeldung, automatisches Zurücksetzen. Nach **3 aufeinanderfolgenden Fehlversuchen** wird die Eingabe für **5 Minuten gesperrt** — das gesamte Keypad wird ausgeblendet und „GESPERRT" angezeigt.
 4. **Korrekte Benutzer-PIN**: Weiterleitung zum Dashboard.
    - Wenn `mustChangePIN: true`: Einmal-PIN-Overlay erscheint zuerst.
 5. **Admin-PIN**: Weiterleitung zum Admin-Bereich.
@@ -567,7 +567,8 @@ Alle Dateien landen im Ordner `LifeguardClock/` auf dem WebDAV-Server:
 | Datei                                    | Inhalt                                         |
 |------------------------------------------|------------------------------------------------|
 | `lgc_types.json`                  | Zentrale Stempel-Typ-Definitionen (alle Geräte)|
-| `lgc_users.json`                  | Nutzerliste, PINs, Berechtigungen (alle Geräte)|
+| `lgc_users.json`                  | Nutzerliste, PINs, Berechtigungen, Tombstone (alle Geräte)|
+| `lgc_events.json`                 | Sonderevents mit tagesbasierten Zeitfenster-Overrides|
 | `lgc_config_<deviceId>.json`      | Geräte-Overrides: deaktivierte Typen, Zeitfenster |
 | `lgc_pif_<userId>_YYYY-MM.json`   | Persönliche Stempel-Daten pro Nutzer (monatlich)|
 | `lgc_[deviceId]_YYYY-MM-DD.json`  | Tages-Snapshot dieses Geräts (Vollbackup)      |
@@ -724,7 +725,7 @@ Dashboard und Editor lesen diesen Schlüssel beim Laden, um Typ-Farben und
 Bezeichnungen aus der `config.js` des Stempel-Tablets zu übernehmen — auch wenn
 `config.js` im Browser des Auswertungs-PCs nicht vorhanden ist.
 
-Farbschlüssel: `'blue'` | `'green'` | `'amber'` | `'red'` | `'violet'`
+Farbschlüssel: `'blue'` | `'green'` | `'amber'` | `'orange'` | `'red'` | `'lime'` | `'cyan'` | `'violet'` | `'pink'` | `'grey'`
 (entsprechen den CSS-Variablen `var(--blue)` usw.).
 
 ### Backup-Verhalten
@@ -1247,7 +1248,7 @@ im Browser geöffnet werden – kein Build-System, kein Node.js erforderlich.
 
 | Datei | Testet |
 |---|---|
-| `tests/test_LifeguardClock.html` | Kernfunktionen von LifeguardClock (35 Suites) |
+| `tests/test_LifeguardClock.html` | Kernfunktionen von LifeguardClock (43 Suites) |
 | `tests/test_dashboard.html` | Datenaggregation und Formatierung (`dashboard.html`) |
 | `tests/test_editor.html` | Validierung, Mutationen, Undo/Redo (`editor.html`) |
 
