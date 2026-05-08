@@ -2,7 +2,7 @@
 # Aufruf: .\make-release.ps1 [-Version "0.4"]
 
 param(
-    [string]$Version = "0.9.1"
+    [string]$Version = "1.0"
 )
 
 $ErrorActionPreference = 'Stop'
