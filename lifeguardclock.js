@@ -296,6 +296,46 @@ function addEntry(entry) {
   if (u) pushUserPif(u.id).catch(() => {});
 }
 
+function importedEntryBaseKey(entry) {
+  return JSON.stringify({
+    nutzer: entry?.nutzer ?? '',
+    typ: entry?.typ ?? '',
+    aktion: entry?.aktion ?? '',
+    zeitstempel: entry?.zeitstempel ?? '',
+    dauer_ms: entry?.dauer_ms ?? '',
+    auto: !!entry?.auto,
+  });
+}
+
+function normalizeImportedEntries(rawEntries) {
+  const fallbackCounts = new Map();
+  let normalizedCount = 0;
+  const entries = [];
+  for (const entry of (Array.isArray(rawEntries) ? rawEntries : [])) {
+    if (!entry || typeof entry !== 'object') continue;
+    if (entry.id !== undefined && entry.id !== null && entry.id !== '') {
+      entries.push(entry);
+      continue;
+    }
+    const baseKey = importedEntryBaseKey(entry);
+    const idx = fallbackCounts.get(baseKey) || 0;
+    fallbackCounts.set(baseKey, idx + 1);
+    normalizedCount++;
+    entries.push({ ...entry, id: `fallback:${baseKey}:${idx}` });
+  }
+  return { entries, normalizedCount };
+}
+
+function compareLogEntries(a, b) {
+  const aId = Number(a?.id);
+  const bId = Number(b?.id);
+  if (Number.isFinite(aId) && Number.isFinite(bId) && aId !== bId) return aId - bId;
+  const aTs = Date.parse(a?.zeitstempel || '');
+  const bTs = Date.parse(b?.zeitstempel || '');
+  if (Number.isFinite(aTs) && Number.isFinite(bTs) && aTs !== bTs) return aTs - bTs;
+  return String(a?.id ?? '').localeCompare(String(b?.id ?? ''));
+}
+
 function getAllStates() {
   try { return JSON.parse(localStorage.getItem('lgc_state') || '{}'); }
   catch { showToast('⚠ Zustandsdaten beschädigt – bitte Admin informieren'); return {}; }
@@ -1443,11 +1483,21 @@ async function syncToCloud(silent = false) {
 
 function mergeUserEntries(cloudEntries) {
   if (!Array.isArray(cloudEntries) || !cloudEntries.length) return false;
-  const log = getLog();
-  const existingIds = new Set(log.map(e => e.id));
-  const newEntries = cloudEntries.filter(e => !existingIds.has(e.id));
-  if (!newEntries.length) return false;
-  const merged = [...log, ...newEntries].sort((a, b) => a.id - b.id);
+  const localLog = normalizeImportedEntries(getLog());
+  const importedLog = normalizeImportedEntries(cloudEntries);
+  if (localLog.normalizedCount) {
+    console.warn(`Lokales Log normalisiert: ${localLog.normalizedCount} Einträge ohne id.`);
+  }
+  if (importedLog.normalizedCount) {
+    console.warn(`Cloud-PIF normalisiert: ${importedLog.normalizedCount} Einträge ohne id.`);
+  }
+  const existingIds = new Set(localLog.entries.map(e => String(e.id)));
+  const newEntries = importedLog.entries.filter(e => !existingIds.has(String(e.id)));
+  const changed = localLog.normalizedCount > 0 || newEntries.length > 0;
+  if (!changed) return false;
+  const merged = newEntries.length
+    ? [...localLog.entries, ...newEntries].sort(compareLogEntries)
+    : localLog.entries;
   saveLog(merged);
   return true;
 }
@@ -1459,7 +1509,7 @@ async function pushUserPif(userId) {
   if (!user) return;
   const month   = todayISO().slice(0, 7);
   const day     = todayISO();
-  const entries = getLog().filter(e => e.nutzer === user.name && e.zeitstempel?.startsWith(day));
+  const entries = getLog().filter(e => e.nutzer === user.name && e.zeitstempel?.startsWith(month));
   const payload = JSON.stringify({
     version:  1,
     userId,
@@ -1566,12 +1616,16 @@ async function restoreFromCloud() {
     showConfirm(
       `Cloud-Daten vom ${ts} laden?\n${data.count} Einträge\n\nLokale Daten werden überschrieben!`,
       () => {
-        saveLog(data.log || []);
+        const normalized = normalizeImportedEntries(data.log || []);
+        if (normalized.normalizedCount) {
+          console.warn(`Cloud-Backup normalisiert: ${normalized.normalizedCount} Einträge ohne id.`);
+        }
+        saveLog(normalized.entries);
         if (data.state) saveAllStates(data.state);
         writeLocalBackup();
         renderAdmin();
         renderStundenOverview();
-        showToast(`${data.count} Einträge wiederhergestellt`);
+        showToast(`${normalized.entries.length} Einträge wiederhergestellt`);
       }
     );
   } catch (e) {

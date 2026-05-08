@@ -112,9 +112,10 @@ Werkzeug zur manuellen Pflege einzelner Tages-JSON-Dateien.
 Läuft lokal im Browser, schreibt/liest `lgc_users.json` und `lgc_types.json` direkt auf dem WebDAV-Server.
 
 - Nutzer anlegen, umbenennen, löschen
-- PINs zurücksetzen (Einmal-PIN generieren)
+- PINs zurücksetzen (Einmal-PIN generieren); PIN-Status auf einen Blick (✓ Badge)
 - Berechtigungen pro Nutzer vergeben
 - Stempel-Typen verwalten (neu anlegen, bearbeiten, löschen) — gespeichert in `lgc_types.json`
+- Protokoll-Konsolidierung: fehlende Einträge aus Gerätedateien in PIF-Dateien übernehmen (läuft auch automatisch beim Nutzer-Laden)
 - Alle Tablets laden beim nächsten Start automatisch die aktuelle Liste
 
 ### `einmalpins.html` — PIN-Übersicht
@@ -197,10 +198,10 @@ Kein Test-Runner nötig — direkt als HTML-Datei öffnen.
 ## Release
 
 ```powershell
-.\make-release.ps1 -Version "0.9.1"
+.\make-release.ps1 -Version "1.0"
 ```
 
-Erzeugt `LifeguardClock-v0.9.1.zip` ohne `config.js`.
+Erzeugt `LifeguardClock-v1.0.zip` ohne `config.js`.
 Vor dem Release `CACHE_NAME` in `sw.js` bumpen (`lgc-shell-v14` usw.).
 
 ---

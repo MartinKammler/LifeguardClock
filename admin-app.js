@@ -16,6 +16,7 @@ if (typeof ADMIN_CONFIG === 'undefined') window.ADMIN_CONFIG = undefined;
   let usersExported = null;
   let saveTimer = null;
   let _cfgFull = null;     // vollständiges config-Objekt (für unveränderte Felder)
+  let _consolidating = false;
 
   /* ── Bekannte Geräte (localStorage) ────────────────── */
   const DEVICES_LS_KEY = 'lgc_admin_devices';
@@ -205,6 +206,7 @@ if (typeof ADMIN_CONFIG === 'undefined') window.ADMIN_CONFIG = undefined;
       setStatus('green', 'Verbunden');
       renderTable();
       if (!silent) toast(`${users.length} Nutzer geladen.`, 'ok');
+      consolidateDeviceLogsIntoPifs(msg => console.debug('[lgc-consolidate]', msg)).catch(() => {});
     } catch (err) {
       setStatus('red', 'Fehler');
       expandCloudCard();
@@ -332,6 +334,12 @@ if (typeof ADMIN_CONFIG === 'undefined') window.ADMIN_CONFIG = undefined;
         mask.className = 'pin-mask';
         mask.textContent = '••••••';
         tdPin.appendChild(mask);
+        if (user.salt) {
+          const badge = document.createElement('span');
+          badge.className = 'pin-set-badge';
+          badge.textContent = '✓ PIN gesetzt';
+          tdPin.appendChild(badge);
+        }
       }
       tr.appendChild(tdPin);
 
@@ -1480,6 +1488,182 @@ if (typeof ADMIN_CONFIG === 'undefined') window.ADMIN_CONFIG = undefined;
       toast('Fehler: ' + e.message, 'err');
     } finally {
       btn.disabled = false; btn.textContent = '↑ In Cloud speichern';
+    }
+  });
+
+  /* ══════════════════════════════════════════════════════
+     Protokoll-Konsolidierung (Device Logs → PIF-Dateien)
+  ══════════════════════════════════════════════════════ */
+
+  function _entryLogicalDay(zeitstempel) {
+    if (!zeitstempel) return null;
+    const d = new Date(zeitstempel);
+    if (isNaN(d)) return null;
+    const boundary = (typeof CONFIG !== 'undefined' && CONFIG?.dayBoundaryHour) ?? 4;
+    if (d.getHours() < boundary) d.setDate(d.getDate() - 1);
+    const p = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  }
+
+  async function consolidateDeviceLogsIntoPifs(logFn) {
+    if (_consolidating) { logFn?.('Konsolidierung läuft bereits.'); return; }
+    _consolidating = true;
+    try {
+      const creds = getCredentials();
+      if (!creds) { logFn?.('Keine Zugangsdaten.'); return; }
+      const base = buildWebDavBase(creds);
+      const auth = authHeader(creds);
+
+      logFn?.('Suche Gerätedateien…');
+      let deviceHrefs;
+      try {
+        const res = await fetch(base, {
+          method: 'PROPFIND',
+          headers: { Authorization: auth, Depth: '1' },
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const xml = await res.text();
+        deviceHrefs = [...xml.matchAll(/<[^>]*:href[^>]*>([^<]+)<\/[^>]*:href>/g)]
+          .map(m => decodeURIComponent(m[1].trim()))
+          .filter(h => /lgc_[^/]+_\d{4}-\d{2}-\d{2}\.json$/.test(h));
+      } catch (e) {
+        logFn?.('Cloud-Suche fehlgeschlagen: ' + e.message);
+        return;
+      }
+
+      if (deviceHrefs.length === 0) {
+        logFn?.('Keine Gerätedateien gefunden.');
+        return;
+      }
+      logFn?.(`${deviceHrefs.length} Gerätedatei(en) gefunden.`);
+
+      // Name → User-Objekt
+      const nameToUser = {};
+      for (const u of users) { if (u.name) nameToUser[u.name] = u; }
+      const warnedNames = new Set();
+
+      // Einträge pro (userId, Monat) sammeln
+      const grouped = {};
+
+      for (const href of deviceHrefs) {
+        const fileUrl = IS_PROXY
+          ? href
+          : (creds.url.replace(/\/$/, '') + (href.startsWith('/') ? href : '/' + href));
+        let json;
+        try {
+          const res = await fetch(fileUrl, { headers: { Authorization: auth } });
+          if (!res.ok) { logFn?.(`  Überspringe ${href.split('/').pop()}: HTTP ${res.status}`); continue; }
+          json = await res.json();
+        } catch (e) {
+          logFn?.(`  Überspringe ${href.split('/').pop()}: ${e.message}`);
+          continue;
+        }
+
+        const log = Array.isArray(json.log) ? json.log : [];
+        for (const entry of log) {
+          if (!entry || typeof entry !== 'object') continue;
+          const u = nameToUser[entry.nutzer];
+          if (!u) {
+            if (entry.nutzer && !warnedNames.has(entry.nutzer)) {
+              logFn?.(`  Nutzer "${entry.nutzer}" nicht in lgc_users.json – Einträge übersprungen.`);
+              warnedNames.add(entry.nutzer);
+            }
+            continue;
+          }
+          const logDay = _entryLogicalDay(entry.zeitstempel);
+          if (!logDay) continue;
+          const month = logDay.slice(0, 7);
+          const grpKey = `${u.id}_${month}`;
+          if (!grouped[grpKey]) grouped[grpKey] = { userId: u.id, userName: u.name, month, entries: new Map() };
+          const eKey = entry.id || `${entry.nutzer}|${entry.zeitstempel}|${entry.typ}`;
+          grouped[grpKey].entries.set(eKey, entry);
+        }
+        logFn?.(`  ${href.split('/').pop()}: ${log.length} Eintr.`);
+      }
+
+      const groups = Object.values(grouped);
+      if (groups.length === 0) {
+        logFn?.('Keine zuordenbaren Einträge gefunden.');
+        return;
+      }
+      logFn?.(`Schreibe ${groups.length} PIF-Datei(en)…`);
+
+      for (const grp of groups) {
+        const pifName = `lgc_pif_${grp.userId}_${grp.month}.json`;
+        const pifUrl  = `${base}/${pifName}`;
+
+        const existingKeys    = new Set();
+        const existingEntries = [];
+        try {
+          const res = await fetch(pifUrl, { headers: { Authorization: auth } });
+          if (res.ok) {
+            const data = await res.json();
+            if (Array.isArray(data.entries)) {
+              for (const e of data.entries) {
+                existingEntries.push(e);
+                existingKeys.add(e.id || `${e.nutzer}|${e.zeitstempel}|${e.typ}`);
+              }
+            }
+          }
+        } catch {}
+
+        let newCount = 0;
+        for (const [eKey, e] of grp.entries) {
+          if (!existingKeys.has(eKey)) { existingEntries.push(e); newCount++; }
+        }
+
+        const payload = JSON.stringify({
+          version: 1, userId: grp.userId, userName: grp.userName,
+          month: grp.month, exported: new Date().toISOString(),
+          entries: existingEntries,
+        });
+
+        try {
+          const res = await fetch(pifUrl, {
+            method: 'PUT',
+            headers: { Authorization: auth, 'Content-Type': 'application/json' },
+            body: payload,
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          logFn?.(`  ${pifName}: ${existingEntries.length} Eintr. (+${newCount} neu)`);
+        } catch (e) {
+          logFn?.(`  ${pifName}: Fehler – ${e.message}`);
+        }
+      }
+
+      logFn?.('Konsolidierung abgeschlossen.');
+    } finally {
+      _consolidating = false;
+    }
+  }
+
+  document.getElementById('consolidate-card-toggle').addEventListener('click', () => {
+    document.getElementById('consolidate-card-body').classList.toggle('hidden');
+    document.getElementById('consolidate-toggle-icon').classList.toggle('open');
+  });
+
+  document.getElementById('btn-consolidate').addEventListener('click', async () => {
+    const btn      = document.getElementById('btn-consolidate');
+    const logEl    = document.getElementById('consolidate-log');
+    const statusEl = document.getElementById('consolidate-status');
+    btn.disabled = true;
+    logEl.textContent = '';
+    logEl.style.display = '';
+    statusEl.textContent = '…';
+    statusEl.style.color = '';
+    try {
+      await consolidateDeviceLogsIntoPifs(msg => {
+        logEl.textContent += msg + '\n';
+        logEl.scrollTop = logEl.scrollHeight;
+      });
+      statusEl.textContent = 'Fertig.';
+      statusEl.style.color = 'var(--green)';
+    } catch (e) {
+      logEl.textContent += 'Fehler: ' + e.message + '\n';
+      statusEl.textContent = 'Fehler.';
+      statusEl.style.color = 'var(--red)';
+    } finally {
+      btn.disabled = false;
     }
   });
 

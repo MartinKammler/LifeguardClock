@@ -125,6 +125,59 @@ if (typeof ADMIN_CONFIG === 'undefined') window.ADMIN_CONFIG = undefined;
       const [y, w] = wk.split('-W');
       return `KW\u00a0${w}\u00a0/${y}`;
     }
+    // Berechnet den logischen Tag eines Eintrags (lokale Zeit, Tagesgrenze wie in LifeguardClock)
+    function entryLogicalDay(zeitstempel) {
+      if (!zeitstempel) return null;
+      const d = new Date(zeitstempel);
+      if (isNaN(d)) return null;
+      const boundary = (typeof CONFIG !== 'undefined' && CONFIG?.dayBoundaryHour) ?? 4;
+      if (d.getHours() < boundary) d.setDate(d.getDate() - 1);
+      const p = n => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`;
+    }
+
+    function importedEntryBaseKey(entry) {
+      return JSON.stringify({
+        nutzer: entry?.nutzer ?? '',
+        typ: entry?.typ ?? '',
+        aktion: entry?.aktion ?? '',
+        zeitstempel: entry?.zeitstempel ?? '',
+        dauer_ms: entry?.dauer_ms ?? '',
+        auto: !!entry?.auto,
+      });
+    }
+    function normalizeImportedEntries(rawEntries) {
+      const fallbackCounts = new Map();
+      let normalizedCount = 0;
+      const entries = [];
+      for (const entry of (Array.isArray(rawEntries) ? rawEntries : [])) {
+        if (!entry || typeof entry !== 'object') continue;
+        if (entry.id !== undefined && entry.id !== null && entry.id !== '') {
+          entries.push(entry);
+          continue;
+        }
+        const baseKey = importedEntryBaseKey(entry);
+        const idx = fallbackCounts.get(baseKey) || 0;
+        fallbackCounts.set(baseKey, idx + 1);
+        normalizedCount++;
+        entries.push({ ...entry, id: `fallback:${baseKey}:${idx}` });
+      }
+      return { entries, normalizedCount };
+    }
+    function takeUniqueImportedEntries(rawEntries, seenEntryIds, sourceLabel) {
+      const { entries, normalizedCount } = normalizeImportedEntries(rawEntries);
+      if (normalizedCount) {
+        console.warn(`${sourceLabel}: ${normalizedCount} Einträge ohne id wurden mit Ersatz-ID verarbeitet.`);
+      }
+      const uniqueEntries = [];
+      for (const entry of entries) {
+        const key = String(entry.id);
+        if (seenEntryIds.has(key)) continue;
+        seenEntryIds.add(key);
+        uniqueEntries.push(entry);
+      }
+      return uniqueEntries;
+    }
     function showTab(name) {
       document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
       document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === `tab-${name}`));
@@ -145,22 +198,21 @@ if (typeof ADMIN_CONFIG === 'undefined') window.ADMIN_CONFIG = undefined;
           const json = JSON.parse(await file.text());
           if (isPIF) {
             const byDay = {};
-            for (const e of (json.entries || [])) {
-              if (!e.id || seenEntryIds.has(e.id)) continue;
-              seenEntryIds.add(e.id);
-              const day = e.zeitstempel?.slice(0, 10);
+            for (const e of takeUniqueImportedEntries(json.entries || [], seenEntryIds, file.name)) {
+              const day = entryLogicalDay(e.zeitstempel);
               if (!day) continue;
               (byDay[day] ??= []).push(e);
             }
             for (const [day, log] of Object.entries(byDay)) entries.push({ day, log });
           } else {
-            const day = json.logicalDay || (file.name.match(/(\d{4}-\d{2}-\d{2})/)||[])[1];
-            if (day && Array.isArray(json.log)) {
-              const log = json.log.filter(e => {
-                if (!e.id || seenEntryIds.has(e.id)) return false;
-                seenEntryIds.add(e.id); return true;
-              });
-              if (log.length) entries.push({ day, log });
+            if (Array.isArray(json.log)) {
+              const byDay = {};
+              for (const e of takeUniqueImportedEntries(json.log, seenEntryIds, file.name)) {
+                const day = entryLogicalDay(e.zeitstempel);
+                if (!day) continue;
+                (byDay[day] ??= []).push(e);
+              }
+              for (const [day, log] of Object.entries(byDay)) entries.push({ day, log });
             }
           }
         } catch { /* überspringe kaputte Datei */ }
@@ -697,23 +749,21 @@ if (typeof ADMIN_CONFIG === 'undefined') window.ADMIN_CONFIG = undefined;
             const json = await r.json();
             if (isPIF) {
               const byDay = {};
-              for (const e of (json.entries || [])) {
-                if (!e.id || seenEntryIds.has(e.id)) continue;
-                seenEntryIds.add(e.id);
-                const day = e.zeitstempel?.slice(0, 10);
+              for (const e of takeUniqueImportedEntries(json.entries || [], seenEntryIds, href)) {
+                const day = entryLogicalDay(e.zeitstempel);
                 if (!day) continue;
                 (byDay[day] ??= []).push(e);
               }
               for (const [day, log] of Object.entries(byDay)) entries.push({ day, log });
             } else {
-              const m   = href.match(/(\d{4}-\d{2}-\d{2})\.json$/);
-              const day = json.logicalDay || (m && m[1]);
-              if (day && Array.isArray(json.log)) {
-                const log = json.log.filter(e => {
-                  if (!e.id || seenEntryIds.has(e.id)) return false;
-                  seenEntryIds.add(e.id); return true;
-                });
-                if (log.length) entries.push({ day, log });
+              if (Array.isArray(json.log)) {
+                const byDay = {};
+                for (const e of takeUniqueImportedEntries(json.log, seenEntryIds, href)) {
+                  const day = entryLogicalDay(e.zeitstempel);
+                  if (!day) continue;
+                  (byDay[day] ??= []).push(e);
+                }
+                for (const [day, log] of Object.entries(byDay)) entries.push({ day, log });
               }
             }
           } catch {}

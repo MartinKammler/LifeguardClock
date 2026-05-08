@@ -4,6 +4,31 @@ Alle relevanten Änderungen pro Release. Format orientiert sich an [Keep a Chang
 
 ---
 
+## [1.0] – 2026-05-08
+
+### Hinzugefügt
+
+- **Protokoll-Konsolidierung** (`admin.html` + `admin-app.js`): Neue Karte „📋 Protokoll-Konsolidierung" im Admin-Tab „Geräte" — liest alle Gerätedateien (`lgc_*_YYYY-MM-DD.json`) aus der Cloud und ergänzt fehlende Einträge in den Nutzer-PIF-Dateien (`lgc_pif_<userId>_YYYY-MM.json`). Bestehende Einträge werden nicht überschrieben. Läuft außerdem automatisch beim Laden der Nutzerliste im Hintergrund (`console.debug`-Ausgabe); manuell auslösbar per Button mit Live-Protokoll
+- **PIN-gesetzt-Badge** in `admin.html`: Zeigt grünes „✓ PIN gesetzt"-Badge in der Nutzer-Tabelle an, wenn ein Nutzer bereits einen PIN-Hash (Salt) hat — sofort erkennbar ob Erst-Login noch aussteht
+
+### Geändert
+
+- **Robuste Eintrags-Deduplizierung** (`lifeguardclock.js`, `dashboard-app.js`): `normalizeImportedEntries()` / `takeUniqueImportedEntries()` vergeben Einträgen ohne `id` einen deterministischen Fallback-Schlüssel (`fallback:<content-hash>:<index>`) — verhindert Datenverlust und Doppelzählung bei Legacy-Einträgen ohne ID in allen Import- und Merge-Pfaden
+- **Logische Tagesgrenze im Dashboard** (`dashboard-app.js`): `entryLogicalDay()` berücksichtigt `dayBoundaryHour` — Einträge vor 04:00 Uhr werden dem Vortag zugeordnet (wie in LifeguardClock.html); betrifft Datei-Import und Cloud-Laden für PIF- und Gerätedateien
+- **admin-server.bat**: `cd /d "%~dp0"` am Anfang — Server startet korrekt auch wenn das BAT-File aus einem anderen Verzeichnis aufgerufen wird
+
+### Behoben
+
+- **`pushUserPif` schreibt nur heutige Einträge** (`lifeguardclock.js`): Filter `startsWith(day)` schrieb nur Einträge des aktuellen Tages in die monatliche PIF-Datei — korrigiert auf `startsWith(month)`; beim Ausstempeln in einem anderen Gerät wurden so die früheren Einträge des Monats nicht mitgeführt
+- **`compareLogEntries`** (`lifeguardclock.js`): Neue Sortierfunktion für `mergeUserEntries` — sortiert zuerst nach numerischer ID, dann nach Zeitstempel, dann lexikografisch; verhindert Inkonsistenzen beim Mischen lokaler und Cloud-Einträge ohne numerische IDs
+- **`restoreFromCloud` Eintrags-Normalisierung** (`lifeguardclock.js`): Wiederhergestellte Backup-Einträge werden vor dem Speichern normalisiert — Einträge ohne ID erhalten Fallback-Schlüssel, Backup-Anzahl im Toast zeigt tatsächliche Entry-Anzahl nach Normalisierung
+
+### Tests
+
+- Bestehende Test-Suites 34–43 unverändert gültig; Änderungen an `mergeUserEntries` und `normalizeImportedEntries` durch Suite 34 abgedeckt
+
+---
+
 ## [0.9] – 2026-03-23
 
 ### Hinzugefügt

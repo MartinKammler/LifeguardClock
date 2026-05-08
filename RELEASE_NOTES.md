@@ -1,37 +1,40 @@
-# Release Notes – LifeguardClock v0.9.1
+# Release Notes – LifeguardClock v1.0
 
-## Sicherheits-Patch (Security-Review v0.9)
+## Highlights
 
-Dieses Release enthält ausschließlich Sicherheits- und Robustheitsfixes. Keine neuen Features, keine Änderungen an `config.js`-Struktur oder Cloud-Dateiformat.
+Version 1.0 bringt zuverlässigere Datenhaltung und bessere Administrierbarkeit. Alle bekannten Datenverlust- und Synchronisierungs-Bugs sind behoben.
 
-### Sicherheitsfixes
+### Neue Funktion: Protokoll-Konsolidierung
 
-**QR-Bootstrap-Bestätigung**: Beim Scannen eines Einrichtungs-QR-Codes erscheint jetzt ein Bestätigungsdialog mit Server-URL und Benutzername. Die Cloud-Konfiguration wird erst nach expliziter Bestätigung übernommen — ein gefälschter QR-Code kann das Gerät nicht mehr unbemerkt auf einen fremden Endpunkt umleiten.
+In `admin.html` gibt es eine neue Karte „📋 Protokoll-Konsolidierung". Sie liest alle Gerätedateien (`lgc_*_YYYY-MM-DD.json`) aus der Cloud und überträgt fehlende Einträge in die Nutzer-PIF-Dateien. Bestehende Einträge werden dabei nie überschrieben.
 
-**Rate-Limit für PIN und Admin-Passwort**: Nach 3 aufeinanderfolgenden Fehlversuchen am PIN-Keypad oder im Admin-Passwort-Dialog wird die Eingabe für 5 Minuten gesperrt. Die Fehlermeldung zeigt die verbleibenden Versuche bzw. die Restdauer der Sperre.
+Die Konsolidierung läuft automatisch im Hintergrund wenn die Nutzerliste geladen wird. Per Klick auf „🔄 Konsolidieren" kann sie manuell mit Live-Protokoll ausgelöst werden. Das ist vor allem dann sinnvoll, wenn Geräte längere Zeit offline waren oder wenn PIF-Dateien aus beliebigem Grund unvollständig sind.
 
-**Schema-Validierung Cloud-Daten**: Nutzer, Typen und Events aus der Cloud werden vor der Übernahme auf Pflichtfelder geprüft. Einträge ohne `id`/`name` (Nutzer), ohne `key`/`logType` (Typen) oder ohne gültiges ISO-Datum (Events) werden verworfen und per `console.warn` protokolliert.
+### Bugfix: Monatliche PIF-Dateien unvollständig
 
-**Nutzerdrift behoben**: Vom Admin gelöschte Nutzer tauchen auf anderen Geräten nicht mehr wieder auf. Die gelöschten IDs werden als Tombstone-Liste (`removedIds`) in `lgc_users.json` gespeichert und beim nächsten Sync berücksichtigt.
+In allen Versionen vor 1.0 hat `pushUserPif` nur die Einträge des aktuellen Tages in die monatliche Datei geschrieben — nicht den gesamten Monat. Das bedeutete: Ausstempeln auf Gerät B konnte den Einstempel-Eintrag von Gerät A nicht sehen, wenn der auf einem anderen Tag lag. Mit der Protokoll-Konsolidierung können vorhandene Lücken in bestehenden PIF-Dateien nachträglich gefüllt werden.
 
-**CSS-Injection-Schutz**: Typ-Farben in der Admin-Oberfläche werden gegen eine Whitelist geprüft. Ungültige Werte können nicht mehr als CSS-Kontext-Injection eingeschleust werden.
+### Verbesserung: Robuste Deduplizierung
 
-### Sonstige Fixes
+Einträge ohne `id` (Legacy-Daten oder manuell bearbeitete Dateien) erhalten jetzt automatisch einen deterministischen Fallback-Schlüssel. Das verhindert sowohl Datenverlust als auch Doppelzählung beim Laden und Mergen von Dateien in der Stempeluhr, im Dashboard und im Admin.
 
-**admin-server.py**: Parallele Browser-Anfragen (z. B. PROPFIND + GET gleichzeitig) werden jetzt korrekt verarbeitet. Direktaufruf von `http://localhost:8080/` leitet automatisch auf `admin.html` weiter.
+### Verbesserung: Logische Tagesgrenze im Dashboard
 
-**Admin Auto-Load leere Typen**: Leere `lgc_types.json` in der Cloud wird beim Start jetzt korrekt als leere Typ-Liste behandelt (bisher wurde ein leeres Array ignoriert).
+Das Dashboard gruppiert Einträge jetzt korrekt nach `dayBoundaryHour` (Standard: 04:00 Uhr). Einträge die nach Mitternacht aber vor der konfigurierten Grenze liegen, werden dem Vortag zugeordnet — identisch mit dem Verhalten der Stempeluhr.
 
-**CSS-Variablen im QR-Scanner-Overlay**: Zwei Tippfehler (`--surface2`, `--muted`) behoben — Eingabefeld und Trennlinie werden jetzt korrekt in der konfigurierten Theme-Farbe gerendert.
+### Sonstiges
 
-**jsQR-Ladefehlback**: Ist `jsqr.min.js` nicht verfügbar, wechselt der QR-Scanner-Overlay jetzt automatisch in den manuellen Eingabemodus statt in einem halbfertigen Zustand zu bleiben.
+- **admin-server.bat**: Startet jetzt korrekt auch wenn es aus einem anderen Verzeichnis aufgerufen wird (`cd /d "%~dp0"`).
+- **PIN-gesetzt-Badge**: In der Nutzertabelle von `admin.html` ist auf einen Blick erkennbar, welche Nutzer bereits ihren PIN gesetzt haben.
+
+---
 
 ### Migration / Update
 
-- Service Worker Cache wurde auf `lgc-shell-v14` erhöht → Browser-Update erfolgt automatisch nach Neustart.
-- Hard Refresh (`Strg+Shift+R`) empfohlen, falls Änderungen nicht sofort sichtbar sind.
-- Keine Änderungen an `config.js`-Struktur oder Cloud-Dateiformat erforderlich.
-- `lgc_users.json` erhält beim nächsten Admin-Speichern ein neues `removedIds`-Feld — rückwärtskompatibel, ältere App-Versionen ignorieren das Feld.
+- Kein Änderungsbedarf an `config.js`, Cloud-Dateien oder `lgc_users.json`.
+- Service Worker Cache bleibt auf `lgc-shell-v14` — kein zwangsweises Update erforderlich.
+- Hard Refresh (`Strg+Shift+R`) empfohlen falls Änderungen nicht sofort sichtbar sind.
+- Um bestehende PIF-Lücken zu schließen: `admin.html` öffnen → Tab „Geräte" → „📋 Protokoll-Konsolidierung" → „🔄 Konsolidieren".
 
 ### Bekannte Einschränkungen
 

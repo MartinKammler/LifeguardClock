@@ -409,6 +409,22 @@
       vertical-align: middle;
     }
 
+    .pin-set-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      background: rgba(76,175,125,0.15);
+      border: 1px solid rgba(76,175,125,0.3);
+      border-radius: 4px;
+      padding: 1px 6px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: var(--green);
+      font-family: inherit;
+      margin-left: 5px;
+      vertical-align: middle;
+    }
+
     td.col-perms .perm-checks {
       gap: 6px;
     }
@@ -933,6 +949,22 @@
           </div>
         </details>
       </div>
+    </div>
+  </div>
+
+  <!-- Consolidation card -->
+  <div class="card" id="consolidate-card" style="margin-top:20px">
+    <div class="card-header" id="consolidate-card-toggle">
+      <span class="card-title">&#x1F4CB; Protokoll-Konsolidierung</span>
+      <span class="toggle-icon" id="consolidate-toggle-icon">&#9662;</span>
+    </div>
+    <div class="card-body hidden" id="consolidate-card-body">
+      <p class="note">Liest alle Ger&auml;tedateien (<code>lgc_*_YYYY-MM-DD.json</code>) und erg&auml;nzt fehlende Eintr&auml;ge in den Nutzer-PIF-Dateien (<code>lgc_pif_&lt;userId&gt;_YYYY-MM.json</code>). Bestehende Eintr&auml;ge werden nicht &uuml;berschrieben. L&auml;uft au&szlig;erdem automatisch beim Laden der Nutzerliste.</p>
+      <div style="margin-top:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <button class="btn btn-green" id="btn-consolidate">&#x1F504; Konsolidieren</button>
+        <span id="consolidate-status" style="font-size:0.82rem;color:var(--text-2)"></span>
+      </div>
+      <pre id="consolidate-log" style="display:none;margin-top:10px;padding:10px;background:rgba(0,0,0,0.4);border-radius:6px;font-size:0.75rem;color:#86efac;max-height:220px;overflow-y:auto;white-space:pre-wrap;border:1px solid var(--border)"></pre>
     </div>
   </div>
 
