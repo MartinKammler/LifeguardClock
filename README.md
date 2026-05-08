@@ -202,7 +202,7 @@ Kein Test-Runner nötig — direkt als HTML-Datei öffnen.
 ```
 
 Erzeugt `LifeguardClock-v1.0.zip` ohne `config.js`.
-Vor dem Release `CACHE_NAME` in `sw.js` bumpen (`lgc-shell-v14` usw.).
+Vor dem Release `CACHE_NAME` in `sw.js` bumpen (`lgc-shell-v15` usw.).
 
 ---
 

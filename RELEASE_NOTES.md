@@ -32,7 +32,7 @@ Das Dashboard gruppiert Einträge jetzt korrekt nach `dayBoundaryHour` (Standard
 ### Migration / Update
 
 - Kein Änderungsbedarf an `config.js`, Cloud-Dateien oder `lgc_users.json`.
-- Service Worker Cache bleibt auf `lgc-shell-v14` — kein zwangsweises Update erforderlich.
+- Service Worker Cache auf `lgc-shell-v15` erhöht — erzwingt automatisches Update auf allen installierten PWAs.
 - Hard Refresh (`Strg+Shift+R`) empfohlen falls Änderungen nicht sofort sichtbar sind.
 - Um bestehende PIF-Lücken zu schließen: `admin.html` öffnen → Tab „Geräte" → „📋 Protokoll-Konsolidierung" → „🔄 Konsolidieren".
 
