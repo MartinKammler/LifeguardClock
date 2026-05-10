@@ -1,40 +1,31 @@
-# Release Notes – LifeguardClock v1.0
+# Release Notes – LifeguardClock v1.0.1
 
-## Highlights
+## Bugfix-Release
 
-Version 1.0 bringt zuverlässigere Datenhaltung und bessere Administrierbarkeit. Alle bekannten Datenverlust- und Synchronisierungs-Bugs sind behoben.
+Dieser Patch behebt einen Anzeigefehler im Dashboard und stellt sicher, dass der Service-Worker-Update-Mechanismus korrekt ausgelöst wird.
 
-### Neue Funktion: Protokoll-Konsolidierung
+### Behoben: Dashboard zeigt falsche Stundenzahl
 
-In `admin.html` gibt es eine neue Karte „📋 Protokoll-Konsolidierung". Sie liest alle Gerätedateien (`lgc_*_YYYY-MM-DD.json`) aus der Cloud und überträgt fehlende Einträge in die Nutzer-PIF-Dateien. Bestehende Einträge werden dabei nie überschrieben.
+In der Tagesansicht des Dashboards konnte eine Person eine stark überhöhte Anwesenheitsdauer angezeigt bekommen (z. B. 11 Stunden statt ~2 Stunden). Ursache:
 
-Die Konsolidierung läuft automatisch im Hintergrund wenn die Nutzerliste geladen wird. Per Klick auf „🔄 Konsolidieren" kann sie manuell mit Live-Protokoll ausgelöst werden. Das ist vor allem dann sinnvoll, wenn Geräte längere Zeit offline waren oder wenn PIF-Dateien aus beliebigem Grund unvollständig sind.
+1. Ein Gerät erzeugt an der Tagesgrenze (04:00 Uhr) automatisch einen Stop-Eintrag, wenn eine Sitzung noch als offen gilt.
+2. Hatte ein anderes Gerät (oder die PIF-Datei) die Sitzung bereits manuell beendet, kannte das erste Gerät diesen Stop nicht und schrieb einen Auto-Stop mit der vollen Zeitspanne seit dem Einstempeln als `dauer_ms`.
+3. Dieser Auto-Stop landet auf dem nächsten logischen Tag — ohne passenden Start. Das Dashboard zählte `dauer_ms` trotzdem, weil kein Start verlangt wurde.
 
-### Bugfix: Monatliche PIF-Dateien unvollständig
+**Fix:** Stop-Einträge ohne passenden Start werden jetzt in `buildDB` übersprungen. Die Daten-Bereinigung in der Cloud ist separat erforderlich (fehlerhafte Auto-Stops aus PIF und Gerätedateien entfernen).
 
-In allen Versionen vor 1.0 hat `pushUserPif` nur die Einträge des aktuellen Tages in die monatliche Datei geschrieben — nicht den gesamten Monat. Das bedeutete: Ausstempeln auf Gerät B konnte den Einstempel-Eintrag von Gerät A nicht sehen, wenn der auf einem anderen Tag lag. Mit der Protokoll-Konsolidierung können vorhandene Lücken in bestehenden PIF-Dateien nachträglich gefüllt werden.
+### Service Worker v16
 
-### Verbesserung: Robuste Deduplizierung
-
-Einträge ohne `id` (Legacy-Daten oder manuell bearbeitete Dateien) erhalten jetzt automatisch einen deterministischen Fallback-Schlüssel. Das verhindert sowohl Datenverlust als auch Doppelzählung beim Laden und Mergen von Dateien in der Stempeluhr, im Dashboard und im Admin.
-
-### Verbesserung: Logische Tagesgrenze im Dashboard
-
-Das Dashboard gruppiert Einträge jetzt korrekt nach `dayBoundaryHour` (Standard: 04:00 Uhr). Einträge die nach Mitternacht aber vor der konfigurierten Grenze liegen, werden dem Vortag zugeordnet — identisch mit dem Verhalten der Stempeluhr.
-
-### Sonstiges
-
-- **admin-server.bat**: Startet jetzt korrekt auch wenn es aus einem anderen Verzeichnis aufgerufen wird (`cd /d "%~dp0"`).
-- **PIN-gesetzt-Badge**: In der Nutzertabelle von `admin.html` ist auf einen Blick erkennbar, welche Nutzer bereits ihren PIN gesetzt haben.
+Der v1.0-Tag enthielt noch `lgc-shell-v14` (der Bump auf v15 wurde nach dem Tag-Setzen eingecheckt). Geräte mit v14 haben daher das v1.0-Update möglicherweise nicht automatisch erhalten. v1.0.1 bringt `lgc-shell-v16` und erzwingt das Update auf allen Geräten zuverlässig.
 
 ---
 
 ### Migration / Update
 
-- Kein Änderungsbedarf an `config.js`, Cloud-Dateien oder `lgc_users.json`.
-- Service Worker Cache auf `lgc-shell-v15` erhöht — erzwingt automatisches Update auf allen installierten PWAs.
+- Kein Änderungsbedarf an `config.js`, `lgc_users.json` oder Cloud-Dateiformat.
+- Service Worker Cache auf `lgc-shell-v16` → Browser-Update erfolgt automatisch nach Neustart der App.
 - Hard Refresh (`Strg+Shift+R`) empfohlen falls Änderungen nicht sofort sichtbar sind.
-- Um bestehende PIF-Lücken zu schließen: `admin.html` öffnen → Tab „Geräte" → „📋 Protokoll-Konsolidierung" → „🔄 Konsolidieren".
+- Sollte im Dashboard noch eine überhöhte Stundenzahl angezeigt werden: fehlerhafte Auto-Stop-Einträge aus der PIF-Datei und den Gerätedateien in der Cloud entfernen (manuell oder über den Editor).
 
 ### Bekannte Einschränkungen
 

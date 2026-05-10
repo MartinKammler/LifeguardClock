@@ -4,6 +4,28 @@ Alle relevanten Änderungen pro Release. Format orientiert sich an [Keep a Chang
 
 ---
 
+## [1.0.1] – 2026-05-10
+
+### Behoben
+
+- **Verwaister Auto-Stop im Dashboard** (`dashboard-app.js`): Ein Stop-Eintrag mit `dauer_ms` wurde im Dashboard gezählt, auch wenn kein passender Start auf demselben logischen Tag existierte. Ursache war ein fehlerhafter Auto-Stop an der Tagesgrenze, den das Gerät erzeugte weil es einen manuellen Stop (nur in der PIF-Datei vorhanden) nicht kannte — der Auto-Stop landete auf dem nächsten logischen Tag ohne Start und blähte die angezeigte Dauer auf (Symptom: Uwe Schönfeld mit 11 h am 10.05.). Fix: verwaiste Stop-Einträge werden in `buildDB` übersprungen (`if (!openStart) continue`)
+
+### Geändert
+
+- **Service Worker**: Cache-Version auf `lgc-shell-v16` erhöht — erzwingt Update auf allen installierten PWAs (v15 war bereits auf manchen Geräten ausgerollt)
+- **`APP_VERSION`**: auf `'1.0.1'` gesetzt — Splash Screen zeigt korrekte Version
+
+### Tests
+
+- **`test_dashboard.html`**: `buildDB`-Stub durch echte Produktions-Implementierung ersetzt (Start/Stop-Pairing, Timestamp-Fallback); `makeLog` berechnet jetzt echte Startzeitstempel; Suiten 5, 13, 14 auf paired Start/Stop umgestellt; Suite 15 neu: 5 Regressionsfälle für den Auto-Stop-Bug
+- **`test_sw.html`**: CACHE_NAME auf `lgc-shell-v16` aktualisiert
+
+### Hinweis
+
+Der v1.0-Tag enthielt `lgc-shell-v14` (der SW-Bump auf v15 wurde nach dem Tag-Setzen committed). v1.0.1 bereinigt das mit v16.
+
+---
+
 ## [1.0] – 2026-05-08
 
 ### Hinzugefügt
