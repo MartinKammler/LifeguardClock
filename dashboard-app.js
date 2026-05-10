@@ -264,15 +264,46 @@ if (typeof ADMIN_CONFIG === 'undefined') window.ADMIN_CONFIG = undefined;
       const personSet = new Set();
       const typeTotals = {};   // logType → Gesamtdauer aller Daten
 
+      // Alle Quellen pro Tag zusammenführen bevor gepaart wird –
+      // Start kann aus Gerätedatei stammen, Stop aus PIF (oder umgekehrt)
+      const allByDay = {};
       for (const { day, log } of entries) {
+        if (!allByDay[day]) allByDay[day] = [];
+        allByDay[day].push(...log);
+      }
+
+      for (const [day, log] of Object.entries(allByDay)) {
+        const groups = {};
         for (const e of log) {
-          if (e.aktion !== 'stop' || !e.dauer_ms) continue;
-          const p = e.nutzer, t = e.typ;
-          personSet.add(p);
-          if (!by[day]) by[day] = {};
-          if (!by[day][p]) by[day][p] = {};
-          by[day][p][t] = (by[day][p][t] || 0) + e.dauer_ms;
-          typeTotals[t] = (typeTotals[t] || 0) + e.dauer_ms;
+          if (!e.nutzer || !e.typ) continue;
+          const k = `${e.nutzer}\0${e.typ}`;
+          if (!groups[k]) groups[k] = [];
+          groups[k].push(e);
+        }
+        for (const grpEntries of Object.values(groups)) {
+          const sorted = grpEntries.sort((a, b) => new Date(a.zeitstempel) - new Date(b.zeitstempel));
+          const p = sorted[0].nutzer;
+          const t = sorted[0].typ;
+          let openStart = null;
+          for (const e of sorted) {
+            if (e.aktion === 'start') {
+              openStart = e;
+            } else if (e.aktion === 'stop') {
+              if (!openStart) continue; // verwaister Stop (kein Start auf diesem Tag) → überspringen
+              let durMs = (e.dauer_ms > 0) ? e.dauer_ms : null;
+              if (!durMs) {
+                durMs = new Date(e.zeitstempel) - new Date(openStart.zeitstempel);
+              }
+              if (durMs > 0) {
+                personSet.add(p);
+                if (!by[day]) by[day] = {};
+                if (!by[day][p]) by[day][p] = {};
+                by[day][p][t] = (by[day][p][t] || 0) + durMs;
+                typeTotals[t] = (typeTotals[t] || 0) + durMs;
+              }
+              openStart = null;
+            }
+          }
         }
       }
 
@@ -722,24 +753,23 @@ if (typeof ADMIN_CONFIG === 'undefined') window.ADMIN_CONFIG = undefined;
         if (!res.ok) throw new Error(`PROPFIND: HTTP ${res.status}`);
         const xml = await res.text();
 
+        // Nur PIF-Dateien laden – Gerätedateien sind Backup, nicht Datenquelle
         const hrefs = [...xml.matchAll(/<[^>]*:href[^>]*>([^<]+)<\/[^>]*:href>/g)]
           .map(m => decodeURIComponent(m[1].trim()))
-          .filter(h => /lgc_pif_.+_\d{4}-\d{2}\.json$/.test(h) ||
-                       /lgc_.*\d{4}-\d{2}-\d{2}\.json$/.test(h));
+          .filter(h => /lgc_pif_.+_\d{4}-\d{2}\.json$/.test(h));
 
         if (hrefs.length === 0) {
           btn.disabled = false; btn.textContent = '☁️ Cloud laden';
-          alert('Keine lgc_*.json Dateien in der Cloud gefunden.');
+          alert('Keine PIF-Dateien (lgc_pif_*) in der Cloud gefunden.\nBitte erst mit LifeguardClock stempeln und synchronisieren.');
           return;
         }
 
         const entries      = [];
         const seenHrefs    = new Set();
-        const seenEntryIds = new Set();  // verhindert Doppelzählung wenn PIF + Gerätedatei
+        const seenEntryIds = new Set();
         for (const href of hrefs) {
           if (seenHrefs.has(href)) continue;
           seenHrefs.add(href);
-          const isPIF   = /lgc_pif_.+_\d{4}-\d{2}\.json$/.test(href);
           const fileUrl = IS_PROXY
             ? href
             : (creds.url.replace(/\/$/, '') + (href.startsWith('/') ? href : '/' + href));
@@ -747,37 +777,25 @@ if (typeof ADMIN_CONFIG === 'undefined') window.ADMIN_CONFIG = undefined;
             const r = await fetch(fileUrl, { headers: { Authorization: auth } });
             if (!r.ok) continue;
             const json = await r.json();
-            if (isPIF) {
-              const byDay = {};
-              for (const e of takeUniqueImportedEntries(json.entries || [], seenEntryIds, href)) {
-                const day = entryLogicalDay(e.zeitstempel);
-                if (!day) continue;
-                (byDay[day] ??= []).push(e);
-              }
-              for (const [day, log] of Object.entries(byDay)) entries.push({ day, log });
-            } else {
-              if (Array.isArray(json.log)) {
-                const byDay = {};
-                for (const e of takeUniqueImportedEntries(json.log, seenEntryIds, href)) {
-                  const day = entryLogicalDay(e.zeitstempel);
-                  if (!day) continue;
-                  (byDay[day] ??= []).push(e);
-                }
-                for (const [day, log] of Object.entries(byDay)) entries.push({ day, log });
-              }
+            const byDay = {};
+            for (const e of takeUniqueImportedEntries(json.entries || [], seenEntryIds, href)) {
+              const day = entryLogicalDay(e.zeitstempel);
+              if (!day) continue;
+              (byDay[day] ??= []).push(e);
             }
+            for (const [day, log] of Object.entries(byDay)) entries.push({ day, log });
           } catch {}
         }
 
         btn.disabled = false; btn.textContent = '☁️ Cloud laden';
-        if (entries.length === 0) { alert('Keine gültigen Dateien geladen.'); return; }
+        if (entries.length === 0) { alert('Keine gültigen PIF-Dateien geladen.'); return; }
 
         DB = buildDB(entries);
         buildTypeList(DB.typeTotals);
         dayIdx  = DB.days.length - 1;
         weekIdx = DB.weeks.length - 1;
         activePerson = DB.persons[0] ?? null;
-        document.getElementById('file-badge').textContent = `☁ ${entries.length} Dateien`;
+        document.getElementById('file-badge').textContent = `☁ ${hrefs.length} PIF-Datei${hrefs.length !== 1 ? 'en' : ''}`;
         document.getElementById('file-badge').style.display = '';
         document.getElementById('header-range').textContent =
           `${fmtDateShort(DB.days[0])} – ${fmtDateShort(DB.days[DB.days.length-1])}`;

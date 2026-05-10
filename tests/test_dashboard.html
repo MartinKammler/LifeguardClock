@@ -94,16 +94,47 @@ function fmtWeek(wk) {
 function buildDB(entries) {
   const by = {};
   const personSet = new Set();
+  const typeTotals = {};
+
+  const allByDay = {};
   for (const { day, log } of entries) {
+    if (!allByDay[day]) allByDay[day] = [];
+    allByDay[day].push(...log);
+  }
+
+  for (const [day, log] of Object.entries(allByDay)) {
+    const groups = {};
     for (const e of log) {
-      if (e.aktion !== 'stop' || !e.dauer_ms) continue;
-      const p = e.nutzer, t = e.typ;
-      personSet.add(p);
-      if (!by[day]) by[day] = {};
-      if (!by[day][p]) by[day][p] = {};
-      by[day][p][t] = (by[day][p][t] || 0) + e.dauer_ms;
+      if (!e.nutzer || !e.typ) continue;
+      const k = `${e.nutzer}\0${e.typ}`;
+      if (!groups[k]) groups[k] = [];
+      groups[k].push(e);
+    }
+    for (const grpEntries of Object.values(groups)) {
+      const sorted = grpEntries.sort((a, b) => new Date(a.zeitstempel) - new Date(b.zeitstempel));
+      const p = sorted[0].nutzer;
+      const t = sorted[0].typ;
+      let openStart = null;
+      for (const e of sorted) {
+        if (e.aktion === 'start') {
+          openStart = e;
+        } else if (e.aktion === 'stop') {
+          if (!openStart) continue; // verwaister Stop → überspringen
+          let durMs = (e.dauer_ms > 0) ? e.dauer_ms : null;
+          if (!durMs) durMs = new Date(e.zeitstempel) - new Date(openStart.zeitstempel);
+          if (durMs > 0) {
+            personSet.add(p);
+            if (!by[day]) by[day] = {};
+            if (!by[day][p]) by[day][p] = {};
+            by[day][p][t] = (by[day][p][t] || 0) + durMs;
+            typeTotals[t] = (typeTotals[t] || 0) + durMs;
+          }
+          openStart = null;
+        }
+      }
     }
   }
+
   const days = Object.keys(by).sort();
   const persons = [...personSet].sort();
   const weekMap = {};
@@ -113,18 +144,20 @@ function buildDB(entries) {
     weekMap[wk].push(d);
   }
   const weeks = Object.keys(weekMap).sort();
-  return { by, days, persons, weekMap, weeks };
+  return { by, days, persons, weekMap, weeks, typeTotals };
 }
 
 // ─── Demo-Daten (inline) ─────────────────────────────────
+// makeLog berechnet start = ts_stop − dauer_ms, sodass alle Zeitstempel gültig sind
+// und das Start-vor-Stop-Sorting in buildDB korrekt funktioniert.
 // Übersicht der Solldaten:
 // Tag         KW   Personen  anw(h)  wach(h)  san(h)
 // 2026-01-10  02   6         20      12       3
-// 2026-01-11  02   5         18      14       1     (Martin bis 01:00 nächster Tag)
+// 2026-01-11  02   5         18      14       1     (Martin stop 2026-01-12T01:00Z → logDay 2026-01-11)
 // 2026-01-17  03   5         18      14       2
 // 2026-01-18  03   4         16      12       3
 // 2026-01-24  04   5         18      14       2
-// 2026-01-25  04   4         20      16       4     (Martin bis 02:00 nächster Tag)
+// 2026-01-25  04   4         20      16       4     (Martin stop 2026-01-26T02:00Z → logDay 2026-01-25)
 // 2026-01-31  05   4         14      10       2
 // 2026-02-01  05   4         16      12       3
 // Gesamt           20*       140     104      20
@@ -133,12 +166,16 @@ function buildDB(entries) {
 const H1=3600000, H2=7200000, H3=10800000, H4=14400000, H5=18000000, H6=21600000;
 
 function makeLog(entries) {
-  // entries: [{nutzer, typ, dauer_ms, zeitstempel_stop}]
-  // erzeugt start+stop-Paare
-  return entries.flatMap(({ nutzer, typ, dauer_ms, ts_stop }) => [
-    { aktion:'start', nutzer, typ, zeitstempel: 'X', id: Math.random() },
-    { aktion:'stop',  nutzer, typ, zeitstempel: ts_stop || 'X', dauer_ms, id: Math.random() },
-  ]);
+  // entries: [{nutzer, typ, dauer_ms, ts_stop}]
+  // erzeugt start+stop-Paare mit echten Zeitstempeln (start = ts_stop − dauer_ms)
+  return entries.flatMap(({ nutzer, typ, dauer_ms, ts_stop }) => {
+    const stop  = ts_stop || '2026-01-10T14:00:00.000Z';
+    const start = new Date(new Date(stop).getTime() - dauer_ms).toISOString();
+    return [
+      { aktion:'start', nutzer, typ, zeitstempel: start, id: Math.random() },
+      { aktion:'stop',  nutzer, typ, zeitstempel: stop,  dauer_ms, id: Math.random() },
+    ];
+  });
 }
 
 const DEMO = [
@@ -343,15 +380,17 @@ eq('Dauer korrekt gespeichert',        H2,        simpleDB.by['2026-03-01']['Tes
 eq('Start-Einträge werden ignoriert – nur stop zählt',
    1, Object.keys(simpleDB.by['2026-03-01']['Test User']).length);
 
-// Mehrere Stop-Einträge werden summiert (z.B. Verlängerung)
+// Zwei Start/Stop-Paare in Folge werden summiert (Verlängerung / extend)
 const sumDB = buildDB([{
   day: '2026-03-02',
   log: [
-    { aktion:'stop', nutzer:'Anna', typ:'wachstunde_ehrenamtlich', zeitstempel:'X', dauer_ms:H1, id:1 },
-    { aktion:'stop', nutzer:'Anna', typ:'wachstunde_ehrenamtlich', zeitstempel:'X', dauer_ms:H2, id:2 },
+    { aktion:'start', nutzer:'Anna', typ:'wachstunde_ehrenamtlich', zeitstempel:'2026-03-02T10:00:00.000Z', id:1 },
+    { aktion:'stop',  nutzer:'Anna', typ:'wachstunde_ehrenamtlich', zeitstempel:'2026-03-02T11:00:00.000Z', dauer_ms:H1, id:2 },
+    { aktion:'start', nutzer:'Anna', typ:'wachstunde_ehrenamtlich', zeitstempel:'2026-03-02T11:00:00.000Z', id:3 },
+    { aktion:'stop',  nutzer:'Anna', typ:'wachstunde_ehrenamtlich', zeitstempel:'2026-03-02T13:00:00.000Z', dauer_ms:H2, id:4 },
   ]
 }]);
-eq('Mehrfache stops werden summiert (1h + 2h = 3h)', H3,
+eq('Zwei Start/Stop-Paare werden summiert (1h + 2h = 3h)', H3,
    sumDB.by['2026-03-02']['Anna']['wachstunde_ehrenamtlich']);
 
 // Tage werden sortiert
@@ -373,14 +412,15 @@ const personsDB = buildDB([{
 }]);
 eq('Personen alphabetisch sortiert', ['Amelie','Martin','Zara'], personsDB.persons);
 
-// Einträge ohne dauer_ms komplett ignoriert
+// stop ohne dauer_ms: Dauer wird aus Zeitstempeln berechnet
 const noDurDB = buildDB([{
   day: '2026-03-01',
   log: [
-    { aktion:'stop', nutzer:'Ghost', typ:'anwesenheit', id:1 }, // kein dauer_ms
+    { aktion:'start', nutzer:'Ghost', typ:'anwesenheit', zeitstempel:'2026-03-01T10:00:00.000Z', id:1 },
+    { aktion:'stop',  nutzer:'Ghost', typ:'anwesenheit', zeitstempel:'2026-03-01T11:00:00.000Z', id:2 }, // kein dauer_ms → Timestamp-Fallback
   ]
 }]);
-eq('stop ohne dauer_ms erzeugt keinen Tag-Eintrag', 0, noDurDB.days.length);
+eq('stop ohne dauer_ms: Dauer aus Zeitstempeln berechnet (1h)', H1, noDurDB.by['2026-03-01']['Ghost']['anwesenheit']);
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Suite 6 – buildDB: Wochenzuordnung
@@ -472,12 +512,13 @@ ok('Jan-26 existiert NICHT als eigenständiger Tag',
 // Suite 13 – Dateiname-Fallback (ohne logicalDay-Feld)
 // ═══════════════════════════════════════════════════════════════════════════════
 suite('Suite 13 – Dateiname-Fallback');
-// processFiles() liest json.logicalDay || filename-Datum.
+// processFiles() liest json.logicalDay || entryLogicalDay(timestamp).
 // Hier simulieren wir: kein logicalDay → Tag wird aus "day"-Parameter verwendet
 const fallbackDB = buildDB([{
-  day: '2026-05-01', // würde aus Dateiname extrahiert
+  day: '2026-05-01', // würde aus Dateiname / entryLogicalDay extrahiert
   log: [
-    { aktion:'stop', nutzer:'Fallback User', typ:'anwesenheit', dauer_ms:H3, id:99 }
+    { aktion:'start', nutzer:'Fallback User', typ:'anwesenheit', zeitstempel:'2026-05-01T10:00:00.000Z', id:98 },
+    { aktion:'stop',  nutzer:'Fallback User', typ:'anwesenheit', zeitstempel:'2026-05-01T13:00:00.000Z', dauer_ms:H3, id:99 }
   ]
 }]);
 eq('Fallback-Tag korrekt eingelesen', '2026-05-01', fallbackDB.days[0]);
@@ -489,28 +530,43 @@ eq('Fallback KW korrekt', '2026-W18', isoWeekKey('2026-05-01'));
 // ═══════════════════════════════════════════════════════════════════════════════
 suite('Suite 14 – buildDB: Duplikate und Deduplizierung');
 
-// Zwei verschiedene Stop-Einträge im selben Log → buildDB summiert korrekt
+// Zwei Start/Stop-Paare in einem Log werden summiert (Verlängerungs-Szenario)
 const twoStopsDB = buildDB([{ day:'2026-04-01', log:[
-  { aktion:'stop', nutzer:'Max', typ:'anwesenheit', dauer_ms:H2, id:1 },
-  { aktion:'stop', nutzer:'Max', typ:'anwesenheit', dauer_ms:H3, id:2 },
+  { aktion:'start', nutzer:'Max', typ:'anwesenheit', zeitstempel:'2026-04-01T08:00:00.000Z', id:0 },
+  { aktion:'stop',  nutzer:'Max', typ:'anwesenheit', zeitstempel:'2026-04-01T10:00:00.000Z', dauer_ms:H2, id:1 },
+  { aktion:'start', nutzer:'Max', typ:'anwesenheit', zeitstempel:'2026-04-01T10:00:00.000Z', id:0.5 },
+  { aktion:'stop',  nutzer:'Max', typ:'anwesenheit', zeitstempel:'2026-04-01T13:00:00.000Z', dauer_ms:H3, id:2 },
 ]}]);
-eq('Zwei stop-Einträge in einem Log werden addiert', H2 + H3,
+eq('Zwei Start/Stop-Paare werden addiert (2h + 3h = 5h)', H2 + H3,
    twoStopsDB.by['2026-04-01']['Max']['anwesenheit']);
 
-// Doppeltes entries-Objekt für denselben Tag (= doppelt geladene Datei)
-// buildDB selbst dedup't NICHT → Summe verdoppelt sich
-// → Beweis dass processFiles() den Dateinamen-Dedup übernehmen muss
+// Doppelt geladene Datei (processFiles() dedup't anhand ID, buildDB bekommt Duplikate)
+// Sortiert: start@08h, start@08h, stop@11h, stop@11h
+// → start1→openStart, start2→openStart überschreibt, stop1→H3 gezählt+openStart=null,
+//   stop2→kein openStart→SKIP (Fix!) → H3, nicht H3+H3
 const dupFileDB = buildDB([
-  { day:'2026-04-02', log:[{ aktion:'stop', nutzer:'Max', typ:'anwesenheit', dauer_ms:H3, id:1 }] },
-  { day:'2026-04-02', log:[{ aktion:'stop', nutzer:'Max', typ:'anwesenheit', dauer_ms:H3, id:1 }] },
+  { day:'2026-04-02', log:[
+    { aktion:'start', nutzer:'Max', typ:'anwesenheit', zeitstempel:'2026-04-02T08:00:00.000Z', id:0 },
+    { aktion:'stop',  nutzer:'Max', typ:'anwesenheit', zeitstempel:'2026-04-02T11:00:00.000Z', dauer_ms:H3, id:1 },
+  ]},
+  { day:'2026-04-02', log:[
+    { aktion:'start', nutzer:'Max', typ:'anwesenheit', zeitstempel:'2026-04-02T08:00:00.000Z', id:0 },
+    { aktion:'stop',  nutzer:'Max', typ:'anwesenheit', zeitstempel:'2026-04-02T11:00:00.000Z', dauer_ms:H3, id:1 },
+  ]},
 ]);
-eq('Doppelte entries für gleichen Tag: buildDB addiert (kein internes Dedup)', H3 + H3,
+eq('Doppelt geladene Datei: Stop-Skip-Fix verhindert Doppelzählung → nur 1× H3', H3,
    dupFileDB.by['2026-04-02']['Max']['anwesenheit']);
 
 // Verschiedene Tage, gleiche Person → kein Duplikat-Problem
 const multiDayDB = buildDB([
-  { day:'2026-04-03', log:[{ aktion:'stop', nutzer:'A', typ:'anwesenheit', dauer_ms:H1, id:1 }] },
-  { day:'2026-04-04', log:[{ aktion:'stop', nutzer:'A', typ:'anwesenheit', dauer_ms:H2, id:2 }] },
+  { day:'2026-04-03', log:[
+    { aktion:'start', nutzer:'A', typ:'anwesenheit', zeitstempel:'2026-04-03T10:00:00.000Z', id:1 },
+    { aktion:'stop',  nutzer:'A', typ:'anwesenheit', zeitstempel:'2026-04-03T11:00:00.000Z', dauer_ms:H1, id:2 },
+  ]},
+  { day:'2026-04-04', log:[
+    { aktion:'start', nutzer:'A', typ:'anwesenheit', zeitstempel:'2026-04-04T10:00:00.000Z', id:3 },
+    { aktion:'stop',  nutzer:'A', typ:'anwesenheit', zeitstempel:'2026-04-04T12:00:00.000Z', dauer_ms:H2, id:4 },
+  ]},
 ]);
 eq('Verschiedene Tage: Tag 1 korrekt', H1, multiDayDB.by['2026-04-03']['A']['anwesenheit']);
 eq('Verschiedene Tage: Tag 2 korrekt', H2, multiDayDB.by['2026-04-04']['A']['anwesenheit']);
@@ -518,22 +574,75 @@ eq('Verschiedene Tage: 2 Tage erzeugt', 2, multiDayDB.days.length);
 
 // Multi-Device-Normalfall: gleiches Datum, verschiedene Personen → korrekt summiert
 const multiDevDB = buildDB([
-  { day:'2026-04-05', log:[{ aktion:'stop', nutzer:'B', typ:'anwesenheit', dauer_ms:H2, id:1 }] },
-  { day:'2026-04-05', log:[{ aktion:'stop', nutzer:'C', typ:'anwesenheit', dauer_ms:H3, id:2 }] },
+  { day:'2026-04-05', log:[
+    { aktion:'start', nutzer:'B', typ:'anwesenheit', zeitstempel:'2026-04-05T10:00:00.000Z', id:1 },
+    { aktion:'stop',  nutzer:'B', typ:'anwesenheit', zeitstempel:'2026-04-05T12:00:00.000Z', dauer_ms:H2, id:2 },
+  ]},
+  { day:'2026-04-05', log:[
+    { aktion:'start', nutzer:'C', typ:'anwesenheit', zeitstempel:'2026-04-05T10:00:00.000Z', id:3 },
+    { aktion:'stop',  nutzer:'C', typ:'anwesenheit', zeitstempel:'2026-04-05T13:00:00.000Z', dauer_ms:H3, id:4 },
+  ]},
 ]);
 eq('Multi-Device: B korrekt', H2, multiDevDB.by['2026-04-05']['B']['anwesenheit']);
 eq('Multi-Device: C korrekt', H3, multiDevDB.by['2026-04-05']['C']['anwesenheit']);
 eq('Multi-Device: beide Personen vorhanden', 2, multiDevDB.persons.length);
 eq('Multi-Device: nur ein Tag erzeugt', 1, multiDevDB.days.length);
 
-// Start-Einträge ohne dauer_ms werden ignoriert (nur stop zählt)
+// Dangling Start (ohne Stop) am Ende wird ignoriert
 const startOnlyDB = buildDB([{ day:'2026-04-06', log:[
-  { aktion:'start', nutzer:'X', typ:'anwesenheit', id:1 },
-  { aktion:'stop',  nutzer:'X', typ:'anwesenheit', dauer_ms:H1, id:2 },
-  { aktion:'start', nutzer:'X', typ:'anwesenheit', id:3 }, // weiterer Start ohne Stop → ignoriert
+  { aktion:'start', nutzer:'X', typ:'anwesenheit', zeitstempel:'2026-04-06T09:00:00.000Z', id:1 },
+  { aktion:'stop',  nutzer:'X', typ:'anwesenheit', zeitstempel:'2026-04-06T10:00:00.000Z', dauer_ms:H1, id:2 },
+  { aktion:'start', nutzer:'X', typ:'anwesenheit', zeitstempel:'2026-04-06T10:00:00.000Z', id:3 }, // kein Stop → ignoriert
 ]}]);
-eq('Nur stop-Einträge zählen: H1 korrekt', H1,
+eq('Dangling Start ohne Stop wird ignoriert: nur 1h gezählt', H1,
    startOnlyDB.by['2026-04-06']['X']['anwesenheit']);
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Suite 15 – Regression: Verwaister Auto-Stop (Uwe-Schönfeld-Bug)
+// ═══════════════════════════════════════════════════════════════════════════════
+suite('Suite 15 – Regression: Verwaister Auto-Stop');
+
+// Szenario: korrekte Session am 09.05., aber das Gerät erzeugt einen Auto-Stop
+// an der Tagesgrenze auf dem 10.05., weil es den manuellen Stop nicht kannte.
+// Der Auto-Stop hat dauer_ms=11,65h aber keinen passenden Start auf dem 10.05.
+// Erwartet: 10.05. taucht gar nicht auf; 09.05. zeigt nur die echte Session.
+const autoStopBugDB = buildDB([
+  {
+    day: '2026-05-09',
+    log: [
+      { aktion:'start', nutzer:'Uwe', typ:'anwesenheit', zeitstempel:'2026-05-09T14:20:00.000Z', id:1 },
+      { aktion:'stop',  nutzer:'Uwe', typ:'anwesenheit', zeitstempel:'2026-05-09T16:15:00.000Z', dauer_ms:6900000, id:2 },
+    ],
+  },
+  {
+    day: '2026-05-10',
+    log: [
+      // Auto-Stop mit großem dauer_ms, aber kein Start auf diesem Tag
+      { aktion:'stop', nutzer:'Uwe', typ:'anwesenheit', zeitstempel:'2026-05-10T02:00:00.000Z', dauer_ms:41959278, auto:true, id:3 },
+    ],
+  },
+]);
+eq('09.05.: korrekte Session ~1h 55min', 6900000, autoStopBugDB.by['2026-05-09']?.['Uwe']?.['anwesenheit']);
+eq('10.05.: existiert nicht (verwaister Auto-Stop ignoriert)', undefined, autoStopBugDB.by['2026-05-10']);
+eq('Uwe erscheint nur an einem Tag', ['2026-05-09'], autoStopBugDB.days);
+
+// Verwaister Stop mit dauer_ms aber ohne Start → erzeugt keinen Eintrag
+const orphanDB = buildDB([{
+  day: '2026-05-10',
+  log: [
+    { aktion:'stop', nutzer:'Test', typ:'anwesenheit', zeitstempel:'2026-05-10T02:00:00.000Z', dauer_ms:H4, id:99 },
+  ],
+}]);
+eq('Verwaister Stop (kein Start, dauer_ms vorhanden) → kein Tag-Eintrag', 0, orphanDB.days.length);
+
+// Start ohne Stop (kein Eintrag)
+const noStopDB = buildDB([{
+  day: '2026-05-10',
+  log: [
+    { aktion:'start', nutzer:'Test', typ:'anwesenheit', zeitstempel:'2026-05-10T08:00:00.000Z', id:1 },
+  ],
+}]);
+eq('Offener Start ohne Stop → kein Tag-Eintrag', 0, noStopDB.days.length);
 
 render();
 </script>
