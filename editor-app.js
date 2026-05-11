@@ -17,7 +17,10 @@ function normalizeLogEntries(raw) {
     && typeof e.aktion === 'string' && (e.aktion === 'start' || e.aktion === 'stop')
     && typeof e.zeitstempel === 'string' && !isNaN(Date.parse(e.zeitstempel))
   ).map(e => {
-    const n = { id: e.id || crypto.randomUUID(), nutzer: e.nutzer, typ: e.typ, aktion: e.aktion, zeitstempel: e.zeitstempel };
+    const fallbackId = (typeof crypto !== 'undefined' && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : String(genId());
+    const n = { id: e.id ?? fallbackId, nutzer: e.nutzer, typ: e.typ, aktion: e.aktion, zeitstempel: e.zeitstempel };
     if (typeof e.dauer_ms === 'number') n.dauer_ms = e.dauer_ms;
     return n;
   });
@@ -33,6 +36,7 @@ let editingId    = null;   // id of row currently in inline edit mode
 let cloudFileUrl = null;   // URL der geladenen Cloud-Datei (null = lokal)
 let cloudDirty   = false;  // true wenn ungespeicherte Änderungen gegenüber Cloud
 let cloudIsPIF   = false;  // true wenn geladene Cloud-Datei ein PIF (lgc_pif_*) ist
+let addMode      = 'pair'; // 'pair' | 'single'
 
 // ─── Typ-Farb-Palette (passend zu LifeguardClock.html) ────────────────────────────
 const COLOR_PALETTE = {
@@ -122,6 +126,16 @@ function populateTypSelect() {
 
 // ─── Utils ────────────────────────────────────────────────────────────────────
 function genId() { return Date.now() + Math.random(); }
+function showToast(msg) { alert(msg); }
+function sameEntryId(a, b) { return String(a) === String(b); }
+function getEntryById(id) {
+  return logData?.log?.find(e => sameEntryId(e.id, id));
+}
+function markDirty() {
+  if (!cloudFileUrl) return;
+  cloudDirty = true;
+  syncCloudSaveBtn();
+}
 
 function isoToLocalInput(iso) {
   if (!iso) return '';
@@ -377,7 +391,7 @@ function _restoreSnap(snap) {
   logData.count      = snap.log.length;
   document.getElementById('inp-logical-day').value = snap.logicalDay || '';
   editingId = null;
-  if (cloudFileUrl) { cloudDirty = true; syncCloudSaveBtn(); }
+  markDirty();
   syncUndoButtons();
   renderAll();
 }
@@ -422,14 +436,416 @@ function validatePairs(log) {
   return issues;
 }
 
+// ─── Validation: Konstante ────────────────────────────────────────────────────
+const MIN_PAIR_DURATION_MS = 15 * 60 * 1000;
+
+// ─── buildValidationIssues ───────────────────────────────────────────────────
+function buildValidationIssues(enrichedEntries, typesConfig) {
+  const DAY_BOUNDARY = 4;
+  function logicalDay(isoTs) {
+    const d = new Date(isoTs);
+    if (d.getHours() < DAY_BOUNDARY) d.setDate(d.getDate() - 1);
+    return d.toISOString().slice(0, 10);
+  }
+  const groups = {};
+  for (const e of enrichedEntries) {
+    const k = `${e.nutzer}|||${e.typ}`;
+    if (!groups[k]) groups[k] = [];
+    groups[k].push(e);
+  }
+  const issues = [];
+  for (const group of Object.values(groups)) {
+    const sorted = [...group].sort((a, b) => new Date(a.zeitstempel) - new Date(b.zeitstempel));
+    let openStart = null;
+    for (const e of sorted) {
+      if (e.aktion === 'start') {
+        if (openStart) {
+          issues.push({ issueType: 'double-start', person: e.nutzer, logType: e.typ,
+            logicalDate: logicalDay(openStart.zeitstempel), mainEntry: null,
+            entries: [openStart, e], pifHref: openStart.pifHref, linked: [], skipped: false });
+        }
+        openStart = e;
+      } else {
+        if (!openStart) {
+          issues.push({ issueType: 'orphan-stop', person: e.nutzer, logType: e.typ,
+            logicalDate: logicalDay(e.zeitstempel), mainEntry: e,
+            entries: [e], pifHref: e.pifHref, linked: [], skipped: false });
+        } else {
+          const durMs = new Date(e.zeitstempel) - new Date(openStart.zeitstempel);
+          if (durMs > 0 && durMs < MIN_PAIR_DURATION_MS) {
+            issues.push({ issueType: 'short-pair', person: e.nutzer, logType: e.typ,
+              logicalDate: logicalDay(openStart.zeitstempel), mainEntry: null,
+              entries: [openStart, e], pifHref: openStart.pifHref, linked: [], skipped: false });
+          }
+          openStart = null;
+        }
+      }
+    }
+    if (openStart) {
+      issues.push({ issueType: 'open-start', person: openStart.nutzer, logType: openStart.typ,
+        logicalDate: logicalDay(openStart.zeitstempel), mainEntry: openStart,
+        entries: [openStart], pifHref: openStart.pifHref, linked: [], skipped: false });
+    }
+  }
+  return issues;
+}
+
+// ─── getLinkedIssues ─────────────────────────────────────────────────────────
+function getLinkedIssues(issue, allIssues, typesConfig) {
+  if (issue.issueType !== 'open-start') return [];
+  const myType = typesConfig.find(t => t.logType === issue.logType);
+  const myIsService = !!myType?.autoStartKeys?.includes('anwesenheit');
+  return allIssues.filter(o =>
+    o !== issue &&
+    o.issueType === 'open-start' &&
+    o.person === issue.person &&
+    o.logicalDate === issue.logicalDate &&
+    !o.skipped &&
+    (
+      (issue.logType === 'anwesenheit' &&
+        !!typesConfig.find(t => t.logType === o.logType)?.autoStartKeys?.includes('anwesenheit')) ||
+      (myIsService && o.logType === 'anwesenheit')
+    )
+  );
+}
+
+// ─── Validation State ─────────────────────────────────────────────────────────
+let validationIssues  = [];
+let validationPifCache = {};
+let _validationSaving = false;
+
+// ─── Fix-Mutationsfunktionen ──────────────────────────────────────────────────
+function applyOpenStartFix(issue, stopIso, linkedToFix) {
+  const dur = new Date(stopIso) - new Date(issue.mainEntry.zeitstempel);
+  validationPifCache[issue.pifHref].entries.push({
+    id: genId(), nutzer: issue.person, typ: issue.logType,
+    aktion: 'stop', zeitstempel: stopIso, dauer_ms: dur,
+  });
+  for (const linked of linkedToFix) {
+    const linkedDur = new Date(stopIso) - new Date(linked.mainEntry.zeitstempel);
+    validationPifCache[linked.pifHref].entries.push({
+      id: genId(), nutzer: linked.person, typ: linked.logType,
+      aktion: 'stop', zeitstempel: stopIso, dauer_ms: linkedDur,
+    });
+  }
+}
+
+function applyOrphanStopFix(issue, startIso) {
+  validationPifCache[issue.pifHref].entries.push({
+    id: genId(), nutzer: issue.person, typ: issue.logType,
+    aktion: 'start', zeitstempel: startIso,
+  });
+  const stopInCache = validationPifCache[issue.pifHref].entries.find(
+    e => String(e.id) === String(issue.mainEntry.id)
+  );
+  if (stopInCache) stopInCache.dauer_ms = new Date(stopInCache.zeitstempel) - new Date(startIso);
+}
+
+function applyDoubleStartFix(issue, deleteId) {
+  const toDelete = issue.entries.find(e => String(e.id) === String(deleteId));
+  if (!toDelete || !validationPifCache[toDelete.pifHref]) return;
+  validationPifCache[toDelete.pifHref].entries =
+    validationPifCache[toDelete.pifHref].entries.filter(
+      e => String(e.id) !== String(deleteId)
+    );
+}
+
+function applyShortPairFix(issue, newStartIso, newStopIso) {
+  const [start, stop] = issue.entries;
+  const startInCache = validationPifCache[start.pifHref].entries.find(
+    e => String(e.id) === String(start.id)
+  );
+  const stopInCache = validationPifCache[stop.pifHref].entries.find(
+    e => String(e.id) === String(stop.id)
+  );
+  if (startInCache) startInCache.zeitstempel = newStartIso;
+  if (stopInCache) {
+    stopInCache.zeitstempel = newStopIso;
+    stopInCache.dauer_ms = new Date(newStopIso) - new Date(newStartIso);
+  }
+}
+
+function applyDeleteFix(issue) {
+  for (const e of issue.entries) {
+    validationPifCache[e.pifHref].entries =
+      validationPifCache[e.pifHref].entries.filter(
+        c => String(c.id) !== String(e.id)
+      );
+  }
+}
+
+// ─── Cloud: PIF-Dateien speichern ─────────────────────────────────────────────
+async function savePifHrefs(hrefs) {
+  const creds = getCloudCreds();
+  if (!creds) throw new Error('Keine Cloud-Zugangsdaten');
+  await Promise.all([...new Set(hrefs)].map(href => {
+    const pif = validationPifCache[href];
+    const out = { ...pif, exported: new Date().toISOString(), count: pif.entries.length };
+    return fetch(href, {
+      method: 'PUT',
+      headers: { Authorization: cloudAuth(creds), 'Content-Type': 'application/json' },
+      body: JSON.stringify(out, null, 2),
+    }).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); });
+  }));
+}
+
+function issueTypeLabel(type) {
+  return { 'open-start': 'Vergessen auszustempeln', 'orphan-stop': 'Stop ohne Start',
+           'double-start': 'Doppelt eingestempelt', 'short-pair': 'Verdächtig kurze Dauer',
+         }[type] || type;
+}
+
+function setValidationTabBadge(state) {
+  const tab = document.getElementById('tab-validation');
+  if (!tab) return;
+  tab.style.display = '';
+  if (state === 'loading') { tab.textContent = '⏳ Prüfe…'; return; }
+  if (state === 'error')   { tab.textContent = '⚠ Fehler'; return; }
+  const n = typeof state === 'number' ? state : validationIssues.filter(i => !i.skipped).length;
+  tab.textContent = n === 0 ? '✓ Alles OK' : `⚠ Probleme (${n})`;
+}
+
+async function fetchAndValidate() {
+  const creds = getCloudCreds();
+  if (!creds) {
+    alert('Keine Cloud-Zugangsdaten gefunden.\nBitte zuerst in admin.html konfigurieren.');
+    return;
+  }
+  const btn = document.getElementById('btn-validate-all');
+  btn.disabled = true;
+  setValidationTabBadge('loading');
+  // Tab anzeigen + aktivieren
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-validation').classList.add('active');
+  activeTab = 'validation';
+  document.getElementById('panel-table').hidden    = true;
+  document.getElementById('panel-timeline').hidden = true;
+  document.getElementById('panel-validation').hidden = false;
+  document.getElementById('panel-empty').hidden    = true;
+  document.getElementById('validation-cards').innerHTML =
+    '<div class="v-empty"><div class="v-empty-title" style="color:var(--text-2)">Lade PIF-Dateien…</div></div>';
+  try {
+    const base = cloudDavBase(creds);
+    const auth = cloudAuth(creds);
+    await Promise.all([
+      fetch(base, { method: 'MKCOL', headers: { Authorization: auth } }).catch(() => {}),
+      refreshTypesFromCloud(),
+    ]);
+    const res = await fetch(base, { method: 'PROPFIND',
+      headers: { Authorization: auth, Depth: '1' } });
+    if (!res.ok) throw new Error(`PROPFIND HTTP ${res.status}`);
+    const xml = await res.text();
+
+    const now = new Date();
+    const months = [
+      `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`,
+      (() => { const d = new Date(now); d.setMonth(d.getMonth() - 1);
+               return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; })(),
+    ];
+
+    const hrefs = [...xml.matchAll(/<[^>]*:href[^>]*>([^<]+)<\/[^>]*:href>/g)]
+      .map(m => decodeURIComponent(m[1].trim()))
+      .filter(h => /lgc_pif_.+_\d{4}-\d{2}\.json$/.test(h) &&
+                   months.some(mo => h.includes(`_${mo}.json`)));
+
+    if (hrefs.length === 0) {
+      setValidationTabBadge(0);
+      document.getElementById('validation-cards').innerHTML =
+        '<div class="v-empty"><div class="v-empty-icon">☁</div>' +
+        '<div class="v-empty-title" style="color:var(--text-2)">Keine PIF-Dateien für die letzten zwei Monate gefunden</div></div>';
+      return;
+    }
+
+    validationPifCache = {};
+    const results = await Promise.allSettled(hrefs.map(async href => {
+      const fileUrl = IS_PROXY
+        ? href
+        : (creds.url.trim().replace(/\/$/, '') + (href.startsWith('/') ? href : '/' + href));
+      const r = await fetch(fileUrl, { headers: { Authorization: auth } });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = await r.json();
+      validationPifCache[fileUrl] = { ...data, entries: normalizeLogEntries(data.entries || []) };
+      return fileUrl;
+    }));
+
+    const failed = results.filter(r => r.status === 'rejected').length;
+    if (failed > 0) showToast(`${failed} Datei(en) konnten nicht geladen werden.`);
+
+    const enrichedEntries = [];
+    for (const [href, pif] of Object.entries(validationPifCache)) {
+      for (const e of pif.entries) enrichedEntries.push({ ...e, pifHref: href });
+    }
+
+    let typesConfig = [];
+    try {
+      typesConfig = JSON.parse(localStorage.getItem('lgc_cloud_types') || '[]');
+      if (!typesConfig.length) typesConfig = JSON.parse(localStorage.getItem('lgc_type_config') || '[]');
+    } catch {}
+
+    validationIssues = buildValidationIssues(enrichedEntries, typesConfig);
+    for (const issue of validationIssues) {
+      issue.linked = getLinkedIssues(issue, validationIssues, typesConfig);
+    }
+
+    buildTypeMaps();
+    renderValidationPanel();
+  } catch (e) {
+    alert('Fehler beim Prüfen: ' + e.message);
+    setValidationTabBadge('error');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function renderValidationPanel() {
+  const active = validationIssues.filter(i => !i.skipped);
+  setValidationTabBadge(active.length);
+  const container = document.getElementById('validation-cards');
+  if (!container) return;
+
+  if (validationIssues.length === 0) {
+    container.innerHTML = '<div class="v-empty"><div class="v-empty-icon">✓</div>' +
+      '<div class="v-empty-title">Keine Probleme gefunden</div></div>';
+    return;
+  }
+
+  let html = '';
+  if (active.length === 0 && validationIssues.some(i => i.skipped)) {
+    html += `<div class="v-all-skipped">${validationIssues.length} Issue(s) übersprungen.&nbsp;` +
+      `<button class="btn btn-sm" id="btn-reset-skip">Alle zurücksetzen</button></div>`;
+  }
+  for (let i = 0; i < validationIssues.length; i++) {
+    html += renderIssueCard(validationIssues[i], i);
+  }
+  container.innerHTML = html;
+}
+
+function renderIssueCard(issue, idx) {
+  const ti = _TYPE_MAP[issue.logType] ||
+    { label: issue.logType, main: '#9ca3af', dim: 'rgba(156,163,175,.15)' };
+  const dateStr = issue.logicalDate
+    ? new Date(issue.logicalDate + 'T12:00:00').toLocaleDateString('de-DE',
+        { day: '2-digit', month: '2-digit', year: 'numeric' })
+    : '';
+  const hdr = `<div class="v-card-hdr">
+    <span class="v-person">${escHtml(issue.person)}</span>
+    <span class="badge-typ" style="background:${ti.dim};color:${ti.main}">${escHtml(ti.label)}</span>
+    <span class="v-date">${escHtml(dateStr)}</span>
+    <span class="badge-issue-type ${escHtml(issue.issueType)}">${escHtml(issueTypeLabel(issue.issueType))}</span>
+  </div>`;
+
+  if (issue.skipped) {
+    return `<div class="v-card v-card-skipped" data-issue-idx="${idx}">${hdr}
+      <div class="v-card-body"><div style="display:flex;gap:8px;align-items:center">
+        <span class="v-skip-note">&#x2192; Übersprungen</span>
+        <button class="btn btn-sm v-unskip" data-issue-idx="${idx}">Zurücksetzen</button>
+      </div></div></div>`;
+  }
+
+  let body = '';
+  if (issue.issueType === 'open-start') {
+    const startTime = escHtml(fmtTime(issue.mainEntry.zeitstempel));
+    const defStop   = issue.logicalDate ? `${issue.logicalDate}T16:00` : '';
+    const linkedHtml = issue.linked.map((lk, li) => {
+      const lti = _TYPE_MAP[lk.logType] || { label: lk.logType, main: '#9ca3af' };
+      return `<label class="v-linked-label">
+        <input type="checkbox" class="v-linked-check"
+          data-issue-idx="${idx}" data-linked-idx="${li}" checked>
+        <span style="color:${lti.main}">${escHtml(lti.label)}</span> ebenfalls beenden
+      </label>`;
+    }).join('');
+    body = `<div class="v-info">Eingestempelt: ${startTime} &mdash; kein Stop vorhanden</div>
+      <div class="v-fix-row">
+        <span class="v-fix-label">Stop-Zeit</span>
+        <input type="datetime-local" class="v-time-input" id="v-stop-${idx}"
+          value="${escHtml(defStop)}" step="60">
+      </div>
+      ${linkedHtml ? `<div class="v-linked-group">${linkedHtml}</div>` : ''}
+      <div class="v-card-ftr">
+        <button class="btn btn-sm btn-primary v-fix-open-start" data-issue-idx="${idx}">✓ Speichern</button>
+        <button class="btn btn-sm v-skip" data-issue-idx="${idx}">→ Überspringen</button>
+        <button class="btn btn-sm btn-danger v-delete-start" data-issue-idx="${idx}">✗ Start löschen</button>
+      </div>`;
+  } else if (issue.issueType === 'orphan-stop') {
+    const stopTime = escHtml(fmtTime(issue.mainEntry.zeitstempel));
+    const defStart = issue.logicalDate ? `${issue.logicalDate}T08:00` : '';
+    body = `<div class="v-info">Stop vorhanden (${stopTime}) &mdash; kein Start gefunden</div>
+      <div class="v-fix-row">
+        <span class="v-fix-label">Start-Zeit</span>
+        <input type="datetime-local" class="v-time-input" id="v-start-${idx}"
+          value="${escHtml(defStart)}" step="60">
+      </div>
+      <div class="v-card-ftr">
+        <button class="btn btn-sm btn-primary v-fix-orphan-stop" data-issue-idx="${idx}">✓ Speichern</button>
+        <button class="btn btn-sm v-skip" data-issue-idx="${idx}">→ Überspringen</button>
+        <button class="btn btn-sm btn-danger v-delete-stop" data-issue-idx="${idx}">✗ Stop löschen</button>
+      </div>`;
+  } else if (issue.issueType === 'double-start') {
+    const [e0, e1] = issue.entries;
+    const t0 = escHtml(fmtTime(e0.zeitstempel)), t1 = escHtml(fmtTime(e1.zeitstempel));
+    body = `<div class="v-info">Zwei Starts: ${t0} und ${t1} &mdash; kein Stop dazwischen</div>
+      <div class="v-card-ftr">
+        <button class="btn btn-sm btn-danger v-delete-first-start" data-issue-idx="${idx}">✗ ${t0} löschen</button>
+        <button class="btn btn-sm btn-danger v-delete-second-start" data-issue-idx="${idx}">✗ ${t1} löschen</button>
+        <button class="btn btn-sm v-skip" data-issue-idx="${idx}">→ Überspringen</button>
+      </div>`;
+  } else if (issue.issueType === 'short-pair') {
+    const [sp0, sp1] = issue.entries;
+    const durMs = new Date(sp1.zeitstempel) - new Date(sp0.zeitstempel);
+    body = `<div class="v-info">Dauer: ${escHtml(fmtMs(durMs))} (${escHtml(fmtTime(sp0.zeitstempel))} &ndash; ${escHtml(fmtTime(sp1.zeitstempel))})</div>
+      <div class="v-fix-row-double">
+        <div class="v-fix-row">
+          <span class="v-fix-label">Von</span>
+          <input type="datetime-local" class="v-time-input" id="v-sp-start-${idx}"
+            value="${isoToLocalInput(sp0.zeitstempel)}" step="60">
+        </div>
+        <div class="v-fix-row">
+          <span class="v-fix-label">Bis</span>
+          <input type="datetime-local" class="v-time-input" id="v-sp-stop-${idx}"
+            value="${isoToLocalInput(sp1.zeitstempel)}" step="60">
+        </div>
+      </div>
+      <div class="v-card-ftr">
+        <button class="btn btn-sm btn-primary v-fix-short-pair" data-issue-idx="${idx}">✓ Speichern</button>
+        <button class="btn btn-sm btn-danger v-delete-pair" data-issue-idx="${idx}">✗ Paar löschen</button>
+        <button class="btn btn-sm v-skip" data-issue-idx="${idx}">→ Überspringen</button>
+      </div>`;
+  }
+
+  return `<div class="v-card" data-issue-idx="${idx}">${hdr}
+    <div class="v-card-body">${body}</div></div>`;
+}
+
+async function performSave(hrefs, issuesToResolve) {
+  _validationSaving = true;
+  try {
+    await savePifHrefs(hrefs);
+    const resolved = new Set(issuesToResolve);
+    validationIssues = validationIssues.filter(i => !resolved.has(i));
+    renderValidationPanel();
+  } catch (err) {
+    alert('Fehler beim Speichern: ' + err.message);
+  } finally {
+    _validationSaving = false;
+  }
+}
+
 // ─── Paired-Start finden (für dauer_ms-Neuberechnung) ─────────────────────────
 function findPairedStart(stopEntry) {
   const stopTs = new Date(stopEntry.zeitstempel).getTime();
   return logData.log
-    .filter(e => e.id !== stopEntry.id && e.nutzer === stopEntry.nutzer &&
+    .filter(e => !sameEntryId(e.id, stopEntry.id) && e.nutzer === stopEntry.nutzer &&
                  e.typ === stopEntry.typ && e.aktion === 'start' &&
                  new Date(e.zeitstempel).getTime() <= stopTs)
     .sort((a,b) => new Date(b.zeitstempel) - new Date(a.zeitstempel))[0];
+}
+function findNextPairedStop(startEntry) {
+  const startTs = new Date(startEntry.zeitstempel).getTime();
+  return logData.log
+    .filter(e => !sameEntryId(e.id, startEntry.id) && e.nutzer === startEntry.nutzer &&
+                 e.typ === startEntry.typ && e.aktion === 'stop' &&
+                 new Date(e.zeitstempel).getTime() >= startTs)
+    .sort((a,b) => new Date(a.zeitstempel) - new Date(b.zeitstempel))[0];
 }
 
 // ─── Mutationen ───────────────────────────────────────────────────────────────
@@ -438,7 +854,7 @@ function commit(fn) {
   logData.log.sort((a,b) => new Date(a.zeitstempel) - new Date(b.zeitstempel));
   logData.count = logData.log.length;
   editingId = null;
-  if (cloudFileUrl) { cloudDirty = true; syncCloudSaveBtn(); }
+  markDirty();
   pushHistory();
   renderAll();
 }
@@ -453,33 +869,74 @@ function addPair(nutzer, typ, vonIso, bisIso) {
   });
 }
 
+function addSingle(nutzer, typ, aktion, zeitstempel) {
+  commit(() => {
+    const entry = { id: genId(), nutzer, typ, aktion, zeitstempel };
+    if (aktion === 'stop') {
+      const ts = new Date(zeitstempel).getTime();
+      const pairedStart = logData.log
+        .filter(e => e.nutzer === nutzer && e.typ === typ && e.aktion === 'start' &&
+                     new Date(e.zeitstempel).getTime() <= ts)
+        .sort((a, b) => new Date(b.zeitstempel) - new Date(a.zeitstempel))[0];
+      if (pairedStart) entry.dauer_ms = ts - new Date(pairedStart.zeitstempel).getTime();
+    }
+    logData.log.push(entry);
+  });
+}
+
 function saveEdit(id) {
   const nutzer = document.getElementById('ei-nutzer').value.trim();
   const typ    = document.getElementById('ei-typ').value;
   const aktion = document.getElementById('ei-aktion').value;
   const tsVal  = document.getElementById('ei-ts').value;
   if (!nutzer || !tsVal) return;
+  const current = getEntryById(id);
+  if (!current) return;
   const zeitstempel = localInputToIso(tsVal);
+  const draft = { ...current, nutzer, typ, aktion, zeitstempel };
+
+  if (aktion === 'stop') {
+    const paired = findPairedStart(draft);
+    const laterStart = logData.log
+      .filter(e => !sameEntryId(e.id, draft.id) && e.nutzer === draft.nutzer &&
+                   e.typ === draft.typ && e.aktion === 'start' &&
+                   new Date(e.zeitstempel).getTime() > new Date(draft.zeitstempel).getTime())
+      .sort((a, b) => new Date(a.zeitstempel) - new Date(b.zeitstempel))[0];
+    if (!paired && laterStart) {
+      showToast('Stop darf nicht vor Start liegen');
+      return;
+    }
+  } else {
+    const nextStop = findNextPairedStop(draft);
+    const earlierStop = logData.log
+      .filter(e => !sameEntryId(e.id, draft.id) && e.nutzer === draft.nutzer &&
+                   e.typ === draft.typ && e.aktion === 'stop' &&
+                   new Date(e.zeitstempel).getTime() < new Date(draft.zeitstempel).getTime())
+      .sort((a, b) => new Date(b.zeitstempel) - new Date(a.zeitstempel))[0];
+    if (!nextStop && earlierStop) {
+      showToast('Start darf nicht nach Stop liegen');
+      return;
+    }
+  }
+
   commit(() => {
-    const e = logData.log.find(x => x.id === id);
+    const e = getEntryById(id);
     if (!e) return;
     e.nutzer = nutzer; e.typ = typ; e.aktion = aktion; e.zeitstempel = zeitstempel;
     if (aktion === 'stop') {
       const paired = findPairedStart(e);
       if (paired) {
         const dur = new Date(e.zeitstempel) - new Date(paired.zeitstempel);
-        if (dur < 0) { showToast('Stop darf nicht vor Start liegen'); return; }
         e.dauer_ms = dur;
+      } else {
+        delete e.dauer_ms;
       }
     } else {
       delete e.dauer_ms;
       // Recalc paired stop
-      const stop = logData.log.find(s =>
-        s.nutzer === nutzer && s.typ === typ && s.aktion === 'stop' &&
-        new Date(s.zeitstempel) >= new Date(zeitstempel));
+      const stop = findNextPairedStop(e);
       if (stop) {
         const dur = new Date(stop.zeitstempel) - new Date(zeitstempel);
-        if (dur < 0) { showToast('Stop darf nicht vor Start liegen'); return; }
         stop.dauer_ms = dur;
       }
     }
@@ -487,7 +944,7 @@ function saveEdit(id) {
 }
 
 function deleteEntry(id) {
-  commit(() => { logData.log = logData.log.filter(e => e.id !== id); });
+  commit(() => { logData.log = logData.log.filter(e => !sameEntryId(e.id, id)); });
 }
 
 // ─── Export ───────────────────────────────────────────────────────────────────
@@ -552,8 +1009,9 @@ function renderTable(issues) {
   let html = '';
   for (const e of log) {
     const hasIssue = issues.has(e.id);
-    const isEditing = editingId === e.id;
+    const isEditing = sameEntryId(editingId, e.id);
     const ti = _TYPE_MAP[e.typ] || { logType: e.typ, label: e.typ, main: '#888', dim: 'rgba(128,128,128,.15)' };
+    const safeId = escHtml(String(e.id));
     // Für Edit-Dropdown: alle bekannten Typen + ggf. den aktuellen, falls unbekannt
     const editOpts = [
       ...(_TYPE_MAP[e.typ] ? [] : [ti]),
@@ -561,7 +1019,7 @@ function renderTable(issues) {
     ].map(t => `<option value="${escHtml(t.logType)}"${e.typ===t.logType?' selected':''}>${escHtml(t.label)}</option>`).join('');
 
     if (isEditing) {
-      html += `<tr class="edit-row" data-id="${e.id}">
+      html += `<tr class="edit-row" data-id="${safeId}">
         <td><span class="${hasIssue ? 'pair-warn' : 'pair-ok'}">${hasIssue ? '⚠' : '✓'}</span></td>
         <td><input class="edit-input" id="ei-nutzer" list="known-persons-list" value="${escHtml(e.nutzer)}" style="min-width:140px"></td>
         <td><select class="edit-input" id="ei-typ" style="min-width:150px">${editOpts}</select></td>
@@ -572,12 +1030,12 @@ function renderTable(issues) {
         <td><input type="datetime-local" class="edit-input" id="ei-ts" value="${isoToLocalInput(e.zeitstempel)}" step="60" style="min-width:170px"></td>
         <td class="dur-cell">${e.aktion==='stop' ? fmtMs(e.dauer_ms) : '—'}</td>
         <td class="act-cell">
-          <button class="btn btn-sm btn-primary btn-save" data-id="${e.id}">✓</button>
+          <button class="btn btn-sm btn-primary btn-save" data-id="${safeId}">✓</button>
           <button class="btn btn-sm btn-cancel">✕</button>
         </td>
       </tr>`;
     } else {
-      html += `<tr class="${hasIssue ? 'row-warn' : ''}" data-id="${e.id}">
+      html += `<tr class="${hasIssue ? 'row-warn' : ''}" data-id="${safeId}">
         <td><span class="${hasIssue ? 'pair-warn' : 'pair-ok'}" title="${hasIssue ? 'Kein passendes Gegenstück' : 'Paar vollständig'}">${hasIssue ? '⚠' : '✓'}</span></td>
         <td>${e.nutzer ? escHtml(e.nutzer) : '<em style="color:var(--text-3)">—</em>'}</td>
         <td><span class="badge-typ" style="background:${ti.dim};color:${ti.main}">${escHtml(ti.label)}</span></td>
@@ -585,8 +1043,8 @@ function renderTable(issues) {
         <td class="ts-cell">${fmtDatetime(e.zeitstempel)}</td>
         <td class="dur-cell">${e.aktion==='stop' ? fmtMs(e.dauer_ms) : '—'}</td>
         <td class="act-cell">
-          <button class="btn btn-sm btn-edit" data-id="${e.id}" title="Bearbeiten">✏</button>
-          <button class="btn btn-sm btn-del" data-id="${e.id}" title="Löschen">&#x1F5D1;</button>
+          <button class="btn btn-sm btn-edit" data-id="${safeId}" title="Bearbeiten">✏</button>
+          <button class="btn btn-sm btn-del" data-id="${safeId}" title="Löschen">&#x1F5D1;</button>
         </td>
       </tr>`;
     }
@@ -682,13 +1140,26 @@ function renderTimeline() {
     ${rowsHtml}`;
 }
 
-// ─── Add pair modal ───────────────────────────────────────────────────────────
+// ─── Add modal ────────────────────────────────────────────────────────────────
+function switchAddMode(mode) {
+  addMode = mode;
+  document.getElementById('add-modal-title').textContent =
+    mode === 'pair' ? 'Neues Eintragspaar' : 'Neuer Einzeleintrag';
+  document.getElementById('add-mode-pair').classList.toggle('active', mode === 'pair');
+  document.getElementById('add-mode-single').classList.toggle('active', mode === 'single');
+  document.getElementById('add-pair-section').style.display   = mode === 'pair'   ? '' : 'none';
+  document.getElementById('add-single-section').style.display = mode === 'single' ? '' : 'none';
+}
+
 function openAddModal() {
   const day = logData.logicalDay || new Date().toISOString().slice(0,10);
-  document.getElementById('add-nutzer').value = filterPerson || '';
-  document.getElementById('add-typ').value    = _TYPES[0]?.logType || '';
-  document.getElementById('add-von').value    = `${day}T08:00`;
-  document.getElementById('add-bis').value    = `${day}T12:00`;
+  document.getElementById('add-nutzer').value  = filterPerson || '';
+  document.getElementById('add-typ').value     = _TYPES[0]?.logType || '';
+  document.getElementById('add-von').value     = `${day}T08:00`;
+  document.getElementById('add-bis').value     = `${day}T12:00`;
+  document.getElementById('add-ts').value      = isoToLocalInput(new Date().toISOString());
+  document.getElementById('add-aktion').value  = 'stop';
+  switchAddMode('pair');
   updateDurPreview();
   document.getElementById('modal-add').showModal();
 }
@@ -719,6 +1190,116 @@ document.getElementById('btn-redo').addEventListener('click', redo);
 
 document.getElementById('btn-cloud-load').addEventListener('click', openCloudPicker);
 document.getElementById('btn-cloud-save').addEventListener('click', saveToCloud);
+document.getElementById('btn-validate-all').addEventListener('click', fetchAndValidate);
+document.getElementById('validation-cards').addEventListener('click', async e => {
+  // "Alle zurücksetzen" button is not inside a [data-issue-idx] card
+  if (e.target.closest('#btn-reset-skip')) {
+    validationIssues.forEach(i => { i.skipped = false; });
+    renderValidationPanel();
+    return;
+  }
+
+  const card = e.target.closest('[data-issue-idx]');
+  if (!card) return;
+  const idx = parseInt(card.dataset.issueIdx);
+  if (isNaN(idx)) return;
+  const issue = validationIssues[idx];
+  if (!issue) return;
+
+  if (e.target.closest('.v-skip')) {
+    issue.skipped = true;
+    renderValidationPanel();
+    return;
+  }
+  if (e.target.closest('.v-unskip')) {
+    issue.skipped = false;
+    renderValidationPanel();
+    return;
+  }
+
+  if (_validationSaving) return;
+
+  if (e.target.closest('.v-fix-open-start')) {
+    const inp = document.getElementById(`v-stop-${idx}`);
+    if (!inp?.value) { alert('Bitte Stop-Zeit eingeben.'); return; }
+    const stopIso = localInputToIso(inp.value);
+    if (new Date(stopIso) <= new Date(issue.mainEntry.zeitstempel)) {
+      alert('Stop-Zeit muss nach dem Start liegen.'); return;
+    }
+    const checks = [...document.querySelectorAll(`.v-linked-check[data-issue-idx="${idx}"]`)];
+    const linkedToFix = checks
+      .filter(cb => cb.checked)
+      .map(cb => issue.linked[parseInt(cb.dataset.linkedIdx)])
+      .filter(Boolean);
+    applyOpenStartFix(issue, stopIso, linkedToFix);
+    const hrefs = [issue.pifHref, ...linkedToFix.map(l => l.pifHref)];
+    await performSave(hrefs, [issue, ...linkedToFix]);
+    return;
+  }
+
+  if (e.target.closest('.v-delete-start')) {
+    if (!confirm(`Start-Eintrag von ${issue.person} (${issue.logType}) löschen?`)) return;
+    applyDeleteFix(issue);
+    await performSave([issue.pifHref], [issue]);
+    return;
+  }
+
+  if (e.target.closest('.v-fix-orphan-stop')) {
+    const inp = document.getElementById(`v-start-${idx}`);
+    if (!inp?.value) { alert('Bitte Start-Zeit eingeben.'); return; }
+    const startIso = localInputToIso(inp.value);
+    if (new Date(startIso) >= new Date(issue.mainEntry.zeitstempel)) {
+      alert('Start-Zeit muss vor dem Stop liegen.'); return;
+    }
+    applyOrphanStopFix(issue, startIso);
+    await performSave([issue.pifHref], [issue]);
+    return;
+  }
+
+  if (e.target.closest('.v-delete-stop')) {
+    if (!confirm(`Stop-Eintrag von ${issue.person} (${issue.logType}) löschen?`)) return;
+    applyDeleteFix(issue);
+    await performSave([issue.pifHref], [issue]);
+    return;
+  }
+
+  if (e.target.closest('.v-delete-first-start')) {
+    if (!confirm(`Start-Eintrag (${fmtTime(issue.entries[0].zeitstempel)}) von ${issue.person} löschen?`)) return;
+    applyDoubleStartFix(issue, issue.entries[0].id);
+    await performSave([issue.entries[0].pifHref], [issue]);
+    return;
+  }
+
+  if (e.target.closest('.v-delete-second-start')) {
+    if (!confirm(`Start-Eintrag (${fmtTime(issue.entries[1].zeitstempel)}) von ${issue.person} löschen?`)) return;
+    applyDoubleStartFix(issue, issue.entries[1].id);
+    await performSave([issue.entries[1].pifHref], [issue]);
+    return;
+  }
+
+  if (e.target.closest('.v-fix-short-pair')) {
+    const inpS = document.getElementById(`v-sp-start-${idx}`);
+    const inpE = document.getElementById(`v-sp-stop-${idx}`);
+    if (!inpS?.value || !inpE?.value) { alert('Bitte beide Zeiten eingeben.'); return; }
+    const newStartIso = localInputToIso(inpS.value);
+    const newStopIso  = localInputToIso(inpE.value);
+    if (new Date(newStopIso) <= new Date(newStartIso)) {
+      alert('Bis muss nach Von liegen.'); return;
+    }
+    applyShortPairFix(issue, newStartIso, newStopIso);
+    const hrefs = [...new Set([issue.entries[0].pifHref, issue.entries[1].pifHref])];
+    await performSave(hrefs, [issue]);
+    return;
+  }
+
+  if (e.target.closest('.v-delete-pair')) {
+    if (!confirm(`Paar von ${issue.person} (${issue.logType}) löschen?`)) return;
+    applyDeleteFix(issue);
+    const hrefs = [...new Set(issue.entries.map(en => en.pifHref))];
+    await performSave(hrefs, [issue]);
+    return;
+  }
+});
 document.getElementById('cloud-cancel').addEventListener('click', () =>
   document.getElementById('modal-cloud').close());
 document.getElementById('cloud-confirm').addEventListener('click', () => {
@@ -728,7 +1309,11 @@ document.getElementById('cloud-confirm').addEventListener('click', () => {
 });
 
 document.getElementById('inp-logical-day').addEventListener('change', e => {
-  if (logData) { logData.logicalDay = e.target.value; pushHistory(); }
+  if (!logData || logData.logicalDay === e.target.value) return;
+  logData.logicalDay = e.target.value;
+  markDirty();
+  pushHistory();
+  renderAll();
 });
 
 // Tabs
@@ -736,7 +1321,12 @@ document.querySelectorAll('.tab-btn').forEach(btn => btn.addEventListener('click
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
   activeTab = btn.dataset.tab;
-  if (logData) renderAll();
+  document.getElementById('panel-table').hidden      = activeTab !== 'table';
+  document.getElementById('panel-timeline').hidden   = activeTab !== 'timeline';
+  document.getElementById('panel-validation').hidden = activeTab !== 'validation';
+  document.getElementById('panel-empty').hidden      = logData !== null || activeTab === 'validation';
+  if (activeTab === 'validation') renderValidationPanel();
+  else if (logData) renderAll();
 }));
 
 // Person filter (event delegation)
@@ -753,11 +1343,11 @@ document.getElementById('log-tbody').addEventListener('click', e => {
   const saveBtn  = e.target.closest('.btn-save');
   const cancelBtn= e.target.closest('.btn-cancel');
   const delBtn   = e.target.closest('.btn-del');
-  if (editBtn)  { editingId = Number(editBtn.dataset.id); renderTable(validatePairs(logData.log)); }
-  if (saveBtn)  { saveEdit(Number(saveBtn.dataset.id)); }
+  if (editBtn)  { editingId = editBtn.dataset.id; renderTable(validatePairs(logData.log)); }
+  if (saveBtn)  { saveEdit(saveBtn.dataset.id); }
   if (cancelBtn){ editingId = null; renderTable(validatePairs(logData.log)); }
   if (delBtn) {
-    if (confirm('Eintrag löschen?')) deleteEntry(Number(delBtn.dataset.id));
+    if (confirm('Eintrag löschen?')) deleteEntry(delBtn.dataset.id);
   }
 });
 
@@ -777,8 +1367,10 @@ document.getElementById('clear-confirm').addEventListener('click', () => {
   commit(() => { logData.log = []; });
 });
 
-// Add pair
+// Add modal
 document.getElementById('btn-add-pair').addEventListener('click', openAddModal);
+document.getElementById('add-mode-pair').addEventListener('click', () => switchAddMode('pair'));
+document.getElementById('add-mode-single').addEventListener('click', () => switchAddMode('single'));
 document.getElementById('add-von').addEventListener('input', updateDurPreview);
 document.getElementById('add-bis').addEventListener('input', updateDurPreview);
 document.getElementById('add-cancel').addEventListener('click', () =>
@@ -786,14 +1378,22 @@ document.getElementById('add-cancel').addEventListener('click', () =>
 document.getElementById('add-confirm').addEventListener('click', () => {
   const nutzer = document.getElementById('add-nutzer').value.trim();
   const typ    = document.getElementById('add-typ').value;
-  const von    = document.getElementById('add-von').value;
-  const bis    = document.getElementById('add-bis').value;
   if (!nutzer) { alert('Bitte Person eingeben.'); return; }
-  if (!von || !bis) { alert('Bitte Von und Bis ausfüllen.'); return; }
-  const ms = new Date(bis) - new Date(von);
-  if (ms <= 0) { alert('Bis muss nach Von liegen.'); return; }
-  document.getElementById('modal-add').close();
-  addPair(nutzer, typ, localInputToIso(von), localInputToIso(bis));
+  if (addMode === 'single') {
+    const aktion = document.getElementById('add-aktion').value;
+    const ts     = document.getElementById('add-ts').value;
+    if (!ts) { alert('Bitte Zeitpunkt ausfüllen.'); return; }
+    document.getElementById('modal-add').close();
+    addSingle(nutzer, typ, aktion, localInputToIso(ts));
+  } else {
+    const von = document.getElementById('add-von').value;
+    const bis = document.getElementById('add-bis').value;
+    if (!von || !bis) { alert('Bitte Von und Bis ausfüllen.'); return; }
+    const ms = new Date(bis) - new Date(von);
+    if (ms <= 0) { alert('Bis muss nach Von liegen.'); return; }
+    document.getElementById('modal-add').close();
+    addPair(nutzer, typ, localInputToIso(von), localInputToIso(bis));
+  }
 });
 
 // Keyboard shortcuts
