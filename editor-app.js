@@ -588,6 +588,113 @@ async function savePifHrefs(hrefs) {
   }));
 }
 
+function issueTypeLabel(type) {
+  return { 'open-start': 'Vergessen auszustempeln', 'orphan-stop': 'Stop ohne Start',
+           'double-start': 'Doppelt eingestempelt', 'short-pair': 'Verdächtig kurze Dauer',
+         }[type] || type;
+}
+
+function setValidationTabBadge(state) {
+  const tab = document.getElementById('tab-validation');
+  tab.style.display = '';
+  if (state === 'loading') { tab.textContent = '⏳ Prüfe…'; return; }
+  if (state === 'error')   { tab.textContent = '⚠ Fehler'; return; }
+  const n = typeof state === 'number' ? state : validationIssues.filter(i => !i.skipped).length;
+  tab.textContent = n === 0 ? '✓ Alles OK' : `⚠ Probleme (${n})`;
+}
+
+async function fetchAndValidate() {
+  const creds = getCloudCreds();
+  if (!creds) {
+    alert('Keine Cloud-Zugangsdaten gefunden.\nBitte zuerst in admin.html konfigurieren.');
+    return;
+  }
+  const btn = document.getElementById('btn-validate-all');
+  btn.disabled = true;
+  setValidationTabBadge('loading');
+  // Tab anzeigen + aktivieren
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-validation').classList.add('active');
+  activeTab = 'validation';
+  document.getElementById('panel-table').hidden    = true;
+  document.getElementById('panel-timeline').hidden = true;
+  document.getElementById('panel-validation').hidden = false;
+  document.getElementById('panel-empty').hidden    = true;
+  document.getElementById('validation-cards').innerHTML =
+    '<div class="v-empty"><div class="v-empty-title" style="color:var(--text-2)">Lade PIF-Dateien…</div></div>';
+  try {
+    const base = cloudDavBase(creds);
+    const auth = cloudAuth(creds);
+    await Promise.all([
+      fetch(base, { method: 'MKCOL', headers: { Authorization: auth } }).catch(() => {}),
+      refreshTypesFromCloud(),
+    ]);
+    const res = await fetch(base, { method: 'PROPFIND',
+      headers: { Authorization: auth, Depth: '1' } });
+    if (!res.ok) throw new Error(`PROPFIND HTTP ${res.status}`);
+    const xml = await res.text();
+
+    const now = new Date();
+    const months = [
+      `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`,
+      (() => { const d = new Date(now); d.setMonth(d.getMonth() - 1);
+               return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; })(),
+    ];
+
+    const hrefs = [...xml.matchAll(/<[^>]*:href[^>]*>([^<]+)<\/[^>]*:href>/g)]
+      .map(m => decodeURIComponent(m[1].trim()))
+      .filter(h => /lgc_pif_.+_\d{4}-\d{2}\.json$/.test(h) &&
+                   months.some(mo => h.includes(`_${mo}.json`)));
+
+    if (hrefs.length === 0) {
+      setValidationTabBadge(0);
+      document.getElementById('validation-cards').innerHTML =
+        '<div class="v-empty"><div class="v-empty-icon">☁</div>' +
+        '<div class="v-empty-title" style="color:var(--text-2)">Keine PIF-Dateien für die letzten zwei Monate gefunden</div></div>';
+      return;
+    }
+
+    validationPifCache = {};
+    const results = await Promise.allSettled(hrefs.map(async href => {
+      const fileUrl = IS_PROXY
+        ? href
+        : (creds.url.trim().replace(/\/$/, '') + (href.startsWith('/') ? href : '/' + href));
+      const r = await fetch(fileUrl, { headers: { Authorization: auth } });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = await r.json();
+      validationPifCache[fileUrl] = { ...data, entries: normalizeLogEntries(data.entries || []) };
+      return fileUrl;
+    }));
+
+    const failed = results.filter(r => r.status === 'rejected').length;
+    if (failed > 0) showToast(`${failed} Datei(en) konnten nicht geladen werden.`);
+
+    const enrichedEntries = [];
+    for (const [href, pif] of Object.entries(validationPifCache)) {
+      for (const e of pif.entries) enrichedEntries.push({ ...e, pifHref: href });
+    }
+
+    let typesConfig = [];
+    try {
+      typesConfig = JSON.parse(localStorage.getItem('lgc_cloud_types') || '[]');
+      if (!typesConfig.length) typesConfig = JSON.parse(localStorage.getItem('lgc_type_config') || '[]');
+    } catch {}
+
+    validationIssues = buildValidationIssues(enrichedEntries, typesConfig);
+    for (const issue of validationIssues) {
+      issue.linked = getLinkedIssues(issue, validationIssues, typesConfig);
+    }
+
+    buildTypeMaps();
+    renderValidationPanel();
+  } catch (e) {
+    alert('Fehler beim Prüfen: ' + e.message);
+    setValidationTabBadge('error');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 // ─── Paired-Start finden (für dauer_ms-Neuberechnung) ─────────────────────────
 function findPairedStart(stopEntry) {
   const stopTs = new Date(stopEntry.zeitstempel).getTime();
@@ -948,6 +1055,7 @@ document.getElementById('btn-redo').addEventListener('click', redo);
 
 document.getElementById('btn-cloud-load').addEventListener('click', openCloudPicker);
 document.getElementById('btn-cloud-save').addEventListener('click', saveToCloud);
+document.getElementById('btn-validate-all').addEventListener('click', fetchAndValidate);
 document.getElementById('cloud-cancel').addEventListener('click', () =>
   document.getElementById('modal-cloud').close());
 document.getElementById('cloud-confirm').addEventListener('click', () => {
@@ -969,7 +1077,12 @@ document.querySelectorAll('.tab-btn').forEach(btn => btn.addEventListener('click
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
   activeTab = btn.dataset.tab;
-  if (logData) renderAll();
+  document.getElementById('panel-table').hidden      = activeTab !== 'table';
+  document.getElementById('panel-timeline').hidden   = activeTab !== 'timeline';
+  document.getElementById('panel-validation').hidden = activeTab !== 'validation';
+  document.getElementById('panel-empty').hidden      = logData !== null || activeTab === 'validation';
+  if (activeTab === 'validation') renderValidationPanel();
+  else if (logData) renderAll();
 }));
 
 // Person filter (event delegation)
