@@ -815,6 +815,17 @@ function renderIssueCard(issue, idx) {
     <div class="v-card-body">${body}</div></div>`;
 }
 
+async function performSave(hrefs, issuesToResolve) {
+  try {
+    await savePifHrefs(hrefs);
+    const resolved = new Set(issuesToResolve);
+    validationIssues = validationIssues.filter(i => !resolved.has(i));
+    renderValidationPanel();
+  } catch (err) {
+    alert('Fehler beim Speichern: ' + err.message);
+  }
+}
+
 // ─── Paired-Start finden (für dauer_ms-Neuberechnung) ─────────────────────────
 function findPairedStart(stopEntry) {
   const stopTs = new Date(stopEntry.zeitstempel).getTime();
@@ -1176,6 +1187,111 @@ document.getElementById('btn-redo').addEventListener('click', redo);
 document.getElementById('btn-cloud-load').addEventListener('click', openCloudPicker);
 document.getElementById('btn-cloud-save').addEventListener('click', saveToCloud);
 document.getElementById('btn-validate-all').addEventListener('click', fetchAndValidate);
+document.getElementById('validation-cards').addEventListener('click', async e => {
+  // "Alle zurücksetzen" button is not inside a [data-issue-idx] card
+  if (e.target.closest('#btn-reset-skip')) {
+    validationIssues.forEach(i => { i.skipped = false; });
+    renderValidationPanel();
+    return;
+  }
+
+  const card = e.target.closest('[data-issue-idx]');
+  if (!card) return;
+  const idx = parseInt(card.dataset.issueIdx);
+  if (isNaN(idx)) return;
+  const issue = validationIssues[idx];
+  if (!issue) return;
+
+  if (e.target.closest('.v-skip')) {
+    issue.skipped = true;
+    renderValidationPanel();
+    return;
+  }
+  if (e.target.closest('.v-unskip')) {
+    issue.skipped = false;
+    renderValidationPanel();
+    return;
+  }
+
+  if (e.target.closest('.v-fix-open-start')) {
+    const inp = document.getElementById(`v-stop-${idx}`);
+    if (!inp?.value) { alert('Bitte Stop-Zeit eingeben.'); return; }
+    const stopIso = localInputToIso(inp.value);
+    if (new Date(stopIso) <= new Date(issue.mainEntry.zeitstempel)) {
+      alert('Stop-Zeit muss nach dem Start liegen.'); return;
+    }
+    const checks = [...document.querySelectorAll(`.v-linked-check[data-issue-idx="${idx}"]`)];
+    const linkedToFix = checks
+      .filter(cb => cb.checked)
+      .map(cb => issue.linked[parseInt(cb.dataset.linkedIdx)])
+      .filter(Boolean);
+    applyOpenStartFix(issue, stopIso, linkedToFix);
+    const hrefs = [issue.pifHref, ...linkedToFix.map(l => l.pifHref)];
+    await performSave(hrefs, [issue, ...linkedToFix]);
+    return;
+  }
+
+  if (e.target.closest('.v-delete-start')) {
+    if (!confirm(`Start-Eintrag von ${issue.person} (${issue.logType}) löschen?`)) return;
+    applyDeleteFix(issue);
+    await performSave([issue.pifHref], [issue]);
+    return;
+  }
+
+  if (e.target.closest('.v-fix-orphan-stop')) {
+    const inp = document.getElementById(`v-start-${idx}`);
+    if (!inp?.value) { alert('Bitte Start-Zeit eingeben.'); return; }
+    const startIso = localInputToIso(inp.value);
+    if (new Date(startIso) >= new Date(issue.mainEntry.zeitstempel)) {
+      alert('Start-Zeit muss vor dem Stop liegen.'); return;
+    }
+    applyOrphanStopFix(issue, startIso);
+    await performSave([issue.pifHref], [issue]);
+    return;
+  }
+
+  if (e.target.closest('.v-delete-stop')) {
+    if (!confirm(`Stop-Eintrag von ${issue.person} (${issue.logType}) löschen?`)) return;
+    applyDeleteFix(issue);
+    await performSave([issue.pifHref], [issue]);
+    return;
+  }
+
+  if (e.target.closest('.v-delete-first-start')) {
+    applyDoubleStartFix(issue, issue.entries[0].id);
+    await performSave([issue.entries[0].pifHref], [issue]);
+    return;
+  }
+
+  if (e.target.closest('.v-delete-second-start')) {
+    applyDoubleStartFix(issue, issue.entries[1].id);
+    await performSave([issue.entries[1].pifHref], [issue]);
+    return;
+  }
+
+  if (e.target.closest('.v-fix-short-pair')) {
+    const inpS = document.getElementById(`v-sp-start-${idx}`);
+    const inpE = document.getElementById(`v-sp-stop-${idx}`);
+    if (!inpS?.value || !inpE?.value) { alert('Bitte beide Zeiten eingeben.'); return; }
+    const newStartIso = localInputToIso(inpS.value);
+    const newStopIso  = localInputToIso(inpE.value);
+    if (new Date(newStopIso) <= new Date(newStartIso)) {
+      alert('Bis muss nach Von liegen.'); return;
+    }
+    applyShortPairFix(issue, newStartIso, newStopIso);
+    const hrefs = [...new Set([issue.entries[0].pifHref, issue.entries[1].pifHref])];
+    await performSave(hrefs, [issue]);
+    return;
+  }
+
+  if (e.target.closest('.v-delete-pair')) {
+    if (!confirm(`Paar von ${issue.person} (${issue.logType}) löschen?`)) return;
+    applyDeleteFix(issue);
+    const hrefs = [...new Set(issue.entries.map(en => en.pifHref))];
+    await performSave(hrefs, [issue]);
+    return;
+  }
+});
 document.getElementById('cloud-cancel').addEventListener('click', () =>
   document.getElementById('modal-cloud').close());
 document.getElementById('cloud-confirm').addEventListener('click', () => {
