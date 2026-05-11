@@ -596,6 +596,7 @@ function issueTypeLabel(type) {
 
 function setValidationTabBadge(state) {
   const tab = document.getElementById('tab-validation');
+  if (!tab) return;
   tab.style.display = '';
   if (state === 'loading') { tab.textContent = '⏳ Prüfe…'; return; }
   if (state === 'error')   { tab.textContent = '⚠ Fehler'; return; }
