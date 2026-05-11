@@ -696,6 +696,125 @@ async function fetchAndValidate() {
   }
 }
 
+function renderValidationPanel() {
+  const active = validationIssues.filter(i => !i.skipped);
+  setValidationTabBadge(active.length);
+  const container = document.getElementById('validation-cards');
+  if (!container) return;
+
+  if (validationIssues.length === 0) {
+    container.innerHTML = '<div class="v-empty"><div class="v-empty-icon">✓</div>' +
+      '<div class="v-empty-title">Keine Probleme gefunden</div></div>';
+    return;
+  }
+
+  let html = '';
+  if (active.length === 0 && validationIssues.some(i => i.skipped)) {
+    html += `<div class="v-all-skipped">${validationIssues.length} Issue(s) übersprungen.&nbsp;` +
+      `<button class="btn btn-sm" id="btn-reset-skip">Alle zurücksetzen</button></div>`;
+  }
+  for (let i = 0; i < validationIssues.length; i++) {
+    html += renderIssueCard(validationIssues[i], i);
+  }
+  container.innerHTML = html;
+}
+
+function renderIssueCard(issue, idx) {
+  const ti = _TYPE_MAP[issue.logType] ||
+    { label: issue.logType, main: '#9ca3af', dim: 'rgba(156,163,175,.15)' };
+  const dateStr = issue.logicalDate
+    ? new Date(issue.logicalDate + 'T12:00:00').toLocaleDateString('de-DE',
+        { day: '2-digit', month: '2-digit', year: 'numeric' })
+    : '';
+  const hdr = `<div class="v-card-hdr">
+    <span class="v-person">${escHtml(issue.person)}</span>
+    <span class="badge-typ" style="background:${ti.dim};color:${ti.main}">${escHtml(ti.label)}</span>
+    <span class="v-date">${escHtml(dateStr)}</span>
+    <span class="badge-issue-type ${issue.issueType}">${escHtml(issueTypeLabel(issue.issueType))}</span>
+  </div>`;
+
+  if (issue.skipped) {
+    return `<div class="v-card v-card-skipped" data-issue-idx="${idx}">${hdr}
+      <div class="v-card-body"><div style="display:flex;gap:8px;align-items:center">
+        <span class="v-skip-note">&#x2192; Übersprungen</span>
+        <button class="btn btn-sm v-unskip" data-issue-idx="${idx}">Zurücksetzen</button>
+      </div></div></div>`;
+  }
+
+  let body = '';
+  if (issue.issueType === 'open-start') {
+    const startTime = fmtTime(issue.mainEntry.zeitstempel);
+    const defStop   = issue.logicalDate ? `${issue.logicalDate}T16:00` : '';
+    const linkedHtml = issue.linked.map((lk, li) => {
+      const lti = _TYPE_MAP[lk.logType] || { label: lk.logType, main: '#9ca3af' };
+      return `<label class="v-linked-label">
+        <input type="checkbox" class="v-linked-check"
+          data-issue-idx="${idx}" data-linked-idx="${li}" checked>
+        <span style="color:${lti.main}">${escHtml(lti.label)}</span> ebenfalls beenden
+      </label>`;
+    }).join('');
+    body = `<div class="v-info">Eingestempelt: ${startTime} &mdash; kein Stop vorhanden</div>
+      <div class="v-fix-row">
+        <span class="v-fix-label">Stop-Zeit</span>
+        <input type="datetime-local" class="v-time-input" id="v-stop-${idx}"
+          value="${escHtml(defStop)}" step="60">
+      </div>
+      ${linkedHtml ? `<div class="v-linked-group">${linkedHtml}</div>` : ''}
+      <div class="v-card-ftr">
+        <button class="btn btn-sm btn-primary v-fix-open-start" data-issue-idx="${idx}">✓ Speichern</button>
+        <button class="btn btn-sm v-skip" data-issue-idx="${idx}">→ Überspringen</button>
+        <button class="btn btn-sm btn-danger v-delete-start" data-issue-idx="${idx}">✗ Start löschen</button>
+      </div>`;
+  } else if (issue.issueType === 'orphan-stop') {
+    const stopTime = fmtTime(issue.mainEntry.zeitstempel);
+    const defStart = issue.logicalDate ? `${issue.logicalDate}T08:00` : '';
+    body = `<div class="v-info">Stop vorhanden (${stopTime}) &mdash; kein Start gefunden</div>
+      <div class="v-fix-row">
+        <span class="v-fix-label">Start-Zeit</span>
+        <input type="datetime-local" class="v-time-input" id="v-start-${idx}"
+          value="${escHtml(defStart)}" step="60">
+      </div>
+      <div class="v-card-ftr">
+        <button class="btn btn-sm btn-primary v-fix-orphan-stop" data-issue-idx="${idx}">✓ Speichern</button>
+        <button class="btn btn-sm v-skip" data-issue-idx="${idx}">→ Überspringen</button>
+        <button class="btn btn-sm btn-danger v-delete-stop" data-issue-idx="${idx}">✗ Stop löschen</button>
+      </div>`;
+  } else if (issue.issueType === 'double-start') {
+    const [e0, e1] = issue.entries;
+    const t0 = fmtTime(e0.zeitstempel), t1 = fmtTime(e1.zeitstempel);
+    body = `<div class="v-info">Zwei Starts: ${t0} und ${t1} &mdash; kein Stop dazwischen</div>
+      <div class="v-card-ftr">
+        <button class="btn btn-sm btn-danger v-delete-first-start" data-issue-idx="${idx}">✗ ${t0} löschen</button>
+        <button class="btn btn-sm btn-danger v-delete-second-start" data-issue-idx="${idx}">✗ ${t1} löschen</button>
+        <button class="btn btn-sm v-skip" data-issue-idx="${idx}">→ Überspringen</button>
+      </div>`;
+  } else if (issue.issueType === 'short-pair') {
+    const [sp0, sp1] = issue.entries;
+    const durMs = new Date(sp1.zeitstempel) - new Date(sp0.zeitstempel);
+    body = `<div class="v-info">Dauer: ${fmtMs(durMs)} (${fmtTime(sp0.zeitstempel)} &ndash; ${fmtTime(sp1.zeitstempel)})</div>
+      <div class="v-fix-row-double">
+        <div class="v-fix-row">
+          <span class="v-fix-label">Von</span>
+          <input type="datetime-local" class="v-time-input" id="v-sp-start-${idx}"
+            value="${isoToLocalInput(sp0.zeitstempel)}" step="60">
+        </div>
+        <div class="v-fix-row">
+          <span class="v-fix-label">Bis</span>
+          <input type="datetime-local" class="v-time-input" id="v-sp-stop-${idx}"
+            value="${isoToLocalInput(sp1.zeitstempel)}" step="60">
+        </div>
+      </div>
+      <div class="v-card-ftr">
+        <button class="btn btn-sm btn-primary v-fix-short-pair" data-issue-idx="${idx}">✓ Speichern</button>
+        <button class="btn btn-sm btn-danger v-delete-pair" data-issue-idx="${idx}">✗ Paar löschen</button>
+        <button class="btn btn-sm v-skip" data-issue-idx="${idx}">→ Überspringen</button>
+      </div>`;
+  }
+
+  return `<div class="v-card" data-issue-idx="${idx}">${hdr}
+    <div class="v-card-body">${body}</div></div>`;
+}
+
 // ─── Paired-Start finden (für dauer_ms-Neuberechnung) ─────────────────────────
 function findPairedStart(stopEntry) {
   const stopTs = new Date(stopEntry.zeitstempel).getTime();
