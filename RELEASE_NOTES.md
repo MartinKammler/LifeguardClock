@@ -1,33 +1,64 @@
-# Release Notes – LifeguardClock v1.0.1
+# Release Notes – LifeguardClock v1.0.2
 
-## Bugfix-Release
+## Feature-Release: Editor-Validierung & Quick-Fix
 
-Dieser Patch behebt einen Anzeigefehler im Dashboard und stellt sicher, dass der Service-Worker-Update-Mechanismus korrekt ausgelöst wird.
+Dieser Release fügt dem Log-Editor einen neuen Validierungs-Modus hinzu, der alle
+PIF-Dateien der letzten zwei Monate auf Stempel-Probleme prüft und direkte Korrekturen
+ermöglicht — ohne langen Menüweg.
 
-### Behoben: Dashboard zeigt falsche Stundenzahl
+### Neu: „☁ Alle prüfen"-Button im Editor
 
-In der Tagesansicht des Dashboards konnte eine Person eine stark überhöhte Anwesenheitsdauer angezeigt bekommen (z. B. 11 Stunden statt ~2 Stunden). Ursache:
+Klick auf den neuen Button im Editor-Header startet einen vollautomatischen Scan:
 
-1. Ein Gerät erzeugt an der Tagesgrenze (04:00 Uhr) automatisch einen Stop-Eintrag, wenn eine Sitzung noch als offen gilt.
-2. Hatte ein anderes Gerät (oder die PIF-Datei) die Sitzung bereits manuell beendet, kannte das erste Gerät diesen Stop nicht und schrieb einen Auto-Stop mit der vollen Zeitspanne seit dem Einstempeln als `dauer_ms`.
-3. Dieser Auto-Stop landet auf dem nächsten logischen Tag — ohne passenden Start. Das Dashboard zählte `dauer_ms` trotzdem, weil kein Start verlangt wurde.
+1. Alle `lgc_pif_*`-Dateien des aktuellen und vorherigen Monats werden parallel aus der
+   Cloud geladen.
+2. Pro Person und Typ werden vier Issue-Typen erkannt:
 
-**Fix:** Stop-Einträge ohne passenden Start werden jetzt in `buildDB` übersprungen. Die Daten-Bereinigung in der Cloud ist separat erforderlich (fehlerhafte Auto-Stops aus PIF und Gerätedateien entfernen).
+| Issue | Beschreibung | Quick-Fix |
+|---|---|---|
+| **Vergessen auszustempeln** | Start ohne nachfolgenden Stop | Stop-Zeit eingeben → Speichern |
+| **Stop ohne Start** | Stop-Eintrag ohne vorherigen Start | Start-Zeit nachträglich eintragen |
+| **Doppelt eingestempelt** | Zwei Starts ohne Stop dazwischen | Einen der Starts löschen |
+| **Verdächtig kurze Dauer** | Vollständiges Paar mit Dauer < 15 min | Zeiten korrigieren oder Paar löschen |
 
-### Service Worker v16
+3. Ergebnisse erscheinen als Cards im neuen Tab „⚠ Probleme".
+4. Jeder Fix wird direkt in die Cloud geschrieben (PUT auf die betroffene PIF-Datei).
 
-Der v1.0-Tag enthielt noch `lgc-shell-v14` (der Bump auf v15 wurde nach dem Tag-Setzen eingecheckt). Geräte mit v14 haben daher das v1.0-Update möglicherweise nicht automatisch erhalten. v1.0.1 bringt `lgc-shell-v16` und erzwingt das Update auf allen Geräten zuverlässig.
+#### Verknüpfte Issues (Anwesenheit ↔ Dienste)
+
+- Wird ein Dienst-Typ (z. B. Wachdienst) beendet, bietet die Card eine Checkbox an,
+  Anwesenheit gleichzeitig zu schließen — abgeleitet aus `autoStartKeys` in `lgc_types.json`,
+  kein Hardcoding.
+- Wird Anwesenheit beendet, werden alle offenen Dienste derselben Person am selben logischen
+  Tag automatisch mit angeboten (vorgehaakte Checkboxen).
+
+#### Überspringen
+
+Issues können übersprungen werden (Card graut aus, Issue wird beim nächsten Scan erneut
+angezeigt). „Alle zurücksetzen" macht alle Überspringen rückgängig.
+
+---
+
+### Service Worker v17
+
+`editor-app.js` hat sich geändert. Der SW-Cache wird auf `lgc-shell-v17` erhöht, damit alle
+installierten PWAs die neue Version automatisch erhalten.
 
 ---
 
 ### Migration / Update
 
 - Kein Änderungsbedarf an `config.js`, `lgc_users.json` oder Cloud-Dateiformat.
-- Service Worker Cache auf `lgc-shell-v16` → Browser-Update erfolgt automatisch nach Neustart der App.
+- Service Worker Cache auf `lgc-shell-v17` → Browser-Update erfolgt automatisch nach
+  Neustart der App.
 - Hard Refresh (`Strg+Shift+R`) empfohlen falls Änderungen nicht sofort sichtbar sind.
-- Sollte im Dashboard noch eine überhöhte Stundenzahl angezeigt werden: fehlerhafte Auto-Stop-Einträge aus der PIF-Datei und den Gerätedateien in der Cloud entfernen (manuell oder über den Editor).
+- Der neue „Alle prüfen"-Button benötigt Cloud-Zugangsdaten (gleiche wie für den
+  bestehenden „☁ Cloud"-Button im Editor).
 
 ### Bekannte Einschränkungen
 
-- Cloud-Zugangsdaten liegen weiterhin im Klartext im Browser-Storage (localStorage). Empfehlung: dediziertes App-Passwort verwenden.
-- Die Rate-Limit-Sperre lebt nur im Arbeitsspeicher — ein Seitenneuladen setzt sie zurück. Für den Kiosk-Betrieb ausreichend.
+- Cloud-Zugangsdaten liegen weiterhin im Klartext im Browser-Storage (localStorage).
+  Empfehlung: dediziertes App-Passwort verwenden.
+- Die Kurzzeit-Schwelle (15 min) ist hardcodiert; spätere Konfigurierbarkeit via
+  `config.js` ist vorgesehen.
+- Kein Undo/Redo für Validation-Fixes (direktes Cloud-Schreiben ohne Zwischenpuffer).

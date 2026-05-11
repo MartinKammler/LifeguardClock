@@ -4,12 +4,26 @@ Alle relevanten Änderungen pro Release. Format orientiert sich an [Keep a Chang
 
 ---
 
-## [Unreleased]
+## [1.0.2] – 2026-05-11
 
 ### Hinzugefügt
-- Editor: Neuer Button „☁ Alle prüfen" — lädt alle PIF-Dateien der letzten zwei Monate,
-  erkennt offene Starts, verwaiste Stops, Doppel-Starts und verdächtig kurze Paare (<15 min)
-  und zeigt Quick-Fix-Cards mit direktem Cloud-Speichern an
+- **Editor: „☁ Alle prüfen"** — Neuer Button lädt alle PIF-Dateien der letzten zwei Monate,
+  erkennt vier Issue-Typen und zeigt Quick-Fix-Cards mit direktem Cloud-Speichern an:
+  - *Vergessen auszustempeln* (open-start): Stop-Zeit eingeben und speichern; mit Checkbox für
+    verknüpfte Anwesenheit (abgeleitet aus `autoStartKeys` in `lgc_types.json`)
+  - *Stop ohne Start* (orphan-stop): Start-Zeit nachträglich eintragen
+  - *Doppelt eingestempelt* (double-start): einen der beiden Starts löschen
+  - *Verdächtig kurze Dauer* (<15 min, short-pair): Zeiten korrigieren oder Paar löschen
+  - Überspringen-Funktion: Issue bleibt ausgegraut sichtbar, erscheint beim nächsten Scan wieder
+
+### Geändert
+- **Service Worker**: Cache-Version auf `lgc-shell-v17` erhöht — erzwingt Update auf allen
+  installierten PWAs (editor-app.js hat sich geändert)
+- **`APP_VERSION`**: auf `'1.0.2'` gesetzt
+
+### Tests
+- **`test_editor.html`**: Suite 13 (buildValidationIssues), Suite 14 (getLinkedIssues),
+  Suite 15 (Fix-Mutationsfunktionen) — 50+ neue Assertions
 
 ---
 
