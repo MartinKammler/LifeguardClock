@@ -204,6 +204,79 @@ const H3   = 10800000; // 3 h
 const H2   = 7200000;  // 2 h
 const H1   = 3600000;  // 1 h
 
+// ─── Validation: Konstante ────────────────────────────────────────────────────
+const MIN_PAIR_DURATION_MS = 15 * 60 * 1000;
+
+// ─── buildValidationIssues (1:1 aus editor-app.js) ───────────────────────────
+function buildValidationIssues(enrichedEntries, typesConfig) {
+  const DAY_BOUNDARY = 4;
+  function logicalDay(isoTs) {
+    const d = new Date(isoTs);
+    if (d.getHours() < DAY_BOUNDARY) d.setDate(d.getDate() - 1);
+    return d.toISOString().slice(0, 10);
+  }
+  const groups = {};
+  for (const e of enrichedEntries) {
+    const k = `${e.nutzer}|||${e.typ}`;
+    if (!groups[k]) groups[k] = [];
+    groups[k].push(e);
+  }
+  const issues = [];
+  for (const group of Object.values(groups)) {
+    const sorted = [...group].sort((a, b) => new Date(a.zeitstempel) - new Date(b.zeitstempel));
+    let openStart = null;
+    for (const e of sorted) {
+      if (e.aktion === 'start') {
+        if (openStart) {
+          issues.push({ issueType: 'double-start', person: e.nutzer, logType: e.typ,
+            logicalDate: logicalDay(openStart.zeitstempel), mainEntry: null,
+            entries: [openStart, e], pifHref: openStart.pifHref, linked: [], skipped: false });
+        }
+        openStart = e;
+      } else {
+        if (!openStart) {
+          issues.push({ issueType: 'orphan-stop', person: e.nutzer, logType: e.typ,
+            logicalDate: logicalDay(e.zeitstempel), mainEntry: e,
+            entries: [e], pifHref: e.pifHref, linked: [], skipped: false });
+        } else {
+          const durMs = new Date(e.zeitstempel) - new Date(openStart.zeitstempel);
+          if (durMs > 0 && durMs < MIN_PAIR_DURATION_MS) {
+            issues.push({ issueType: 'short-pair', person: e.nutzer, logType: e.typ,
+              logicalDate: logicalDay(openStart.zeitstempel), mainEntry: null,
+              entries: [openStart, e], pifHref: openStart.pifHref, linked: [], skipped: false });
+          }
+          openStart = null;
+        }
+      }
+    }
+    if (openStart) {
+      issues.push({ issueType: 'open-start', person: openStart.nutzer, logType: openStart.typ,
+        logicalDate: logicalDay(openStart.zeitstempel), mainEntry: openStart,
+        entries: [openStart], pifHref: openStart.pifHref, linked: [], skipped: false });
+    }
+  }
+  return issues;
+}
+
+// ─── getLinkedIssues (1:1 aus editor-app.js) ─────────────────────────────────
+function getLinkedIssues(issue, allIssues, typesConfig) {
+  if (issue.issueType !== 'open-start') return [];
+  const myType = typesConfig.find(t => t.logType === issue.logType);
+  const myIsService = !!myType?.autoStartKeys?.includes('anwesenheit');
+  return allIssues.filter(o =>
+    o !== issue &&
+    o.issueType === 'open-start' &&
+    o.person === issue.person &&
+    o.logicalDate === issue.logicalDate &&
+    !o.skipped &&
+    (
+      (issue.logType === 'anwesenheit' &&
+        !!typesConfig.find(t => t.logType === o.logType)?.autoStartKeys?.includes('anwesenheit')) ||
+      (myIsService && o.logType === 'anwesenheit')
+    )
+  );
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Suite 1 – fmtMs
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -593,6 +666,137 @@ pushHistory();                             // histIdx=1, alte Redo-Einträge weg
 redo();                                    // kein Redo → histIdx bleibt 1
 eq('Nach neuer Mutation kein Redo: histIdx=1', 1, histIdx);
 eq('Nach neuer Mutation: logicalDay ist 2026-12-31', '2026-12-31', logData.logicalDay);
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Suite 13 – buildValidationIssues
+// ═══════════════════════════════════════════════════════════════════════════════
+suite('Suite 13 – buildValidationIssues');
+
+function makeE(id, nutzer, typ, aktion, ts, href) {
+  return { id, nutzer, typ, aktion, zeitstempel: ts, pifHref: href || '/p.json' };
+}
+
+const D = '2026-05-09'; // logischer Tag (nachmittags, UTC = CEST-2h = immer > 04:00 lokal)
+const T08 = `${D}T06:00:00.000Z`; // 08:00 CEST
+const T10 = `${D}T08:00:00.000Z`; // 10:00 CEST
+const T14 = `${D}T12:00:00.000Z`; // 14:00 CEST
+const T14_3 = `${D}T12:03:00.000Z`; // 14:03 CEST (3 min nach T14)
+
+// Leere Eingabe
+eq('Leere Entries → keine Issues', 0, buildValidationIssues([], []).length);
+
+// open-start
+const osIssues = buildValidationIssues([
+  makeE('s1','Uwe','wachdienst','start', T08),
+], []);
+eq('open-start: 1 Issue', 1, osIssues.length);
+eq('open-start: issueType', 'open-start', osIssues[0]?.issueType);
+eq('open-start: person', 'Uwe', osIssues[0]?.person);
+eq('open-start: logType', 'wachdienst', osIssues[0]?.logType);
+eq('open-start: mainEntry.id', 's1', osIssues[0]?.mainEntry?.id);
+eq('open-start: pifHref', '/p.json', osIssues[0]?.pifHref);
+
+// orphan-stop
+const orphanIssues = buildValidationIssues([
+  makeE('s2','Uwe','anwesenheit','stop', T14),
+], []);
+eq('orphan-stop: 1 Issue', 1, orphanIssues.length);
+eq('orphan-stop: issueType', 'orphan-stop', orphanIssues[0]?.issueType);
+eq('orphan-stop: mainEntry.id', 's2', orphanIssues[0]?.mainEntry?.id);
+
+// double-start
+const dblIssues = buildValidationIssues([
+  makeE('d1','Uwe','wachdienst','start', T08),
+  makeE('d2','Uwe','wachdienst','start', T10),
+], []);
+eq('double-start: 1 Issue (zweiter Start bleibt offen → open-start)', 2, dblIssues.length);
+eq('double-start zuerst', 'double-start', dblIssues.find(i => i.issueType === 'double-start')?.issueType);
+eq('open-start danach vorhanden', 'open-start', dblIssues.find(i => i.issueType === 'open-start')?.issueType);
+eq('double-start entries[0].id', 'd1', dblIssues.find(i => i.issueType === 'double-start')?.entries[0]?.id);
+eq('double-start entries[1].id', 'd2', dblIssues.find(i => i.issueType === 'double-start')?.entries[1]?.id);
+
+// short-pair (3 min < 15 min)
+const spIssues = buildValidationIssues([
+  makeE('p1','Uwe','anwesenheit','start', T14),
+  makeE('p2','Uwe','anwesenheit','stop',  T14_3),
+], []);
+eq('short-pair: 1 Issue', 1, spIssues.length);
+eq('short-pair: issueType', 'short-pair', spIssues[0]?.issueType);
+eq('short-pair: entries[0]', 'p1', spIssues[0]?.entries[0]?.id);
+eq('short-pair: entries[1]', 'p2', spIssues[0]?.entries[1]?.id);
+
+// 15-min-Grenze genau: ≥ 15 min ist kein Issue
+const T15 = new Date(new Date(T14).getTime() + 15 * 60 * 1000).toISOString();
+const no15 = buildValidationIssues([
+  makeE('x1','A','anwesenheit','start', T14),
+  makeE('x2','A','anwesenheit','stop',  T15),
+], []);
+eq('15 min genau → kein short-pair', 0, no15.length);
+
+// Vollständiges Paar >15 min → kein Issue
+const okPair = buildValidationIssues([
+  makeE('ok1','A','anwesenheit','start', T08),
+  makeE('ok2','A','anwesenheit','stop',  T14),
+], []);
+eq('Vollständiges Paar → keine Issues', 0, okPair.length);
+
+// Zwei Personen: Uwe offen, Anna ok
+const twoP = buildValidationIssues([
+  makeE('u1','Uwe','anwesenheit','start', T08),
+  makeE('a1','Anna','anwesenheit','start', T08),
+  makeE('a2','Anna','anwesenheit','stop',  T14),
+], []);
+eq('Zwei Personen: nur Uwe hat Issue', 1, twoP.length);
+eq('Uwes open-start', 'Uwe', twoP[0]?.person);
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Suite 14 – getLinkedIssues
+// ═══════════════════════════════════════════════════════════════════════════════
+suite('Suite 14 – getLinkedIssues');
+
+const TC = [
+  { logType: 'anwesenheit',    autoStartKeys: [] },
+  { logType: 'wachdienst',     autoStartKeys: ['anwesenheit'] },
+  { logType: 'sanitaetsdienst',autoStartKeys: ['anwesenheit'] },
+  { logType: 'ausbildung',     autoStartKeys: [] },
+];
+
+function makeIssue(type, person, logType, date) {
+  return { issueType: type, person, logType, logicalDate: date, mainEntry: { zeitstempel: T08 },
+           pifHref: '/p.json', linked: [], skipped: false };
+}
+
+const uwAnw = makeIssue('open-start', 'Uwe', 'anwesenheit',    '2026-05-09');
+const uwWach = makeIssue('open-start', 'Uwe', 'wachdienst',    '2026-05-09');
+const uwAus  = makeIssue('open-start', 'Uwe', 'ausbildung',    '2026-05-09');
+const annAnw = makeIssue('open-start', 'Anna','anwesenheit',   '2026-05-09');
+
+const all = [uwAnw, uwWach, uwAus, annAnw];
+
+// Anwesenheit → Service
+const linked1 = getLinkedIssues(uwAnw, all, TC);
+eq('Anwesenheit → wachdienst verknüpft', true, linked1.some(l => l.logType === 'wachdienst'));
+eq('Anwesenheit → ausbildung NICHT verknüpft', false, linked1.some(l => l.logType === 'ausbildung'));
+eq('Anwesenheit → Anna nicht verknüpft', false, linked1.some(l => l.person === 'Anna'));
+
+// Service → Anwesenheit
+const linked2 = getLinkedIssues(uwWach, all, TC);
+eq('wachdienst → anwesenheit verknüpft', true, linked2.some(l => l.logType === 'anwesenheit'));
+eq('wachdienst → keine anderen', 1, linked2.length);
+
+// Ausbildung (kein autoStartKeys) → keine Links
+const linked3 = getLinkedIssues(uwAus, all, TC);
+eq('ausbildung → keine Links', 0, linked3.length);
+
+// Nicht open-start → keine Links
+const stopIssue = makeIssue('orphan-stop','Uwe','anwesenheit','2026-05-09');
+eq('orphan-stop → keine Links', 0, getLinkedIssues(stopIssue, all, TC).length);
+
+// Skipped werden nicht verknüpft
+const uwWachSkipped = { ...uwWach, skipped: true };
+const allWithSkip = [uwAnw, uwWachSkipped, annAnw];
+const linked4 = getLinkedIssues(uwAnw, allWithSkip, TC);
+eq('Geskippte Issues werden nicht verknüpft', 0, linked4.length);
 
 render();
 </script>

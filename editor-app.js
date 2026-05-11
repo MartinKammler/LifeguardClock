@@ -17,7 +17,10 @@ function normalizeLogEntries(raw) {
     && typeof e.aktion === 'string' && (e.aktion === 'start' || e.aktion === 'stop')
     && typeof e.zeitstempel === 'string' && !isNaN(Date.parse(e.zeitstempel))
   ).map(e => {
-    const n = { id: e.id || crypto.randomUUID(), nutzer: e.nutzer, typ: e.typ, aktion: e.aktion, zeitstempel: e.zeitstempel };
+    const fallbackId = (typeof crypto !== 'undefined' && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : String(genId());
+    const n = { id: e.id ?? fallbackId, nutzer: e.nutzer, typ: e.typ, aktion: e.aktion, zeitstempel: e.zeitstempel };
     if (typeof e.dauer_ms === 'number') n.dauer_ms = e.dauer_ms;
     return n;
   });
@@ -33,6 +36,7 @@ let editingId    = null;   // id of row currently in inline edit mode
 let cloudFileUrl = null;   // URL der geladenen Cloud-Datei (null = lokal)
 let cloudDirty   = false;  // true wenn ungespeicherte Änderungen gegenüber Cloud
 let cloudIsPIF   = false;  // true wenn geladene Cloud-Datei ein PIF (lgc_pif_*) ist
+let addMode      = 'pair'; // 'pair' | 'single'
 
 // ─── Typ-Farb-Palette (passend zu LifeguardClock.html) ────────────────────────────
 const COLOR_PALETTE = {
@@ -122,6 +126,16 @@ function populateTypSelect() {
 
 // ─── Utils ────────────────────────────────────────────────────────────────────
 function genId() { return Date.now() + Math.random(); }
+function showToast(msg) { alert(msg); }
+function sameEntryId(a, b) { return String(a) === String(b); }
+function getEntryById(id) {
+  return logData?.log?.find(e => sameEntryId(e.id, id));
+}
+function markDirty() {
+  if (!cloudFileUrl) return;
+  cloudDirty = true;
+  syncCloudSaveBtn();
+}
 
 function isoToLocalInput(iso) {
   if (!iso) return '';
@@ -377,7 +391,7 @@ function _restoreSnap(snap) {
   logData.count      = snap.log.length;
   document.getElementById('inp-logical-day').value = snap.logicalDay || '';
   editingId = null;
-  if (cloudFileUrl) { cloudDirty = true; syncCloudSaveBtn(); }
+  markDirty();
   syncUndoButtons();
   renderAll();
 }
@@ -422,14 +436,95 @@ function validatePairs(log) {
   return issues;
 }
 
+// ─── Validation: Konstante ────────────────────────────────────────────────────
+const MIN_PAIR_DURATION_MS = 15 * 60 * 1000;
+
+// ─── buildValidationIssues ───────────────────────────────────────────────────
+function buildValidationIssues(enrichedEntries, typesConfig) {
+  const DAY_BOUNDARY = 4;
+  function logicalDay(isoTs) {
+    const d = new Date(isoTs);
+    if (d.getHours() < DAY_BOUNDARY) d.setDate(d.getDate() - 1);
+    return d.toISOString().slice(0, 10);
+  }
+  const groups = {};
+  for (const e of enrichedEntries) {
+    const k = `${e.nutzer}|||${e.typ}`;
+    if (!groups[k]) groups[k] = [];
+    groups[k].push(e);
+  }
+  const issues = [];
+  for (const group of Object.values(groups)) {
+    const sorted = [...group].sort((a, b) => new Date(a.zeitstempel) - new Date(b.zeitstempel));
+    let openStart = null;
+    for (const e of sorted) {
+      if (e.aktion === 'start') {
+        if (openStart) {
+          issues.push({ issueType: 'double-start', person: e.nutzer, logType: e.typ,
+            logicalDate: logicalDay(openStart.zeitstempel), mainEntry: null,
+            entries: [openStart, e], pifHref: openStart.pifHref, linked: [], skipped: false });
+        }
+        openStart = e;
+      } else {
+        if (!openStart) {
+          issues.push({ issueType: 'orphan-stop', person: e.nutzer, logType: e.typ,
+            logicalDate: logicalDay(e.zeitstempel), mainEntry: e,
+            entries: [e], pifHref: e.pifHref, linked: [], skipped: false });
+        } else {
+          const durMs = new Date(e.zeitstempel) - new Date(openStart.zeitstempel);
+          if (durMs > 0 && durMs < MIN_PAIR_DURATION_MS) {
+            issues.push({ issueType: 'short-pair', person: e.nutzer, logType: e.typ,
+              logicalDate: logicalDay(openStart.zeitstempel), mainEntry: null,
+              entries: [openStart, e], pifHref: openStart.pifHref, linked: [], skipped: false });
+          }
+          openStart = null;
+        }
+      }
+    }
+    if (openStart) {
+      issues.push({ issueType: 'open-start', person: openStart.nutzer, logType: openStart.typ,
+        logicalDate: logicalDay(openStart.zeitstempel), mainEntry: openStart,
+        entries: [openStart], pifHref: openStart.pifHref, linked: [], skipped: false });
+    }
+  }
+  return issues;
+}
+
+// ─── getLinkedIssues ─────────────────────────────────────────────────────────
+function getLinkedIssues(issue, allIssues, typesConfig) {
+  if (issue.issueType !== 'open-start') return [];
+  const myType = typesConfig.find(t => t.logType === issue.logType);
+  const myIsService = !!myType?.autoStartKeys?.includes('anwesenheit');
+  return allIssues.filter(o =>
+    o !== issue &&
+    o.issueType === 'open-start' &&
+    o.person === issue.person &&
+    o.logicalDate === issue.logicalDate &&
+    !o.skipped &&
+    (
+      (issue.logType === 'anwesenheit' &&
+        !!typesConfig.find(t => t.logType === o.logType)?.autoStartKeys?.includes('anwesenheit')) ||
+      (myIsService && o.logType === 'anwesenheit')
+    )
+  );
+}
+
 // ─── Paired-Start finden (für dauer_ms-Neuberechnung) ─────────────────────────
 function findPairedStart(stopEntry) {
   const stopTs = new Date(stopEntry.zeitstempel).getTime();
   return logData.log
-    .filter(e => e.id !== stopEntry.id && e.nutzer === stopEntry.nutzer &&
+    .filter(e => !sameEntryId(e.id, stopEntry.id) && e.nutzer === stopEntry.nutzer &&
                  e.typ === stopEntry.typ && e.aktion === 'start' &&
                  new Date(e.zeitstempel).getTime() <= stopTs)
     .sort((a,b) => new Date(b.zeitstempel) - new Date(a.zeitstempel))[0];
+}
+function findNextPairedStop(startEntry) {
+  const startTs = new Date(startEntry.zeitstempel).getTime();
+  return logData.log
+    .filter(e => !sameEntryId(e.id, startEntry.id) && e.nutzer === startEntry.nutzer &&
+                 e.typ === startEntry.typ && e.aktion === 'stop' &&
+                 new Date(e.zeitstempel).getTime() >= startTs)
+    .sort((a,b) => new Date(a.zeitstempel) - new Date(b.zeitstempel))[0];
 }
 
 // ─── Mutationen ───────────────────────────────────────────────────────────────
@@ -438,7 +533,7 @@ function commit(fn) {
   logData.log.sort((a,b) => new Date(a.zeitstempel) - new Date(b.zeitstempel));
   logData.count = logData.log.length;
   editingId = null;
-  if (cloudFileUrl) { cloudDirty = true; syncCloudSaveBtn(); }
+  markDirty();
   pushHistory();
   renderAll();
 }
@@ -453,33 +548,74 @@ function addPair(nutzer, typ, vonIso, bisIso) {
   });
 }
 
+function addSingle(nutzer, typ, aktion, zeitstempel) {
+  commit(() => {
+    const entry = { id: genId(), nutzer, typ, aktion, zeitstempel };
+    if (aktion === 'stop') {
+      const ts = new Date(zeitstempel).getTime();
+      const pairedStart = logData.log
+        .filter(e => e.nutzer === nutzer && e.typ === typ && e.aktion === 'start' &&
+                     new Date(e.zeitstempel).getTime() <= ts)
+        .sort((a, b) => new Date(b.zeitstempel) - new Date(a.zeitstempel))[0];
+      if (pairedStart) entry.dauer_ms = ts - new Date(pairedStart.zeitstempel).getTime();
+    }
+    logData.log.push(entry);
+  });
+}
+
 function saveEdit(id) {
   const nutzer = document.getElementById('ei-nutzer').value.trim();
   const typ    = document.getElementById('ei-typ').value;
   const aktion = document.getElementById('ei-aktion').value;
   const tsVal  = document.getElementById('ei-ts').value;
   if (!nutzer || !tsVal) return;
+  const current = getEntryById(id);
+  if (!current) return;
   const zeitstempel = localInputToIso(tsVal);
+  const draft = { ...current, nutzer, typ, aktion, zeitstempel };
+
+  if (aktion === 'stop') {
+    const paired = findPairedStart(draft);
+    const laterStart = logData.log
+      .filter(e => !sameEntryId(e.id, draft.id) && e.nutzer === draft.nutzer &&
+                   e.typ === draft.typ && e.aktion === 'start' &&
+                   new Date(e.zeitstempel).getTime() > new Date(draft.zeitstempel).getTime())
+      .sort((a, b) => new Date(a.zeitstempel) - new Date(b.zeitstempel))[0];
+    if (!paired && laterStart) {
+      showToast('Stop darf nicht vor Start liegen');
+      return;
+    }
+  } else {
+    const nextStop = findNextPairedStop(draft);
+    const earlierStop = logData.log
+      .filter(e => !sameEntryId(e.id, draft.id) && e.nutzer === draft.nutzer &&
+                   e.typ === draft.typ && e.aktion === 'stop' &&
+                   new Date(e.zeitstempel).getTime() < new Date(draft.zeitstempel).getTime())
+      .sort((a, b) => new Date(b.zeitstempel) - new Date(a.zeitstempel))[0];
+    if (!nextStop && earlierStop) {
+      showToast('Start darf nicht nach Stop liegen');
+      return;
+    }
+  }
+
   commit(() => {
-    const e = logData.log.find(x => x.id === id);
+    const e = getEntryById(id);
     if (!e) return;
     e.nutzer = nutzer; e.typ = typ; e.aktion = aktion; e.zeitstempel = zeitstempel;
     if (aktion === 'stop') {
       const paired = findPairedStart(e);
       if (paired) {
         const dur = new Date(e.zeitstempel) - new Date(paired.zeitstempel);
-        if (dur < 0) { showToast('Stop darf nicht vor Start liegen'); return; }
         e.dauer_ms = dur;
+      } else {
+        delete e.dauer_ms;
       }
     } else {
       delete e.dauer_ms;
       // Recalc paired stop
-      const stop = logData.log.find(s =>
-        s.nutzer === nutzer && s.typ === typ && s.aktion === 'stop' &&
-        new Date(s.zeitstempel) >= new Date(zeitstempel));
+      const stop = findNextPairedStop(e);
       if (stop) {
         const dur = new Date(stop.zeitstempel) - new Date(zeitstempel);
-        if (dur < 0) { showToast('Stop darf nicht vor Start liegen'); return; }
         stop.dauer_ms = dur;
       }
     }
@@ -487,7 +623,7 @@ function saveEdit(id) {
 }
 
 function deleteEntry(id) {
-  commit(() => { logData.log = logData.log.filter(e => e.id !== id); });
+  commit(() => { logData.log = logData.log.filter(e => !sameEntryId(e.id, id)); });
 }
 
 // ─── Export ───────────────────────────────────────────────────────────────────
@@ -552,8 +688,9 @@ function renderTable(issues) {
   let html = '';
   for (const e of log) {
     const hasIssue = issues.has(e.id);
-    const isEditing = editingId === e.id;
+    const isEditing = sameEntryId(editingId, e.id);
     const ti = _TYPE_MAP[e.typ] || { logType: e.typ, label: e.typ, main: '#888', dim: 'rgba(128,128,128,.15)' };
+    const safeId = escHtml(String(e.id));
     // Für Edit-Dropdown: alle bekannten Typen + ggf. den aktuellen, falls unbekannt
     const editOpts = [
       ...(_TYPE_MAP[e.typ] ? [] : [ti]),
@@ -561,7 +698,7 @@ function renderTable(issues) {
     ].map(t => `<option value="${escHtml(t.logType)}"${e.typ===t.logType?' selected':''}>${escHtml(t.label)}</option>`).join('');
 
     if (isEditing) {
-      html += `<tr class="edit-row" data-id="${e.id}">
+      html += `<tr class="edit-row" data-id="${safeId}">
         <td><span class="${hasIssue ? 'pair-warn' : 'pair-ok'}">${hasIssue ? '⚠' : '✓'}</span></td>
         <td><input class="edit-input" id="ei-nutzer" list="known-persons-list" value="${escHtml(e.nutzer)}" style="min-width:140px"></td>
         <td><select class="edit-input" id="ei-typ" style="min-width:150px">${editOpts}</select></td>
@@ -572,12 +709,12 @@ function renderTable(issues) {
         <td><input type="datetime-local" class="edit-input" id="ei-ts" value="${isoToLocalInput(e.zeitstempel)}" step="60" style="min-width:170px"></td>
         <td class="dur-cell">${e.aktion==='stop' ? fmtMs(e.dauer_ms) : '—'}</td>
         <td class="act-cell">
-          <button class="btn btn-sm btn-primary btn-save" data-id="${e.id}">✓</button>
+          <button class="btn btn-sm btn-primary btn-save" data-id="${safeId}">✓</button>
           <button class="btn btn-sm btn-cancel">✕</button>
         </td>
       </tr>`;
     } else {
-      html += `<tr class="${hasIssue ? 'row-warn' : ''}" data-id="${e.id}">
+      html += `<tr class="${hasIssue ? 'row-warn' : ''}" data-id="${safeId}">
         <td><span class="${hasIssue ? 'pair-warn' : 'pair-ok'}" title="${hasIssue ? 'Kein passendes Gegenstück' : 'Paar vollständig'}">${hasIssue ? '⚠' : '✓'}</span></td>
         <td>${e.nutzer ? escHtml(e.nutzer) : '<em style="color:var(--text-3)">—</em>'}</td>
         <td><span class="badge-typ" style="background:${ti.dim};color:${ti.main}">${escHtml(ti.label)}</span></td>
@@ -585,8 +722,8 @@ function renderTable(issues) {
         <td class="ts-cell">${fmtDatetime(e.zeitstempel)}</td>
         <td class="dur-cell">${e.aktion==='stop' ? fmtMs(e.dauer_ms) : '—'}</td>
         <td class="act-cell">
-          <button class="btn btn-sm btn-edit" data-id="${e.id}" title="Bearbeiten">✏</button>
-          <button class="btn btn-sm btn-del" data-id="${e.id}" title="Löschen">&#x1F5D1;</button>
+          <button class="btn btn-sm btn-edit" data-id="${safeId}" title="Bearbeiten">✏</button>
+          <button class="btn btn-sm btn-del" data-id="${safeId}" title="Löschen">&#x1F5D1;</button>
         </td>
       </tr>`;
     }
@@ -682,13 +819,26 @@ function renderTimeline() {
     ${rowsHtml}`;
 }
 
-// ─── Add pair modal ───────────────────────────────────────────────────────────
+// ─── Add modal ────────────────────────────────────────────────────────────────
+function switchAddMode(mode) {
+  addMode = mode;
+  document.getElementById('add-modal-title').textContent =
+    mode === 'pair' ? 'Neues Eintragspaar' : 'Neuer Einzeleintrag';
+  document.getElementById('add-mode-pair').classList.toggle('active', mode === 'pair');
+  document.getElementById('add-mode-single').classList.toggle('active', mode === 'single');
+  document.getElementById('add-pair-section').style.display   = mode === 'pair'   ? '' : 'none';
+  document.getElementById('add-single-section').style.display = mode === 'single' ? '' : 'none';
+}
+
 function openAddModal() {
   const day = logData.logicalDay || new Date().toISOString().slice(0,10);
-  document.getElementById('add-nutzer').value = filterPerson || '';
-  document.getElementById('add-typ').value    = _TYPES[0]?.logType || '';
-  document.getElementById('add-von').value    = `${day}T08:00`;
-  document.getElementById('add-bis').value    = `${day}T12:00`;
+  document.getElementById('add-nutzer').value  = filterPerson || '';
+  document.getElementById('add-typ').value     = _TYPES[0]?.logType || '';
+  document.getElementById('add-von').value     = `${day}T08:00`;
+  document.getElementById('add-bis').value     = `${day}T12:00`;
+  document.getElementById('add-ts').value      = isoToLocalInput(new Date().toISOString());
+  document.getElementById('add-aktion').value  = 'stop';
+  switchAddMode('pair');
   updateDurPreview();
   document.getElementById('modal-add').showModal();
 }
@@ -728,7 +878,11 @@ document.getElementById('cloud-confirm').addEventListener('click', () => {
 });
 
 document.getElementById('inp-logical-day').addEventListener('change', e => {
-  if (logData) { logData.logicalDay = e.target.value; pushHistory(); }
+  if (!logData || logData.logicalDay === e.target.value) return;
+  logData.logicalDay = e.target.value;
+  markDirty();
+  pushHistory();
+  renderAll();
 });
 
 // Tabs
@@ -753,11 +907,11 @@ document.getElementById('log-tbody').addEventListener('click', e => {
   const saveBtn  = e.target.closest('.btn-save');
   const cancelBtn= e.target.closest('.btn-cancel');
   const delBtn   = e.target.closest('.btn-del');
-  if (editBtn)  { editingId = Number(editBtn.dataset.id); renderTable(validatePairs(logData.log)); }
-  if (saveBtn)  { saveEdit(Number(saveBtn.dataset.id)); }
+  if (editBtn)  { editingId = editBtn.dataset.id; renderTable(validatePairs(logData.log)); }
+  if (saveBtn)  { saveEdit(saveBtn.dataset.id); }
   if (cancelBtn){ editingId = null; renderTable(validatePairs(logData.log)); }
   if (delBtn) {
-    if (confirm('Eintrag löschen?')) deleteEntry(Number(delBtn.dataset.id));
+    if (confirm('Eintrag löschen?')) deleteEntry(delBtn.dataset.id);
   }
 });
 
@@ -777,8 +931,10 @@ document.getElementById('clear-confirm').addEventListener('click', () => {
   commit(() => { logData.log = []; });
 });
 
-// Add pair
+// Add modal
 document.getElementById('btn-add-pair').addEventListener('click', openAddModal);
+document.getElementById('add-mode-pair').addEventListener('click', () => switchAddMode('pair'));
+document.getElementById('add-mode-single').addEventListener('click', () => switchAddMode('single'));
 document.getElementById('add-von').addEventListener('input', updateDurPreview);
 document.getElementById('add-bis').addEventListener('input', updateDurPreview);
 document.getElementById('add-cancel').addEventListener('click', () =>
@@ -786,14 +942,22 @@ document.getElementById('add-cancel').addEventListener('click', () =>
 document.getElementById('add-confirm').addEventListener('click', () => {
   const nutzer = document.getElementById('add-nutzer').value.trim();
   const typ    = document.getElementById('add-typ').value;
-  const von    = document.getElementById('add-von').value;
-  const bis    = document.getElementById('add-bis').value;
   if (!nutzer) { alert('Bitte Person eingeben.'); return; }
-  if (!von || !bis) { alert('Bitte Von und Bis ausfüllen.'); return; }
-  const ms = new Date(bis) - new Date(von);
-  if (ms <= 0) { alert('Bis muss nach Von liegen.'); return; }
-  document.getElementById('modal-add').close();
-  addPair(nutzer, typ, localInputToIso(von), localInputToIso(bis));
+  if (addMode === 'single') {
+    const aktion = document.getElementById('add-aktion').value;
+    const ts     = document.getElementById('add-ts').value;
+    if (!ts) { alert('Bitte Zeitpunkt ausfüllen.'); return; }
+    document.getElementById('modal-add').close();
+    addSingle(nutzer, typ, aktion, localInputToIso(ts));
+  } else {
+    const von = document.getElementById('add-von').value;
+    const bis = document.getElementById('add-bis').value;
+    if (!von || !bis) { alert('Bitte Von und Bis ausfüllen.'); return; }
+    const ms = new Date(bis) - new Date(von);
+    if (ms <= 0) { alert('Bis muss nach Von liegen.'); return; }
+    document.getElementById('modal-add').close();
+    addPair(nutzer, typ, localInputToIso(von), localInputToIso(bis));
+  }
 });
 
 // Keyboard shortcuts
