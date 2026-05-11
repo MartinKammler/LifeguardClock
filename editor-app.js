@@ -512,6 +512,7 @@ function getLinkedIssues(issue, allIssues, typesConfig) {
 // ─── Validation State ─────────────────────────────────────────────────────────
 let validationIssues  = [];
 let validationPifCache = {};
+let _validationSaving = false;
 
 // ─── Fix-Mutationsfunktionen ──────────────────────────────────────────────────
 function applyOpenStartFix(issue, stopIso, linkedToFix) {
@@ -816,6 +817,7 @@ function renderIssueCard(issue, idx) {
 }
 
 async function performSave(hrefs, issuesToResolve) {
+  _validationSaving = true;
   try {
     await savePifHrefs(hrefs);
     const resolved = new Set(issuesToResolve);
@@ -823,6 +825,8 @@ async function performSave(hrefs, issuesToResolve) {
     renderValidationPanel();
   } catch (err) {
     alert('Fehler beim Speichern: ' + err.message);
+  } finally {
+    _validationSaving = false;
   }
 }
 
@@ -1213,6 +1217,8 @@ document.getElementById('validation-cards').addEventListener('click', async e =>
     return;
   }
 
+  if (_validationSaving) return;
+
   if (e.target.closest('.v-fix-open-start')) {
     const inp = document.getElementById(`v-stop-${idx}`);
     if (!inp?.value) { alert('Bitte Stop-Zeit eingeben.'); return; }
@@ -1258,12 +1264,14 @@ document.getElementById('validation-cards').addEventListener('click', async e =>
   }
 
   if (e.target.closest('.v-delete-first-start')) {
+    if (!confirm(`Start-Eintrag (${fmtTime(issue.entries[0].zeitstempel)}) von ${issue.person} löschen?`)) return;
     applyDoubleStartFix(issue, issue.entries[0].id);
     await performSave([issue.entries[0].pifHref], [issue]);
     return;
   }
 
   if (e.target.closest('.v-delete-second-start')) {
+    if (!confirm(`Start-Eintrag (${fmtTime(issue.entries[1].zeitstempel)}) von ${issue.person} löschen?`)) return;
     applyDoubleStartFix(issue, issue.entries[1].id);
     await performSave([issue.entries[1].pifHref], [issue]);
     return;
