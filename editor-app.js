@@ -730,7 +730,7 @@ function renderIssueCard(issue, idx) {
     <span class="v-person">${escHtml(issue.person)}</span>
     <span class="badge-typ" style="background:${ti.dim};color:${ti.main}">${escHtml(ti.label)}</span>
     <span class="v-date">${escHtml(dateStr)}</span>
-    <span class="badge-issue-type ${issue.issueType}">${escHtml(issueTypeLabel(issue.issueType))}</span>
+    <span class="badge-issue-type ${escHtml(issue.issueType)}">${escHtml(issueTypeLabel(issue.issueType))}</span>
   </div>`;
 
   if (issue.skipped) {
@@ -743,7 +743,7 @@ function renderIssueCard(issue, idx) {
 
   let body = '';
   if (issue.issueType === 'open-start') {
-    const startTime = fmtTime(issue.mainEntry.zeitstempel);
+    const startTime = escHtml(fmtTime(issue.mainEntry.zeitstempel));
     const defStop   = issue.logicalDate ? `${issue.logicalDate}T16:00` : '';
     const linkedHtml = issue.linked.map((lk, li) => {
       const lti = _TYPE_MAP[lk.logType] || { label: lk.logType, main: '#9ca3af' };
@@ -766,7 +766,7 @@ function renderIssueCard(issue, idx) {
         <button class="btn btn-sm btn-danger v-delete-start" data-issue-idx="${idx}">✗ Start löschen</button>
       </div>`;
   } else if (issue.issueType === 'orphan-stop') {
-    const stopTime = fmtTime(issue.mainEntry.zeitstempel);
+    const stopTime = escHtml(fmtTime(issue.mainEntry.zeitstempel));
     const defStart = issue.logicalDate ? `${issue.logicalDate}T08:00` : '';
     body = `<div class="v-info">Stop vorhanden (${stopTime}) &mdash; kein Start gefunden</div>
       <div class="v-fix-row">
@@ -781,7 +781,7 @@ function renderIssueCard(issue, idx) {
       </div>`;
   } else if (issue.issueType === 'double-start') {
     const [e0, e1] = issue.entries;
-    const t0 = fmtTime(e0.zeitstempel), t1 = fmtTime(e1.zeitstempel);
+    const t0 = escHtml(fmtTime(e0.zeitstempel)), t1 = escHtml(fmtTime(e1.zeitstempel));
     body = `<div class="v-info">Zwei Starts: ${t0} und ${t1} &mdash; kein Stop dazwischen</div>
       <div class="v-card-ftr">
         <button class="btn btn-sm btn-danger v-delete-first-start" data-issue-idx="${idx}">✗ ${t0} löschen</button>
@@ -791,7 +791,7 @@ function renderIssueCard(issue, idx) {
   } else if (issue.issueType === 'short-pair') {
     const [sp0, sp1] = issue.entries;
     const durMs = new Date(sp1.zeitstempel) - new Date(sp0.zeitstempel);
-    body = `<div class="v-info">Dauer: ${fmtMs(durMs)} (${fmtTime(sp0.zeitstempel)} &ndash; ${fmtTime(sp1.zeitstempel)})</div>
+    body = `<div class="v-info">Dauer: ${escHtml(fmtMs(durMs))} (${escHtml(fmtTime(sp0.zeitstempel))} &ndash; ${escHtml(fmtTime(sp1.zeitstempel))})</div>
       <div class="v-fix-row-double">
         <div class="v-fix-row">
           <span class="v-fix-label">Von</span>
