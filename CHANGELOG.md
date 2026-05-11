@@ -4,6 +4,15 @@ Alle relevanten Änderungen pro Release. Format orientiert sich an [Keep a Chang
 
 ---
 
+## [Unreleased]
+
+### Hinzugefügt
+- Editor: Neuer Button „☁ Alle prüfen" — lädt alle PIF-Dateien der letzten zwei Monate,
+  erkennt offene Starts, verwaiste Stops, Doppel-Starts und verdächtig kurze Paare (<15 min)
+  und zeigt Quick-Fix-Cards mit direktem Cloud-Speichern an
+
+---
+
 ## [1.0.1] – 2026-05-10
 
 ### Behoben
