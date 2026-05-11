@@ -277,6 +277,68 @@ function getLinkedIssues(issue, allIssues, typesConfig) {
   );
 }
 
+// ─── Validation State (für Tests) ────────────────────────────────────────────
+let validationPifCache = {};
+
+function applyOpenStartFix(issue, stopIso, linkedToFix) {
+  const dur = new Date(stopIso) - new Date(issue.mainEntry.zeitstempel);
+  validationPifCache[issue.pifHref].entries.push({
+    id: genId(), nutzer: issue.person, typ: issue.logType,
+    aktion: 'stop', zeitstempel: stopIso, dauer_ms: dur,
+  });
+  for (const linked of linkedToFix) {
+    const linkedDur = new Date(stopIso) - new Date(linked.mainEntry.zeitstempel);
+    validationPifCache[linked.pifHref].entries.push({
+      id: genId(), nutzer: linked.person, typ: linked.logType,
+      aktion: 'stop', zeitstempel: stopIso, dauer_ms: linkedDur,
+    });
+  }
+}
+
+function applyOrphanStopFix(issue, startIso) {
+  validationPifCache[issue.pifHref].entries.push({
+    id: genId(), nutzer: issue.person, typ: issue.logType,
+    aktion: 'start', zeitstempel: startIso,
+  });
+  const stopInCache = validationPifCache[issue.pifHref].entries.find(
+    e => String(e.id) === String(issue.mainEntry.id)
+  );
+  if (stopInCache) stopInCache.dauer_ms = new Date(stopInCache.zeitstempel) - new Date(startIso);
+}
+
+function applyDoubleStartFix(issue, deleteId) {
+  const toDelete = issue.entries.find(e => String(e.id) === String(deleteId));
+  if (!toDelete) return;
+  validationPifCache[toDelete.pifHref].entries =
+    validationPifCache[toDelete.pifHref].entries.filter(
+      e => String(e.id) !== String(deleteId)
+    );
+}
+
+function applyShortPairFix(issue, newStartIso, newStopIso) {
+  const [start, stop] = issue.entries;
+  const startInCache = validationPifCache[start.pifHref].entries.find(
+    e => String(e.id) === String(start.id)
+  );
+  const stopInCache = validationPifCache[stop.pifHref].entries.find(
+    e => String(e.id) === String(stop.id)
+  );
+  if (startInCache) startInCache.zeitstempel = newStartIso;
+  if (stopInCache) {
+    stopInCache.zeitstempel = newStopIso;
+    stopInCache.dauer_ms = new Date(newStopIso) - new Date(newStartIso);
+  }
+}
+
+function applyDeleteFix(issue) {
+  for (const e of issue.entries) {
+    validationPifCache[e.pifHref].entries =
+      validationPifCache[e.pifHref].entries.filter(
+        c => String(c.id) !== String(e.id)
+      );
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Suite 1 – fmtMs
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -797,6 +859,109 @@ const uwWachSkipped = { ...uwWach, skipped: true };
 const allWithSkip = [uwAnw, uwWachSkipped, annAnw];
 const linked4 = getLinkedIssues(uwAnw, allWithSkip, TC);
 eq('Geskippte Issues werden nicht verknüpft', 0, linked4.length);
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Suite 15 – Fix-Mutationsfunktionen
+// ═══════════════════════════════════════════════════════════════════════════════
+suite('Suite 15 – Fix-Mutationsfunktionen');
+
+const PIF_URL = '/pif/uwe.json';
+const PIF_URL2 = '/pif/uwe-prev.json';
+
+function resetCache(extraEntries) {
+  validationPifCache = {
+    [PIF_URL]: { version: 1, userId: 'uwe', entries: [...(extraEntries || [])] },
+  };
+}
+
+// ── applyOpenStartFix ────────────────────────────────────────────────────────
+const startEntry = { id: 'start1', nutzer: 'Uwe', typ: 'wachdienst',
+  aktion: 'start', zeitstempel: '2026-05-09T08:00:00.000Z', pifHref: PIF_URL };
+const osIssue = { issueType: 'open-start', person: 'Uwe', logType: 'wachdienst',
+  mainEntry: startEntry, entries: [startEntry], pifHref: PIF_URL, linked: [] };
+
+resetCache([startEntry]);
+applyOpenStartFix(osIssue, '2026-05-09T14:00:00.000Z', []);
+const entries1 = validationPifCache[PIF_URL].entries;
+eq('applyOpenStartFix: 2 Entries im Cache', 2, entries1.length);
+const addedStop = entries1.find(e => e.aktion === 'stop');
+eq('Stop-Eintrag vorhanden', 'stop', addedStop?.aktion);
+eq('Stop zeitstempel', '2026-05-09T14:00:00.000Z', addedStop?.zeitstempel);
+eq('dauer_ms = 6h', 6 * 3600000, addedStop?.dauer_ms);
+eq('nutzer korrekt', 'Uwe', addedStop?.nutzer);
+eq('typ korrekt', 'wachdienst', addedStop?.typ);
+
+// applyOpenStartFix mit linked
+const anwEntry = { id: 'anw1', nutzer: 'Uwe', typ: 'anwesenheit',
+  aktion: 'start', zeitstempel: '2026-05-09T07:00:00.000Z', pifHref: PIF_URL };
+validationPifCache[PIF_URL] = { version: 1, userId: 'uwe',
+  entries: [startEntry, anwEntry] };
+const linkedIssue = { issueType: 'open-start', person: 'Uwe', logType: 'anwesenheit',
+  mainEntry: anwEntry, pifHref: PIF_URL };
+applyOpenStartFix(osIssue, '2026-05-09T14:00:00.000Z', [linkedIssue]);
+const entries2 = validationPifCache[PIF_URL].entries;
+eq('Mit linked: 4 Entries', 4, entries2.length);
+const anwStop = entries2.find(e => e.aktion === 'stop' && e.typ === 'anwesenheit');
+eq('Linked Stop vorhanden', 'stop', anwStop?.aktion);
+eq('Linked dauer_ms = 7h', 7 * 3600000, anwStop?.dauer_ms);
+
+// ── applyOrphanStopFix ────────────────────────────────────────────────────────
+const stopEntry = { id: 'stop1', nutzer: 'Uwe', typ: 'anwesenheit',
+  aktion: 'stop', zeitstempel: '2026-05-09T14:00:00.000Z', dauer_ms: 0, pifHref: PIF_URL };
+const orphanIssue = { issueType: 'orphan-stop', person: 'Uwe', logType: 'anwesenheit',
+  mainEntry: stopEntry, entries: [stopEntry], pifHref: PIF_URL };
+
+resetCache([stopEntry]);
+applyOrphanStopFix(orphanIssue, '2026-05-09T08:00:00.000Z');
+const entries3 = validationPifCache[PIF_URL].entries;
+eq('applyOrphanStopFix: 2 Entries', 2, entries3.length);
+const addedStart = entries3.find(e => e.aktion === 'start');
+eq('Start hinzugefügt', 'start', addedStart?.aktion);
+eq('Start zeitstempel', '2026-05-09T08:00:00.000Z', addedStart?.zeitstempel);
+const updatedStop = entries3.find(e => e.id === 'stop1');
+eq('dauer_ms am Stop aktualisiert (6h)', 6 * 3600000, updatedStop?.dauer_ms);
+
+// ── applyDoubleStartFix ────────────────────────────────────────────────────────
+const ds1 = { id: 'ds1', nutzer: 'Uwe', typ: 'wachdienst',
+  aktion: 'start', zeitstempel: '2026-05-09T08:00:00.000Z', pifHref: PIF_URL };
+const ds2 = { id: 'ds2', nutzer: 'Uwe', typ: 'wachdienst',
+  aktion: 'start', zeitstempel: '2026-05-09T08:03:00.000Z', pifHref: PIF_URL };
+const dblIssue = { issueType: 'double-start', person: 'Uwe', logType: 'wachdienst',
+  mainEntry: null, entries: [ds1, ds2], pifHref: PIF_URL };
+
+resetCache([ds1, ds2]);
+applyDoubleStartFix(dblIssue, 'ds1');
+const entries4 = validationPifCache[PIF_URL].entries;
+eq('applyDoubleStartFix: 1 Entry übrig', 1, entries4.length);
+eq('ds1 gelöscht', undefined, entries4.find(e => e.id === 'ds1'));
+eq('ds2 bleibt', 'ds2', entries4.find(e => e.id === 'ds2')?.id);
+
+// ── applyShortPairFix ─────────────────────────────────────────────────────────
+const sp1 = { id: 'sp1', nutzer: 'Uwe', typ: 'anwesenheit',
+  aktion: 'start', zeitstempel: '2026-05-09T08:00:00.000Z', pifHref: PIF_URL };
+const sp2 = { id: 'sp2', nutzer: 'Uwe', typ: 'anwesenheit',
+  aktion: 'stop', zeitstempel: '2026-05-09T08:03:00.000Z', dauer_ms: 180000, pifHref: PIF_URL };
+const spIssueF = { issueType: 'short-pair', person: 'Uwe', logType: 'anwesenheit',
+  mainEntry: null, entries: [sp1, sp2], pifHref: PIF_URL };
+
+resetCache([sp1, sp2]);
+applyShortPairFix(spIssueF, '2026-05-09T08:00:00.000Z', '2026-05-09T14:00:00.000Z');
+const entries5 = validationPifCache[PIF_URL].entries;
+const fixedStop = entries5.find(e => e.id === 'sp2');
+eq('applyShortPairFix: Stop zeitstempel aktualisiert', '2026-05-09T14:00:00.000Z', fixedStop?.zeitstempel);
+eq('applyShortPairFix: dauer_ms = 6h', 6 * 3600000, fixedStop?.dauer_ms);
+
+// ── applyDeleteFix ────────────────────────────────────────────────────────────
+resetCache([sp1, sp2]);
+applyDeleteFix({ entries: [sp1, sp2] });
+eq('applyDeleteFix: beide Entries gelöscht', 0, validationPifCache[PIF_URL].entries.length);
+
+// Über zwei PIFs
+validationPifCache[PIF_URL]  = { version: 1, entries: [sp1] };
+validationPifCache[PIF_URL2] = { version: 1, entries: [{ ...sp2, pifHref: PIF_URL2 }] };
+applyDeleteFix({ entries: [sp1, { ...sp2, pifHref: PIF_URL2 }] });
+eq('applyDeleteFix über 2 PIFs: PIF1 leer', 0, validationPifCache[PIF_URL].entries.length);
+eq('applyDeleteFix über 2 PIFs: PIF2 leer', 0, validationPifCache[PIF_URL2].entries.length);
 
 render();
 </script>

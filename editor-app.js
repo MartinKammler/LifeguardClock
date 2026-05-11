@@ -509,6 +509,85 @@ function getLinkedIssues(issue, allIssues, typesConfig) {
   );
 }
 
+// ─── Validation State ─────────────────────────────────────────────────────────
+let validationIssues  = [];
+let validationPifCache = {};
+
+// ─── Fix-Mutationsfunktionen ──────────────────────────────────────────────────
+function applyOpenStartFix(issue, stopIso, linkedToFix) {
+  const dur = new Date(stopIso) - new Date(issue.mainEntry.zeitstempel);
+  validationPifCache[issue.pifHref].entries.push({
+    id: genId(), nutzer: issue.person, typ: issue.logType,
+    aktion: 'stop', zeitstempel: stopIso, dauer_ms: dur,
+  });
+  for (const linked of linkedToFix) {
+    const linkedDur = new Date(stopIso) - new Date(linked.mainEntry.zeitstempel);
+    validationPifCache[linked.pifHref].entries.push({
+      id: genId(), nutzer: linked.person, typ: linked.logType,
+      aktion: 'stop', zeitstempel: stopIso, dauer_ms: linkedDur,
+    });
+  }
+}
+
+function applyOrphanStopFix(issue, startIso) {
+  validationPifCache[issue.pifHref].entries.push({
+    id: genId(), nutzer: issue.person, typ: issue.logType,
+    aktion: 'start', zeitstempel: startIso,
+  });
+  const stopInCache = validationPifCache[issue.pifHref].entries.find(
+    e => String(e.id) === String(issue.mainEntry.id)
+  );
+  if (stopInCache) stopInCache.dauer_ms = new Date(stopInCache.zeitstempel) - new Date(startIso);
+}
+
+function applyDoubleStartFix(issue, deleteId) {
+  const toDelete = issue.entries.find(e => String(e.id) === String(deleteId));
+  if (!toDelete) return;
+  validationPifCache[toDelete.pifHref].entries =
+    validationPifCache[toDelete.pifHref].entries.filter(
+      e => String(e.id) !== String(deleteId)
+    );
+}
+
+function applyShortPairFix(issue, newStartIso, newStopIso) {
+  const [start, stop] = issue.entries;
+  const startInCache = validationPifCache[start.pifHref].entries.find(
+    e => String(e.id) === String(start.id)
+  );
+  const stopInCache = validationPifCache[stop.pifHref].entries.find(
+    e => String(e.id) === String(stop.id)
+  );
+  if (startInCache) startInCache.zeitstempel = newStartIso;
+  if (stopInCache) {
+    stopInCache.zeitstempel = newStopIso;
+    stopInCache.dauer_ms = new Date(newStopIso) - new Date(newStartIso);
+  }
+}
+
+function applyDeleteFix(issue) {
+  for (const e of issue.entries) {
+    validationPifCache[e.pifHref].entries =
+      validationPifCache[e.pifHref].entries.filter(
+        c => String(c.id) !== String(e.id)
+      );
+  }
+}
+
+// ─── Cloud: PIF-Dateien speichern ─────────────────────────────────────────────
+async function savePifHrefs(hrefs) {
+  const creds = getCloudCreds();
+  if (!creds) throw new Error('Keine Cloud-Zugangsdaten');
+  await Promise.all([...new Set(hrefs)].map(href => {
+    const pif = validationPifCache[href];
+    const out = { ...pif, exported: new Date().toISOString(), count: pif.entries.length };
+    return fetch(href, {
+      method: 'PUT',
+      headers: { Authorization: cloudAuth(creds), 'Content-Type': 'application/json' },
+      body: JSON.stringify(out, null, 2),
+    }).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); });
+  }));
+}
+
 // ─── Paired-Start finden (für dauer_ms-Neuberechnung) ─────────────────────────
 function findPairedStart(stopEntry) {
   const stopTs = new Date(stopEntry.zeitstempel).getTime();
