@@ -188,8 +188,49 @@
     .from-to-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     .dur-preview { padding: 10px 14px; background: var(--bg3); border-radius: 8px;
                    font-size: 13px; color: var(--text-2); text-align: center; }
+    .add-mode-row { display: flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+    .add-mode-btn { flex: 1; padding: 7px; background: transparent; border: none; color: var(--text-2);
+                    font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+                    transition: background 0.15s, color 0.15s; }
+    .add-mode-btn.active { background: var(--c-anw-dim); color: var(--c-anw); }
     .modal-ftr  { padding: 14px 20px; border-top: 1px solid var(--border);
                   display: flex; justify-content: flex-end; gap: 8px; }
+
+    /* ── Validation Cards ────────────────────────────────── */
+    .v-cards-container { padding: 16px 20px; display: flex; flex-direction: column; gap: 12px; }
+    .v-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 12px;
+              overflow: hidden; }
+    .v-card-skipped { opacity: .45; }
+    .v-card-hdr { display: flex; align-items: center; gap: 8px; padding: 12px 16px;
+                  border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+    .v-person { font-weight: 700; font-size: 14px; }
+    .v-date   { font-size: 12px; color: var(--text-3); }
+    .v-skip-note { font-size: 11px; color: var(--text-3); font-style: italic; margin-left: auto; }
+    .badge-issue-type { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 12px; }
+    .badge-issue-type.open-start   { background: rgba(245,158,11,.15); color: var(--warn); }
+    .badge-issue-type.orphan-stop  { background: rgba(239,68,68,.15);  color: var(--danger); }
+    .badge-issue-type.double-start { background: rgba(239,68,68,.15);  color: var(--danger); }
+    .badge-issue-type.short-pair   { background: rgba(156,163,175,.15);color: var(--text-2); }
+    .v-card-body { padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+    .v-info  { font-size: 13px; color: var(--text-2); }
+    .v-fix-row { display: flex; align-items: center; gap: 8px; }
+    .v-fix-row-double { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .v-fix-label { font-size: 11px; font-weight: 700; text-transform: uppercase;
+                   letter-spacing: .5px; color: var(--text-3); white-space: nowrap; }
+    .v-time-input { background: var(--bg3); border: 1px solid var(--border); border-radius: 8px;
+                    color: var(--text); padding: 6px 10px; font-family: inherit; font-size: 13px; }
+    .v-time-input:focus { outline: none; border-color: var(--c-anw); }
+    .v-linked-group { display: flex; flex-direction: column; gap: 4px; }
+    .v-linked-label { display: flex; align-items: center; gap: 6px; font-size: 13px;
+                      color: var(--text-2); cursor: pointer; }
+    .v-card-ftr { display: flex; gap: 6px; flex-wrap: wrap; padding: 0 16px 14px; }
+    .v-empty { display: flex; flex-direction: column; align-items: center; justify-content: center;
+               gap: 8px; padding: 60px 20px; color: var(--text-3); }
+    .v-empty-icon  { font-size: 40px; }
+    .v-empty-title { font-size: 16px; font-weight: 700; color: var(--ok); }
+    .v-all-skipped { padding: 12px 16px; font-size: 13px; color: var(--text-2);
+                     background: var(--bg2); border-radius: 10px; border: 1px solid var(--border);
+                     display: flex; align-items: center; gap: 10px; }
   </style>
 </head>
 <body>
@@ -214,6 +255,7 @@
       <button class="btn" id="btn-redo" disabled title="Wiederholen (Ctrl+Y)">↪</button>
       <button class="btn" id="btn-load">&#x1F4C2; Lokal</button>
       <button class="btn" id="btn-cloud-load">&#x2601; Cloud</button>
+      <button class="btn" id="btn-validate-all">&#x2601; Alle pr&uuml;fen</button>
       <button class="btn" id="btn-new">+ Neue Datei</button>
       <button class="btn btn-success" id="btn-cloud-save" disabled>&#x2601; Speichern</button>
       <button class="btn btn-primary" id="btn-export" disabled>&#x2193; Export</button>
@@ -224,6 +266,7 @@
   <div class="toolbar">
     <button class="tab-btn active" data-tab="table">&#x1F4CB; Tabelle</button>
     <button class="tab-btn" data-tab="timeline">&#x23F1; Timeline</button>
+    <button class="tab-btn" data-tab="validation" id="tab-validation" style="display:none">&#x26A0; Probleme</button>
     <div class="toolbar-sep"></div>
     <div class="person-filter" id="person-filter"></div>
   </div>
@@ -269,12 +312,21 @@
       <div id="timeline-view"></div>
     </div>
 
+    <!-- Validation panel -->
+    <div class="panel" id="panel-validation" hidden>
+      <div id="validation-cards" class="v-cards-container"></div>
+    </div>
+
   </div>
 
-  <!-- ── Add pair modal ──────────────────────────────────────────── -->
+  <!-- ── Add modal (pair or single entry) ───────────────────────── -->
   <dialog id="modal-add">
-    <div class="modal-hdr">Neues Eintragspaar</div>
+    <div class="modal-hdr" id="add-modal-title">Neues Eintragspaar</div>
     <div class="modal-body">
+      <div class="add-mode-row">
+        <button type="button" class="add-mode-btn active" id="add-mode-pair">Paar</button>
+        <button type="button" class="add-mode-btn" id="add-mode-single">Einzeleintrag</button>
+      </div>
       <div class="form-row">
         <label>Person</label>
         <input id="add-nutzer" list="known-persons-list" placeholder="Name...">
@@ -283,21 +335,40 @@
         <label>Typ</label>
         <select id="add-typ"></select>
       </div>
-      <div class="from-to-row">
-        <div class="form-row">
-          <label>Von</label>
-          <input type="datetime-local" id="add-von" step="60">
+      <!-- Pair fields -->
+      <div id="add-pair-section">
+        <div class="from-to-row">
+          <div class="form-row">
+            <label>Von</label>
+            <input type="datetime-local" id="add-von" step="60">
+          </div>
+          <div class="form-row">
+            <label>Bis</label>
+            <input type="datetime-local" id="add-bis" step="60">
+          </div>
         </div>
-        <div class="form-row">
-          <label>Bis</label>
-          <input type="datetime-local" id="add-bis" step="60">
+        <div class="dur-preview" id="dur-preview">Dauer: —</div>
+      </div>
+      <!-- Single entry fields -->
+      <div id="add-single-section" style="display:none">
+        <div class="from-to-row">
+          <div class="form-row">
+            <label>Aktion</label>
+            <select id="add-aktion">
+              <option value="stop">stop</option>
+              <option value="start">start</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>Zeitpunkt</label>
+            <input type="datetime-local" id="add-ts" step="60">
+          </div>
         </div>
       </div>
-      <div class="dur-preview" id="dur-preview">Dauer: —</div>
     </div>
     <div class="modal-ftr">
       <button class="btn" id="add-cancel">Abbrechen</button>
-      <button class="btn btn-primary" id="add-confirm">Hinzufügen</button>
+      <button class="btn btn-primary" id="add-confirm">Hinzuf&uuml;gen</button>
     </div>
   </dialog>
 
