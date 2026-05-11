@@ -542,7 +542,7 @@ function applyOrphanStopFix(issue, startIso) {
 
 function applyDoubleStartFix(issue, deleteId) {
   const toDelete = issue.entries.find(e => String(e.id) === String(deleteId));
-  if (!toDelete) return;
+  if (!toDelete || !validationPifCache[toDelete.pifHref]) return;
   validationPifCache[toDelete.pifHref].entries =
     validationPifCache[toDelete.pifHref].entries.filter(
       e => String(e.id) !== String(deleteId)
