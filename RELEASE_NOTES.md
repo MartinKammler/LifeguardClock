@@ -1,87 +1,123 @@
-# Release Notes – LifeguardClock v1.0.3
+# Release Notes – LifeguardClock v1.1.0
 
-## Stabilitäts-Release: PIF-Sync & Auto-Stop-Logik
+## Datenkonsistenz & UX-Verbesserungen
 
-Dieser Release behebt mehrere Datenkonsistenz-Probleme rund um PIF-Dateien, Auto-Stops und
-den Dashboard-Datenfluss. Keine neuen sichtbaren Features — ausschließlich korrigiertes
-Verhalten.
-
----
-
-### PIF als einzige Datenquelle für Dashboard
-
-Das Dashboard lud bisher sowohl PIF-Dateien als auch Geräte-Logs und versuchte, diese zu
-kombinieren. Das führte zu falschen Dauern wenn Start und Stop in verschiedenen Dateien lagen.
-
-**Neu:** Das Dashboard liest ausschließlich `lgc_pif_*`-Dateien. Geräte-Logs (`lgc_<id>_*`)
-sind reines Backup und werden für die Anzeige nicht mehr herangezogen.
-
-Zusätzlich merged `buildDB` jetzt alle Einträge eines logischen Tages aus allen geladenen
-PIF-Dateien, bevor Start/Stop-Paare gebildet werden. Stop-Einträge ohne passenden Start auf
-demselben logischen Tag werden übersprungen.
+Dieser Release schließt mehrere Lücken im Statusmodell, die nach dem Mehrgeräte-Betrieb zu
+falschen Anzeigen oder falschen Auto-Stops führen konnten. Außerdem werden blockierende
+`alert()`-Dialoge in Editor und Dashboard durch nicht-blockierende Toasts ersetzt, der
+Shutdown-Screen zeigt jetzt den Cloud-Sync-Status, und Kiosk-Sperren lassen sich deaktivieren.
 
 ---
 
-### Merge-basierter PIF-Push (kein Überschreiben mehr)
+## Wichtigste Fixes
 
-Bisher hat `pushUserPif` die PIF-Datei blind mit dem lokalen Geräte-Log überschrieben.
-Manuell nachgetragene Stopps (via Editor) gingen damit beim nächsten Stempel-Vorgang verloren.
+### Gerät-B-Login zeigt falschen Aktiv-Status (kritisch)
 
-**Neu:** `pushUserPif` liest die bestehende PIF zuerst aus der Cloud und merged:
+**Problem:** Person stempelt auf Gerät A ein → PIF in Cloud. Person öffnet auf Gerät B die App
+→ PIF wird geladen und gemergt → `lgc_state` bleibt trotzdem auf `false`. Dashboard zeigt
+„Inaktiv", obwohl laut Log bereits ein Start existiert.
 
-- Cloud-Einträge bleiben erhalten (schützt Editor-Einträge und Einträge anderer Geräte)
-- Lokale Nicht-Auto-Einträge, die noch nicht in der Cloud sind, werden ergänzt
-- Auto-Stops (Zeitfenster-Ende, Maximaldauer) werden nur eingefügt, wenn **kein** anderer
-  Stop für die Session vorhanden ist — weder echter Stopp noch bereits gepushter Auto-Stop
+**Fix:** Nach jedem PIF-Merge wird `lgc_state` aus dem zusammengeführten Log neu aufgebaut
+(`rebuildStateFromLog`). Erscheint ein Typ nach dem Merge als aktiv, zeigt die Hauptapp
+einen Toast „Aktiver Stempelstand aus Cloud übernommen".
 
----
+### Auto-Stops fehlten in der Cloud-PIF (kritisch)
 
-### Auto-Stop-Logik bei Konsolidierung
+**Problem:** Zeitfenster-Ende, Maximaldauer, Tageswechsel und „Alle ausstempeln" schrieben den
+Stop direkt in den lokalen Log ohne `pushUserPif()` aufzurufen. Die Cloud-PIF enthielt dann
+einen offenen Start ohne passenden Stop.
 
-Die Admin-Konsolidierung übersprang bisher alle Auto-Stops pauschal. Damit fehlten
-konfigurierte Endzeiten (Zeitfenster) in PIFs wenn niemand manuell ausstempelte.
+**Fix:** Alle 6 Auto-Stop-Pfade laufen jetzt über `addEntry()`, das `pushUserPif()` aufruft.
+Zusätzlich werden bei Netzwerkrückkehr PIFs für alle Nutzer nachgeschoben.
 
-**Neu:** Auto-Stops aus Geräte-Logs werden bedingt übernommen — nur wenn kein Stop (echt
-oder auto) für die betreffende Session in den PIF-Einträgen existiert.
+### Zeitfenster-Stop landete auf falschem Zeitpunkt (hoch)
 
-Einträge vor dem 08.05.2026 (erster realer Stempeltag) werden weiterhin übersprungen.
+**Problem:** Wenn das Tablet nach Ablauf des Zeitfensters aufwachte (z. B. 21:00-Fenster,
+Wakeup um 21:37), wurde der Stop-Eintrag auf 21:37 gesetzt statt auf 21:00.
 
----
+**Fix:** `zeitfensterEndTs(type)` berechnet den tatsächlichen Endzeitpunkt aus dem Zeitfenster
+(immer in der Vergangenheit liegend).
 
-### Auto-Stops in Validierung ausgeblendet
+### Monatsgrenze: Stop im falschen Monats-Log (hoch)
 
-Verwaiste Auto-Stops erzeugten im Editor-Validierungs-Tab „Stop ohne Start"-Issues.
-Die angebotene Reparatur (Start-Zeit eingeben) war in diesen Fällen falsch.
+**Problem:** Wer am 31.05. um 20:00 einstempelte und die automatische Tagesgrenze (04:00) am
+01.06. auslöste, bekam den Stop in `lgc_log_2026-06` geschrieben. Der Mai-Log enthielt dann
+einen offenen Start ohne Stop.
 
-**Neu:** `fetchAndValidate` filtert Auto-Stop-Einträge vor der Verarbeitung heraus.
-Sie erscheinen nicht mehr als Issues. Beim nächsten Speichern eines anderen Issues in
-derselben PIF werden sie automatisch entfernt.
+**Fix:** `findLogKeyForOpenStart()` sucht den Log-Key des offenen Starts. `addEntry()` akzeptiert
+einen `targetLogKey`-Parameter und schreibt den Stop in denselben Monats-Log.
 
----
+### Cooldown startete zu spät (mittel)
 
-### Editor: Einzeleinträge nachtragen
+**Problem:** Bei `checkTimeLimits` wurde der Cooldown ab dem Erkennungszeitpunkt gesetzt. Schlief
+das Tablet 30 Minuten nach dem 2h-Limit, begann die 30-Minuten-Pause zu spät.
 
-Im Add-Modal gibt es jetzt einen Umschalter „Eintragspaar / Einzeleintrag". Damit lässt sich
-ein einzelner Start- oder Stop-Eintrag ohne Gegenstück nachtragen. Bei Stop-Einträgen wird
-`dauer_ms` automatisch aus dem letzten passenden Start berechnet.
-
----
-
-### Service Worker v18
-
-Mehrere JS-Dateien haben sich geändert. Der SW-Cache wird auf `lgc-shell-v18` erhöht — alle
-installierten PWAs erhalten die neue Version automatisch beim nächsten App-Start.
+**Fix:** Cooldown wird jetzt ab `stopTs = startMs + maxDurationMs` berechnet.
 
 ---
 
-### Migration / Update
+## UX-Verbesserungen
 
-- Kein Änderungsbedarf an `config.js`, `lgc_users.json` oder Cloud-Dateiformat.
-- Service Worker Cache auf `lgc-shell-v18` → Update erfolgt automatisch nach App-Neustart.
-- Hard Refresh (`Strg+Shift+R`) empfohlen falls Änderungen nicht sofort sichtbar sind.
+### Shutdown-Screen zeigt Sync-Status
 
-### Bekannte Einschränkungen
+Der „Herunterfahren"-Button wartet jetzt auf den Cloud-Sync der beendeten Sitzungen und zeigt
+auf dem Shutdown-Screen: „Synchronisiere Stempeldaten …" → „✓ Cloud-Sync abgeschlossen" (oder
+„Stempeldaten lokal gespeichert" wenn kein Cloud-Sync konfiguriert ist).
 
-- Cloud-Zugangsdaten liegen weiterhin im Klartext im Browser-Storage (localStorage).
-  Empfehlung: dediziertes App-Passwort verwenden.
-- Kein Undo/Redo für Validation-Fixes (direktes Cloud-Schreiben ohne Zwischenpuffer).
+### Kiosk-Modus konfigurierbar
+
+Tastaturkürzel-Blocker (F5, F12, Ctrl+R …), Kontextmenü und Browser-Zurück-Geste werden nur noch
+im echten Kiosk-Betrieb aktiviert (`CONFIG.kioskMode !== false && !IS_PROXY`). Im Proxy-Modus
+(localhost) stehen Entwicklerwerkzeuge wieder zur Verfügung.
+
+Kiosk explizit deaktivieren: `kioskMode: false` in `config.js`.
+
+### „Neue Schicht" statt „Verlängern"
+
+Der Button zum Neustarten einer laufenden Session mit `maxDurationMs` heißt jetzt **„Neue
+Schicht"**. Das beschreibt präzise, was passiert: die aktuelle Sitzung wird beendet und eine
+neue begonnen.
+
+### Toasts statt blockierende Alerts
+
+Editor (`editor.html`) und Dashboard (`dashboard.html`) verwenden jetzt nicht-blockierende
+Toast-Meldungen für alle Fehlermeldungen und Validierungshinweise.
+
+---
+
+## Neue Funktionen (intern)
+
+| Funktion | Datei | Zweck |
+|---|---|---|
+| `prevLogKey()` | `lifeguardclock.js` | Extrahierter Vormonat-Log-Key |
+| `saveLogForKey(key, log)` | `lifeguardclock.js` | Gezieltes Schreiben in beliebigen Monats-Log |
+| `findLogKeyForOpenStart(user, type)` | `lifeguardclock.js` | Findet Log-Key des offenen Starts |
+| `zeitfensterEndTs(type)` | `lifeguardclock.js` | Tatsächlicher Zeitfenster-Ende-Timestamp |
+| `rebuildStateFromLog(userId)` | `lifeguardclock.js` | State-Rebuild nach PIF-Merge |
+
+---
+
+## Service Worker
+
+Cache-Version: **`lgc-shell-v19`** — alle installierten PWAs laden beim nächsten Start die neue
+Version automatisch herunter.
+
+---
+
+## Migration / Update
+
+Keine Konfigurationsänderungen notwendig. Bestehende `config.js`-Dateien funktionieren
+unverändert weiter.
+
+Wer Kiosk-Sperren **bewusst deaktivieren** möchte (z. B. auf Desktop-Geräten), trägt in
+`config.js` ein: `kioskMode: false`.
+
+---
+
+## Bekannte Einschränkungen
+
+- Bei sehr schlechter Verbindung kann der Cloud-Sync auf dem Shutdown-Screen hängen bleiben
+  (Timeout des Browsers). Die Daten sind lokal gesichert und werden beim nächsten Online-Gang
+  synchronisiert.
+- Der Vormonat-Log-Key basiert auf der lokalen Systemzeit. Geräte mit falsch eingestellter Uhr
+  können in seltenen Fällen in den falschen Monats-Log schreiben.

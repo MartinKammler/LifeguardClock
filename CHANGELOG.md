@@ -4,6 +4,117 @@ Alle relevanten Änderungen pro Release. Format orientiert sich an [Keep a Chang
 
 ---
 
+## [1.1.0] – 2026-05-12
+
+### Behoben (Datenkonsistenz – Sprint 1 & 2)
+
+- **State-Rebuild nach PIF-Merge** (`lifeguardclock.js`, `rebuildStateFromLog`): Nach jedem
+  Cloud-PIF-Merge wird `lgc_state` für den Nutzer aus dem zusammengeführten Log neu aufgebaut.
+  Verhindert, dass das Dashboard auf Gerät B „Inaktiv" zeigt, obwohl laut Log ein offener Start
+  von Gerät A vorhanden ist.
+
+- **Auto-Stops in PIF** (`lifeguardclock.js`): Alle 6 Auto-Stop-Pfade (`checkZeitfensterEnd`,
+  `checkTimeLimits`, `checkDayBoundary`, `stopAllActiveSessions`, `logAllActiveSessions`,
+  `stopUserSessions`) schreiben jetzt über `addEntry()`, das `pushUserPif()` aufruft. Auto-Stops
+  fehlen nicht mehr in der Cloud-PIF.
+
+- **PIF-Push bei Netzwerkrückkehr** (`lifeguardclock.js`): Im `online`-Handler werden PIFs für
+  alle Nutzer nachgeschoben, die lokal Einträge haben. Offline erzeugte Stempel landen zuverlässig
+  in der Cloud.
+
+- **Zeitfenster-Timestamp** (`lifeguardclock.js`, `checkZeitfensterEnd`, `zeitfensterEndTs`):
+  Auto-Stop beim Zeitfenster-Ende verwendet jetzt den exakten Endzeitpunkt des Zeitfensters
+  statt dem Erkennungszeitpunkt (`new Date().toISOString()`). Wacht das Tablet nach dem Fenster
+  auf, landet der Stop trotzdem korrekt auf 21:00 statt 21:37.
+
+- **Monatsgrenze-Stop im richtigen Log** (`lifeguardclock.js`, `checkDayBoundary`,
+  `findLogKeyForOpenStart`): Der Auto-Stop bei Tageswechsel wird jetzt in denselben Monats-Log
+  geschrieben, in dem der offene Start liegt. Zuvor landete der Stop eines 31.05.-Starts
+  in `lgc_log_2026-06`, was den Mai-Log mit offener Sitzung hinterließ.
+
+- **Cooldown ab echtem Stop-Zeitpunkt** (`lifeguardclock.js`, `checkTimeLimits`): Cooldown wird
+  jetzt von `stopTs` (= `startMs + maxDurationMs`) berechnet, nicht vom Erkennungszeitpunkt.
+  Schläft das Tablet 30 Minuten nach dem Limit ein, beginnt die Pause trotzdem zum richtigen
+  Zeitpunkt.
+
+- **Null-Dauer-Dubletten verhindert** (`checkZeitfensterEnd`, `checkDayBoundary`): Ist im Log
+  kein offener Start vorhanden, wird kein Stop-Eintrag mehr geschrieben. Veralteter State wird
+  still bereinigt (`state[key] = false`).
+
+### Neu
+
+- **`prevLogKey()`** (`lifeguardclock.js`): Extrahierte Hilfsfunktion für den Vormonat-Log-Key.
+  `getPrevLog()`, `findLogKeyForOpenStart()` und `saveLogForKey()` nutzen sie einheitlich.
+
+- **`saveLogForKey(key, log)`** (`lifeguardclock.js`): Primitive Basis für `saveLog()` und
+  `addEntry()` mit optionalem `targetLogKey`-Parameter. Ermöglicht gezieltes Schreiben in
+  Vormonat-Logs.
+
+- **`findLogKeyForOpenStart(userName, logType)`** (`lifeguardclock.js`): Sucht im aktuellen und
+  Vormonat-Log nach dem offenen Start-Eintrag und gibt dessen Log-Key zurück.
+
+- **`zeitfensterEndTs(type)`** (`lifeguardclock.js`): Berechnet den Zeitfenster-Ende-Zeitstempel
+  als immer vergangenen Wert (subtrahiert ggf. einen Tag).
+
+### Geändert (UX – Sprint 3)
+
+- **Shutdown-Screen Sync-Status** (`lifeguardclock.js`, `LifeguardClock.html`): `safeShutdown()`
+  ist jetzt async. Nach dem Stoppen aller Sitzungen werden PIFs für alle zuvor aktiven Nutzer
+  gepusht. Der Shutdown-Screen zeigt „Synchronisiere …" → „✓ Cloud-Sync abgeschlossen"
+  (oder „Stempeldaten lokal gespeichert" wenn kein Cloud-Sync konfiguriert).
+
+- **Cloud-Übernahme-Meldung** (`lifeguardclock.js`, `fetchUserPif`): Wird nach einem PIF-Merge
+  ein Typ für den eingeloggten Nutzer neu aktiv, erscheint ein Toast „Aktiver Stempelstand aus
+  Cloud übernommen".
+
+- **Kiosk-Modus konfigurierbar** (`lifeguardclock.js`, `KIOSK_MODE`): Tastaturkürzel-Blocker
+  (F5/F12/Ctrl+R …), Kontextmenü, Popstate-Guard, Drag/Select und Orientierungssperre werden
+  nur noch aktiviert wenn `CONFIG.kioskMode !== false && !IS_PROXY`. Im Proxy-/Entwicklungsmodus
+  bleiben Entwicklerwerkzeuge erreichbar.
+
+- **„Neue Schicht" statt „Verlängern"** (`lifeguardclock.js`): Der Button zum Neustarten einer
+  aktiven Session mit `maxDurationMs` heißt jetzt „Neue Schicht" — beschreibt fachlich korrekt,
+  dass eine neue Zeitscheibe begonnen wird.
+
+- **Toasts statt `alert()` in Editor und Dashboard** (`editor-app.js`, `editor.html`,
+  `dashboard-app.js`, `dashboard.html`): Alle 21 nativen `alert()`-Aufrufe durch nicht-
+  blockierende Toast-Meldungen ersetzt. Toast-CSS und `<div id="toast">` in beiden HTML-Dateien
+  ergänzt. `editor-app.js` hatte `showToast()` bereits als `alert()`-Wrapper — jetzt echte
+  DOM-Implementierung.
+
+### Tests (Sprint 1–3)
+
+- **Suite 30** (`test_LifeguardClock.html`): 6 Tests für `rebuildStateFromLog`
+  (offener Start → true, abgeschlossenes Paar → false, leerer Log → alles false,
+  Cooldown erhalten, zwei Typen aktiv, unbekannte userId).
+
+- **Suite 31**: 4 Tests Auto-Stop → `pushUserPif` (`checkTimeLimits`, `checkZeitfensterEnd`,
+  `checkDayBoundary` rufen `pushUserPif` auf; staler State → kein Push).
+
+- **Suite 32**: 4 Tests `findLogKeyForOpenStart` (aktueller Log, Vormonat-Log, letzter Stop → null,
+  kein Eintrag → null).
+
+- **Suite 33**: 2 Tests `zeitfensterEndTs` (Fenster-Ende in Vergangenheit → heute, in Zukunft → gestern).
+
+- **Suite 34**: 2 Tests `checkDayBoundary` Monatsgrenze (Stop in Vormonat-Log; staler State →
+  State bereinigt, kein Stop).
+
+- **Suite 35**: 1 Test `checkZeitfensterEnd` staler State (kein Stop-Eintrag ohne offenen Start).
+
+- **Suite 36**: 1 Test `checkTimeLimits` Cooldown-Timing (Cooldown endet vor `now + cooldownMs`).
+
+- Stubs `calcDurationMs`, `getTypeStartMs` durchsuchen jetzt beide Logs (aktuell + Vormonat).
+
+### Service Worker
+
+- Cache-Version auf `lgc-shell-v19` erhöht (erzwingt Update auf allen installierten PWAs).
+
+### Version
+
+- `APP_VERSION` auf `'1.1.0'` gesetzt.
+
+---
+
 ## [1.0.3] – 2026-05-12
 
 ### Geändert
