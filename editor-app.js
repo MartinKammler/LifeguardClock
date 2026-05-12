@@ -869,14 +869,44 @@ function commit(fn) {
   renderAll();
 }
 
+// Prüft ob beim Hinzufügen eines Paares automatisch ein Anwesenheits-Paar ergänzt werden soll.
+// Bedingung: Typ hat autoStartKeys mit 'anwesenheit', und es existiert noch kein Anwesenheits-Paar
+// das das komplette Zeitfenster [vonIso, bisIso] abdeckt.
+function _anwesenheitNeeded(nutzer, typ, vonIso, bisIso) {
+  if (typ === 'anwesenheit') return false;
+  let fullConfig = [];
+  try {
+    fullConfig = JSON.parse(localStorage.getItem('lgc_cloud_types') || '[]');
+    if (!fullConfig.length) fullConfig = JSON.parse(localStorage.getItem('lgc_type_config') || '[]');
+  } catch {}
+  if (!fullConfig.find(t => t.logType === typ)?.autoStartKeys?.includes('anwesenheit')) return false;
+  const vonMs = new Date(vonIso).getTime();
+  const bisMs = new Date(bisIso).getTime();
+  const anwLog = (logData.log || []).filter(e => e.nutzer === nutzer && e.typ === 'anwesenheit');
+  const starts = anwLog.filter(e => e.aktion === 'start').sort((a, b) => new Date(a.zeitstempel) - new Date(b.zeitstempel));
+  const stops  = anwLog.filter(e => e.aktion === 'stop') .sort((a, b) => new Date(a.zeitstempel) - new Date(b.zeitstempel));
+  for (const s of starts) {
+    if (new Date(s.zeitstempel).getTime() > vonMs) break;
+    const paired = stops.find(e => new Date(e.zeitstempel).getTime() > new Date(s.zeitstempel).getTime());
+    if (paired && new Date(paired.zeitstempel).getTime() >= bisMs) return false; // bereits abgedeckt
+  }
+  return true;
+}
+
 function addPair(nutzer, typ, vonIso, bisIso) {
   const durMs = new Date(bisIso) - new Date(vonIso);
+  const addAnw = _anwesenheitNeeded(nutzer, typ, vonIso, bisIso);
   commit(() => {
     logData.log.push(
       { id: genId(), nutzer, typ, aktion: 'start', zeitstempel: vonIso },
       { id: genId(), nutzer, typ, aktion: 'stop',  zeitstempel: bisIso, dauer_ms: durMs }
     );
+    if (addAnw) logData.log.push(
+      { id: genId(), nutzer, typ: 'anwesenheit', aktion: 'start', zeitstempel: vonIso },
+      { id: genId(), nutzer, typ: 'anwesenheit', aktion: 'stop',  zeitstempel: bisIso, dauer_ms: durMs }
+    );
   });
+  if (addAnw) showToast('Anwesenheit automatisch ergänzt');
 }
 
 function addSingle(nutzer, typ, aktion, zeitstempel) {
