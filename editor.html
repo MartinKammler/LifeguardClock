@@ -262,6 +262,7 @@
       <button class="btn" id="btn-load">&#x1F4C2; Lokal</button>
       <button class="btn" id="btn-cloud-load">&#x2601; Cloud</button>
       <button class="btn" id="btn-validate-all">&#x2601; Alle pr&uuml;fen</button>
+      <button class="btn" id="btn-cleanup">&#x1F5C2; Monate</button>
       <button class="btn" id="btn-new">+ Neue Datei</button>
       <button class="btn btn-success" id="btn-cloud-save" disabled>&#x2601; Speichern</button>
       <button class="btn btn-primary" id="btn-export" disabled>&#x2193; Export</button>
@@ -410,6 +411,24 @@
     <div class="modal-ftr">
       <button class="btn" id="cloud-cancel">Abbrechen</button>
       <button class="btn btn-primary" id="cloud-confirm">Laden</button>
+    </div>
+  </dialog>
+
+  <!-- ── Month-cleanup modal ────────────────────────────────────── -->
+  <dialog id="modal-cleanup">
+    <div class="modal-hdr">&#x1F5C2; Monatsbereinigung</div>
+    <div class="modal-body">
+      <p style="font-size:13px;color:var(--text-2);margin:0 0 16px">
+        Pr&uuml;ft alle PIF-Dateien auf Eintr&auml;ge im falschen Monats-File
+        und verschiebt sie automatisch in den richtigen Monat.
+      </p>
+      <div style="display:flex;gap:10px">
+        <button class="btn btn-primary" id="cleanup-cloud-btn" style="flex:1">&#x2601; Cloud</button>
+        <button class="btn" id="cleanup-dir-btn" style="flex:1">&#x1F4C2; Ordner</button>
+      </div>
+    </div>
+    <div class="modal-ftr">
+      <button class="btn" id="cleanup-cancel">Abbrechen</button>
     </div>
   </dialog>
 

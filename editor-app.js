@@ -136,6 +136,25 @@ function showToast(msg) {
   _editorToastTimer = setTimeout(() => el.classList.remove('visible'), 3200);
 }
 function sameEntryId(a, b) { return String(a) === String(b); }
+
+// ─── PIF / Monats-Helpers ─────────────────────────────────────────────────────
+function monthFromIso(iso) { return iso ? String(iso).slice(0, 7) : ''; }
+
+// Extrahiert YYYY-MM aus einem PIF-Dateinamen oder -Pfad (lgc_pif_<id>_YYYY-MM.json)
+function pifMonthFromKey(key) {
+  const m = String(key).match(/lgc_pif_.+_(\d{4}-\d{2})\.json$/);
+  return m ? m[1] : '';
+}
+// Extrahiert userId aus einem PIF-Dateinamen oder -Pfad
+function pifUserIdFromKey(key) {
+  const m = String(key).match(/lgc_pif_(.+)_\d{4}-\d{2}\.json$/);
+  return m ? m[1] : '';
+}
+
+function buildPifOutput(pif) {
+  const entries = pif.entries || [];
+  return { ...pif, exported: new Date().toISOString(), count: entries.length };
+}
 function getEntryById(id) {
   return logData?.log?.find(e => sameEntryId(e.id, id));
 }
@@ -352,6 +371,168 @@ async function saveToCloud() {
     showToast('Speichern fehlgeschlagen: ' + e.message);
     btn.disabled = false;
     syncCloudSaveBtn();
+  }
+}
+
+// ─── Monatsbereinigung ────────────────────────────────────────────────────────
+
+// Analysiert eine Menge von PIF-Dateien auf monatsfremde Einträge.
+// pifMap: { key → pifData } – key ist href (Cloud) oder Dateiname (Ordner)
+// Gibt zurück: { modifiedPifs, newPifs, totalMoved }
+//   modifiedPifs: bestehende Dateien mit korrigiertem entries-Array
+//   newPifs:      neu zu erstellende Dateien { filename → pifData }
+function analyzeCrossMonthEntries(pifMap) {
+  const modifiedPifs   = {};
+  const pendingByFile  = {};  // { targetFilename → { userId, month, entries[] } }
+  let totalMoved       = 0;
+
+  for (const [key, pif] of Object.entries(pifMap)) {
+    const fileMonth = pifMonthFromKey(key);
+    const userId    = pifUserIdFromKey(key);
+    if (!fileMonth || !userId) continue;
+
+    const entries   = pif.entries || [];
+    const misplaced = entries.filter(e => monthFromIso(e.zeitstempel) !== fileMonth);
+    if (misplaced.length === 0) continue;
+
+    modifiedPifs[key] = { ...pif, entries: entries.filter(e => monthFromIso(e.zeitstempel) === fileMonth) };
+    totalMoved += misplaced.length;
+
+    for (const entry of misplaced) {
+      const targetMonth    = monthFromIso(entry.zeitstempel);
+      const targetFilename = `lgc_pif_${userId}_${targetMonth}.json`;
+      if (!pendingByFile[targetFilename])
+        pendingByFile[targetFilename] = { userId, month: targetMonth, entries: [] };
+      pendingByFile[targetFilename].entries.push(entry);
+    }
+  }
+
+  const newPifs = {};
+  for (const [targetFilename, { userId, month, entries }] of Object.entries(pendingByFile)) {
+    // Suche ob Ziel-File bereits in pifMap vorhanden (per Pfad-Ende oder exaktem Namen)
+    const existingKey = Object.keys(pifMap).find(
+      k => k === targetFilename || k.endsWith('/' + targetFilename)
+    );
+    if (existingKey) {
+      const base = modifiedPifs[existingKey] || { ...pifMap[existingKey] };
+      modifiedPifs[existingKey] = { ...base, entries: [...(base.entries || []), ...entries] };
+    } else {
+      newPifs[targetFilename] = { version: 1, userId, month, entries };
+    }
+  }
+
+  return { modifiedPifs, newPifs, totalMoved };
+}
+
+async function runMonthCleanupCloud() {
+  const creds = getCloudCreds();
+  if (!creds) { showToast('Keine Cloud-Zugangsdaten gefunden.'); return; }
+  document.getElementById('modal-cleanup').close();
+
+  const btn = document.getElementById('cleanup-cloud-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Prüfe…'; }
+  try {
+    const base = cloudDavBase(creds);
+    const auth = cloudAuth(creds);
+    await fetch(base, { method: 'MKCOL', headers: { Authorization: auth } }).catch(() => {});
+
+    const res = await fetch(base, { method: 'PROPFIND', headers: { Authorization: auth, Depth: '1' } });
+    if (!res.ok) throw new Error(`PROPFIND HTTP ${res.status}`);
+    const xml = await res.text();
+    const pifHrefs = [...xml.matchAll(/<[^>]*:href[^>]*>([^<]+)<\/[^>]*:href>/g)]
+      .map(m => decodeURIComponent(m[1].trim()))
+      .filter(h => /lgc_pif_.+_\d{4}-\d{2}\.json$/.test(h));
+
+    if (pifHrefs.length === 0) { showToast('Keine PIF-Dateien gefunden.'); return; }
+
+    const pifMap = {};
+    await Promise.all(pifHrefs.map(async href => {
+      const url = IS_PROXY ? href : creds.url.trim().replace(/\/$/, '') + (href.startsWith('/') ? href : '/' + href);
+      try {
+        const r = await fetch(url, { headers: { Authorization: auth } });
+        if (r.ok) pifMap[href] = await r.json();
+      } catch {}
+    }));
+
+    const { modifiedPifs, newPifs, totalMoved } = analyzeCrossMonthEntries(pifMap);
+    if (totalMoved === 0) { showToast('Alle Einträge sind im richtigen Monats-File ✓'); return; }
+
+    const hdrs = { Authorization: auth, 'Content-Type': 'application/json' };
+    await Promise.all([
+      ...Object.entries(modifiedPifs).map(([href, pif]) => {
+        const url = IS_PROXY ? href : creds.url.trim().replace(/\/$/, '') + (href.startsWith('/') ? href : '/' + href);
+        return fetch(url, { method: 'PUT', headers: hdrs, body: JSON.stringify(buildPifOutput(pif), null, 2) })
+          .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); });
+      }),
+      ...Object.entries(newPifs).map(([filename, pif]) =>
+        fetch(`${base}/${filename}`, { method: 'PUT', headers: hdrs, body: JSON.stringify(buildPifOutput(pif), null, 2) })
+          .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); })
+      ),
+    ]);
+
+    const n = totalMoved;
+    showToast(`${n} Eintrag${n !== 1 ? 'e' : ''} bereinigt ✓`);
+  } catch (e) {
+    showToast('Fehler: ' + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '☁ Cloud'; }
+  }
+}
+
+async function runMonthCleanupDirectory() {
+  if (!window.showDirectoryPicker) {
+    showToast('Ordner-Picker wird in diesem Browser nicht unterstützt (Chrome/Edge benötigt).');
+    return;
+  }
+  document.getElementById('modal-cleanup').close();
+
+  let dirHandle;
+  try {
+    dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+  } catch (e) {
+    if (e.name !== 'AbortError') showToast('Ordner-Zugriff fehlgeschlagen: ' + e.message);
+    return;
+  }
+
+  const btn = document.getElementById('cleanup-dir-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Prüfe…'; }
+  try {
+    const pifMap    = {};
+    const handleMap = {};
+    for await (const [name, handle] of dirHandle.entries()) {
+      if (handle.kind !== 'file' || !/^lgc_pif_.+_\d{4}-\d{2}\.json$/.test(name)) continue;
+      try {
+        const file = await handle.getFile();
+        pifMap[name] = JSON.parse(await file.text());
+        handleMap[name] = handle;
+      } catch {}
+    }
+
+    if (Object.keys(pifMap).length === 0) { showToast('Keine PIF-Dateien im Ordner gefunden.'); return; }
+
+    const { modifiedPifs, newPifs, totalMoved } = analyzeCrossMonthEntries(pifMap);
+    if (totalMoved === 0) { showToast('Alle Einträge sind im richtigen Monats-File ✓'); return; }
+
+    for (const [filename, pif] of Object.entries(modifiedPifs)) {
+      const handle = handleMap[filename];
+      if (!handle) continue;
+      const writable = await handle.createWritable();
+      await writable.write(JSON.stringify(buildPifOutput(pif), null, 2));
+      await writable.close();
+    }
+    for (const [filename, pif] of Object.entries(newPifs)) {
+      const handle   = await dirHandle.getFileHandle(filename, { create: true });
+      const writable = await handle.createWritable();
+      await writable.write(JSON.stringify(buildPifOutput(pif), null, 2));
+      await writable.close();
+    }
+
+    const n = totalMoved;
+    showToast(`${n} Eintrag${n !== 1 ? 'e' : ''} bereinigt ✓`);
+  } catch (e) {
+    showToast('Fehler: ' + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '📂 Ordner'; }
   }
 }
 
@@ -896,6 +1077,28 @@ function _anwesenheitNeeded(nutzer, typ, vonIso, bisIso) {
 function addPair(nutzer, typ, vonIso, bisIso) {
   const durMs = new Date(bisIso) - new Date(vonIso);
   const addAnw = _anwesenheitNeeded(nutzer, typ, vonIso, bisIso);
+
+  // Feature: Paar in richtigen Monats-PIF schreiben wenn Monat ≠ geladener File
+  const pairMonth   = monthFromIso(vonIso);
+  const loadedMonth = (cloudIsPIF && cloudFileUrl) ? pifMonthFromKey(cloudFileUrl) : null;
+  const userId      = logData?.userId || null;
+  const creds       = getCloudCreds();
+
+  if (loadedMonth && pairMonth && pairMonth !== loadedMonth && userId && creds) {
+    const entries = [
+      { id: genId(), nutzer, typ, aktion: 'start', zeitstempel: vonIso },
+      { id: genId(), nutzer, typ, aktion: 'stop',  zeitstempel: bisIso, dauer_ms: durMs },
+    ];
+    if (addAnw) entries.push(
+      { id: genId(), nutzer, typ: 'anwesenheit', aktion: 'start', zeitstempel: vonIso },
+      { id: genId(), nutzer, typ: 'anwesenheit', aktion: 'stop',  zeitstempel: bisIso, dauer_ms: durMs }
+    );
+    _saveEntriesToCloudPif(userId, pairMonth, entries, creds)
+      .then(() => showToast(`Paar in ${pairMonth}-PIF gespeichert${addAnw ? ' (+ Anwesenheit)' : ''}`))
+      .catch(e => showToast('Fehler beim Speichern: ' + e.message));
+    return;
+  }
+
   commit(() => {
     logData.log.push(
       { id: genId(), nutzer, typ, aktion: 'start', zeitstempel: vonIso },
@@ -907,6 +1110,32 @@ function addPair(nutzer, typ, vonIso, bisIso) {
     );
   });
   if (addAnw) showToast('Anwesenheit automatisch ergänzt');
+}
+
+// Holt einen Monats-PIF aus der Cloud (erstellt ihn falls nicht vorhanden) und fügt Einträge hinzu.
+async function _saveEntriesToCloudPif(userId, month, entries, creds) {
+  const base = cloudDavBase(creds);
+  const auth = cloudAuth(creds);
+  const url  = `${base}/lgc_pif_${userId}_${month}.json`;
+
+  let pif;
+  const r = await fetch(url, { headers: { Authorization: auth } });
+  if (r.ok) {
+    pif = await r.json();
+    if (!Array.isArray(pif.entries)) pif.entries = [];
+    pif.entries.push(...entries);
+  } else if (r.status === 404) {
+    pif = { version: 1, userId, month, entries };
+  } else {
+    throw new Error(`HTTP ${r.status}`);
+  }
+
+  const putR = await fetch(url, {
+    method: 'PUT',
+    headers: { Authorization: auth, 'Content-Type': 'application/json' },
+    body: JSON.stringify(buildPifOutput(pif), null, 2),
+  });
+  if (!putR.ok) throw new Error(`PUT HTTP ${putR.status}`);
 }
 
 function addSingle(nutzer, typ, aktion, zeitstempel) {
@@ -1435,6 +1664,13 @@ document.getElementById('add-confirm').addEventListener('click', () => {
     addPair(nutzer, typ, localInputToIso(von), localInputToIso(bis));
   }
 });
+
+document.getElementById('btn-cleanup').addEventListener('click', () =>
+  document.getElementById('modal-cleanup').showModal());
+document.getElementById('cleanup-cancel').addEventListener('click', () =>
+  document.getElementById('modal-cleanup').close());
+document.getElementById('cleanup-cloud-btn').addEventListener('click', runMonthCleanupCloud);
+document.getElementById('cleanup-dir-btn').addEventListener('click', runMonthCleanupDirectory);
 
 // Keyboard shortcuts
 document.addEventListener('keydown', e => {
