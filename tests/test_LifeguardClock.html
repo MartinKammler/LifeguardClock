@@ -72,6 +72,39 @@ function writeLocalBackup() {}
 function scheduleCloudSync() {}
 function scheduleUsersCloudSync() {}
 
+/* ── PIF/addEntry-Stubs ────────────────────────────────────── */
+let _pifPushCalls = [];
+async function pushUserPif(userId) { _pifPushCalls.push(userId); }
+function resetPifPushCalls() { _pifPushCalls = []; }
+
+function getPrevLog() { return []; } // vereinfacht: kein Vormonat im Test
+
+function addEntry(entry) {
+  const log = getLog();
+  log.push({ id: Date.now() + Math.random(), ...entry });
+  saveLog(log);
+  const u = getUsers().find(u => u.name === entry.nutzer);
+  if (u) pushUserPif(u.id).catch(() => {});
+}
+
+function rebuildStateFromLog(userId) {
+  const user = getUsers().find(u => u.id === userId);
+  if (!user) return;
+  const allStates = getAllStates();
+  const state     = allStates[userId] || {};
+  if (!state.cooldown) state.cooldown = {};
+  const allEntries = [...getPrevLog(), ...getLog()].filter(e => e.nutzer === user.name);
+  TYPES.forEach(type => {
+    let lastAction = null;
+    for (let i = allEntries.length - 1; i >= 0; i--) {
+      if (allEntries[i].typ === type.logType) { lastAction = allEntries[i].aktion; break; }
+    }
+    state[type.key] = lastAction === 'start';
+  });
+  allStates[userId] = state;
+  saveAllStates(allStates);
+}
+
 /* ── CONFIG-Mock (für getUsers-Tests überschreibbar) ────────── */
 let CONFIG = {
   dayBoundaryHour: 4,
@@ -343,9 +376,7 @@ function checkZeitfensterEnd() {
       const type = TYPES.find(t => t.key === key);
       if (isWithinZeitfensterForType(type)) return;   // per-Typ-Prüfung
       const durMs = calcDurationMs(user.name, type.logType, now);
-      const log   = getLog();
-      log.push({ id: Date.now() + Math.random(), nutzer: user.name, typ: type.logType, aktion: 'stop', zeitstempel: now, auto: true, dauer_ms: durMs });
-      saveLog(log);
+      addEntry({ nutzer: user.name, typ: type.logType, aktion: 'stop', zeitstempel: now, auto: true, dauer_ms: durMs });
       state[key] = false;
       changed = true;
       if (currentUser && currentUser.id === user.id) {
@@ -370,10 +401,7 @@ function checkTimeLimits() {
       if (startMs === null) return;
       if (now.getTime() - startMs < type.maxDurationMs) return;
       const stopTs = new Date(startMs + type.maxDurationMs).toISOString();
-      const log    = getLog();
-      log.push({ id: Date.now() + Math.random(), nutzer: user.name, typ: type.logType, aktion: 'stop',
-        zeitstempel: stopTs, auto: true, dauer_ms: type.maxDurationMs });
-      saveLog(log);
+      addEntry({ nutzer: user.name, typ: type.logType, aktion: 'stop', zeitstempel: stopTs, auto: true, dauer_ms: type.maxDurationMs });
       state[type.key] = false;
       if (type.cooldownMs) {
         if (!state.cooldown) state.cooldown = {};
@@ -1344,10 +1372,7 @@ function checkDayBoundary(now = new Date()) {
     TYPES.forEach(type => {
       if (!state[type.key]) return;
       const durMs = calcDurationMs(user.name, type.logType, stopTs);
-      const log   = getLog();
-      log.push({ id: Date.now() + Math.random(), nutzer: user.name, typ: type.logType,
-        aktion: 'stop', zeitstempel: stopTs, auto: true, dauer_ms: durMs });
-      saveLog(log);
+      addEntry({ nutzer: user.name, typ: type.logType, aktion: 'stop', zeitstempel: stopTs, auto: true, dauer_ms: durMs });
       state[type.key] = false;
       changed = true;
     });
@@ -2702,6 +2727,115 @@ await test('Sperrzeit dauert 5 Minuten', () => {
   const diff  = until - Date.now();
   assert(diff >= RATE_LOCKOUT_MS - 100 && diff <= RATE_LOCKOUT_MS + 100,
     `Sperrzeit soll ${RATE_LOCKOUT_MS}ms sein, war: ${diff}ms`);
+});
+
+/* ══════════════════════════════════════════════════════════════
+   Suite 30 – rebuildStateFromLog
+══════════════════════════════════════════════════════════════ */
+suite('rebuildStateFromLog – State aus Log rekonstruieren');
+
+await test('offener Start → state[key] wird true', () => {
+  resetStore(); resetConfig(); rebuildTypes(); resetUsers();
+  pushLog({ nutzer: 'Test User', typ: 'anwesenheit', aktion: 'start', zeitstempel: msAgo(60000) });
+  const all = getAllStates();
+  all['test_user'] = { anwesenheit: false, wachdienst: false, sanitaet: false, cooldown: {} };
+  saveAllStates(all);
+  rebuildStateFromLog('test_user');
+  assertEqual(getAllStates()['test_user'].anwesenheit, true, 'anwesenheit muss true sein nach offenem Start');
+});
+
+await test('geschlossenes Paar → state[key] bleibt false', () => {
+  resetStore(); resetConfig(); rebuildTypes(); resetUsers();
+  pushLog({ nutzer: 'Test User', typ: 'anwesenheit', aktion: 'start', zeitstempel: msAgo(120000) });
+  pushLog({ nutzer: 'Test User', typ: 'anwesenheit', aktion: 'stop',  zeitstempel: msAgo(60000) });
+  const all = getAllStates();
+  all['test_user'] = { anwesenheit: true, cooldown: {} };
+  saveAllStates(all);
+  rebuildStateFromLog('test_user');
+  assertEqual(getAllStates()['test_user'].anwesenheit, false, 'anwesenheit muss false sein nach geschlossenem Paar');
+});
+
+await test('leeres Log → alle types auf false', () => {
+  resetStore(); resetConfig(); rebuildTypes(); resetUsers();
+  const all = getAllStates();
+  all['test_user'] = { anwesenheit: true, wachdienst: true, sanitaet: true, cooldown: {} };
+  saveAllStates(all);
+  rebuildStateFromLog('test_user');
+  const state = getAllStates()['test_user'];
+  assertEqual(state.anwesenheit, false, 'anwesenheit muss false sein');
+  assertEqual(state.wachdienst,  false, 'wachdienst muss false sein');
+});
+
+await test('cooldown bleibt nach Rebuild erhalten', () => {
+  resetStore(); resetConfig(); rebuildTypes(); resetUsers();
+  const until = new Date(Date.now() + 60000).toISOString();
+  const all = getAllStates();
+  all['test_user'] = { anwesenheit: false, cooldown: { wachdienst: until } };
+  saveAllStates(all);
+  rebuildStateFromLog('test_user');
+  assertEqual(getAllStates()['test_user'].cooldown.wachdienst, until, 'cooldown muss erhalten bleiben');
+});
+
+await test('zwei Typen gleichzeitig aktiv werden korrekt erkannt', () => {
+  resetStore(); resetConfig(); rebuildTypes(); resetUsers();
+  pushLog({ nutzer: 'Test User', typ: 'anwesenheit', aktion: 'start', zeitstempel: msAgo(120000) });
+  pushLog({ nutzer: 'Test User', typ: 'wachdienst',  aktion: 'start', zeitstempel: msAgo(60000)  });
+  rebuildStateFromLog('test_user');
+  const state = getAllStates()['test_user'];
+  assertEqual(state.anwesenheit, true, 'anwesenheit muss true sein');
+  assertEqual(state.wachdienst,  true, 'wachdienst muss true sein');
+});
+
+await test('unbekannte userId → kein Fehler, kein State erstellt', () => {
+  resetStore();
+  rebuildStateFromLog('nobody');
+  assert(!getAllStates()['nobody'], 'kein State für unbekannte userId');
+});
+
+/* ══════════════════════════════════════════════════════════════
+   Suite 31 – Auto-Stop PIF-Synchronisation
+══════════════════════════════════════════════════════════════ */
+suite('Auto-Stop → addEntry → pushUserPif aufgerufen');
+
+await test('checkTimeLimits ruft pushUserPif für betroffenen Nutzer', () => {
+  resetStore(); resetConfig(); rebuildTypes(); resetUsers(); resetPifPushCalls();
+  pushLog({ nutzer: 'Test User', typ: 'wachdienst', aktion: 'start', zeitstempel: msAgo(3 * 60 * 60 * 1000) });
+  setStateActive('test_user', 'wachdienst', true);
+  checkTimeLimits();
+  assert(_pifPushCalls.includes('test_user'), 'pushUserPif muss für test_user aufgerufen sein');
+});
+
+await test('checkZeitfensterEnd ruft pushUserPif für betroffenen Nutzer', () => {
+  resetStore(); resetConfig(); rebuildTypes(); resetUsers(); resetPifPushCalls();
+  // Zeitfenster so setzen dass aktueller Zeitpunkt außerhalb liegt (00:00–00:01)
+  saveZeitfensterForType('wachdienst', '00:00', '00:01');
+  pushLog({ nutzer: 'Test User', typ: 'wachdienst', aktion: 'start', zeitstempel: msAgo(60000) });
+  setStateActive('test_user', 'wachdienst', true);
+  checkZeitfensterEnd();
+  // Falls der Test genau um 00:00 läuft schlägt er fehl — dann Zeitfenster anpassen
+  const stopEntries = getLog().filter(e => e.aktion === 'stop' && e.auto);
+  if (stopEntries.length > 0) {
+    assert(_pifPushCalls.includes('test_user'), 'pushUserPif muss für test_user aufgerufen sein');
+  }
+  // Kein stop erzeugt (Zeitfenster passt zufällig) → Test übersprungen, kein Fehler
+});
+
+await test('checkDayBoundary ruft pushUserPif für betroffenen Nutzer', () => {
+  resetStore(); resetConfig(); rebuildTypes(); resetUsers(); resetPifPushCalls();
+  const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1);
+  _lastKnownDay = todayISO(yesterday);
+  pushLog({ nutzer: 'Test User', typ: 'anwesenheit', aktion: 'start', zeitstempel: msAgo(3600000) });
+  setStateActive('test_user', 'anwesenheit', true);
+  checkDayBoundary(new Date());
+  assert(_pifPushCalls.includes('test_user'), 'pushUserPif muss für test_user aufgerufen sein');
+});
+
+await test('checkTimeLimits ohne offenen Start → kein pushUserPif', () => {
+  resetStore(); resetConfig(); rebuildTypes(); resetUsers(); resetPifPushCalls();
+  // State sagt aktiv, aber kein start-Eintrag im Log (veralteter State)
+  setStateActive('test_user', 'wachdienst', true);
+  checkTimeLimits();
+  assert(!_pifPushCalls.includes('test_user'), 'pushUserPif darf nicht aufgerufen werden ohne offenen Start');
 });
 
 /* ══════════════════════════════════════════════════════════════

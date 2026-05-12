@@ -458,9 +458,7 @@ function checkZeitfensterEnd() {
       const type   = TYPES.find(t => t.key === key);
       if (isWithinZeitfensterForType(type)) return;
       const durMs  = calcDurationMs(user.name, type.logType, now);
-      const log    = getLog();
-      log.push({ id: Date.now() + Math.random(), nutzer: user.name, typ: type.logType, aktion: 'stop', zeitstempel: now, auto: true, dauer_ms: durMs });
-      saveLog(log);
+      addEntry({ nutzer: user.name, typ: type.logType, aktion: 'stop', zeitstempel: now, auto: true, dauer_ms: durMs });
       state[key] = false;
       changed = true;
       if (currentUser && currentUser.id === user.id) {
@@ -492,10 +490,7 @@ function checkTimeLimits() {
 
       // Auto-Stop
       const stopTs = new Date(startMs + type.maxDurationMs).toISOString();
-      const log    = getLog();
-      log.push({ id: Date.now() + Math.random(), nutzer: user.name, typ: type.logType, aktion: 'stop',
-        zeitstempel: stopTs, auto: true, dauer_ms: type.maxDurationMs });
-      saveLog(log);
+      addEntry({ nutzer: user.name, typ: type.logType, aktion: 'stop', zeitstempel: stopTs, auto: true, dauer_ms: type.maxDurationMs });
       state[type.key] = false;
 
       // Cooldown setzen
@@ -541,10 +536,7 @@ function checkDayBoundary(now = new Date()) {
     TYPES.forEach(type => {
       if (!state[type.key]) return;
       const durMs = calcDurationMs(user.name, type.logType, stopTs);
-      const log   = getLog();
-      log.push({ id: Date.now() + Math.random(), nutzer: user.name, typ: type.logType,
-        aktion: 'stop', zeitstempel: stopTs, auto: true, dauer_ms: durMs });
-      saveLog(log);
+      addEntry({ nutzer: user.name, typ: type.logType, aktion: 'stop', zeitstempel: stopTs, auto: true, dauer_ms: durMs });
       state[type.key] = false;
       changed = true;
     });
@@ -1502,6 +1494,30 @@ function mergeUserEntries(cloudEntries) {
   return true;
 }
 
+// Nach PIF-Merge lgc_state aus dem Log neu aufbauen, damit der angezeigte
+// Aktiv-Status mit dem gemergeden Log übereinstimmt (Geräte-B-Login-Bug).
+function rebuildStateFromLog(userId) {
+  const user = getUsers().find(u => u.id === userId);
+  if (!user) return;
+  const allStates = getAllStates();
+  const state     = allStates[userId] || {};
+  if (!state.cooldown) state.cooldown = {};
+
+  const allEntries = [...getPrevLog(), ...getLog()]
+    .filter(e => e.nutzer === user.name);
+
+  TYPES.forEach(type => {
+    let lastAction = null;
+    for (let i = allEntries.length - 1; i >= 0; i--) {
+      if (allEntries[i].typ === type.logType) { lastAction = allEntries[i].aktion; break; }
+    }
+    state[type.key] = lastAction === 'start';
+  });
+
+  allStates[userId] = state;
+  saveAllStates(allStates);
+}
+
 async function pushUserPif(userId) {
   const cfg = getCloudConfig();
   if (!isCloudConfigured(cfg)) return;
@@ -1587,14 +1603,18 @@ async function fetchUserPif(userId) {
       if (mergeUserEntries(data.entries)) changed = true;
     } catch {}
   }
-  if (changed && currentUser?.id === userId) syncDashboard();
+  if (changed) {
+    rebuildStateFromLog(userId);
+    if (currentUser?.id === userId) syncDashboard();
+  }
 }
 
 // ── Auto-Retry bei Netzwerkrückkehr ─────────────────────────
 window.addEventListener('online', () => {
   const cfg = getCloudConfig();
-  if (isCloudConfigured(cfg) && hasPendingCloudData()) {
-    setTimeout(() => syncToCloud(true), 1500);
+  if (isCloudConfigured(cfg)) {
+    if (hasPendingCloudData()) setTimeout(() => syncToCloud(true), 1500);
+    setTimeout(() => getUsers().forEach(u => pushUserPif(u.id).catch(() => {})), 2000);
   }
   setTimeout(() => silentConfigCheck(), 2000);
 });
@@ -2112,9 +2132,7 @@ function logAllActiveSessions() {
     TYPES.forEach(type => {
       if (state[type.key]) {
         const durMs = calcDurationMs(user.name, type.logType, now);
-        const log   = getLog();
-        log.push({ id: Date.now() + Math.random(), nutzer: user.name, typ: type.logType, aktion: 'stop', zeitstempel: now, auto: true, dauer_ms: durMs });
-        saveLog(log);
+        addEntry({ nutzer: user.name, typ: type.logType, aktion: 'stop', zeitstempel: now, auto: true, dauer_ms: durMs });
         state[type.key] = false;
         changed = true;
       }
@@ -2241,9 +2259,7 @@ function stopUserSessions(uid, userName) {
   TYPES.forEach(type => {
     if (!state[type.key]) return;
     const durMs = calcDurationMs(userName, type.logType, now);
-    const log   = getLog();
-    log.push({ id: Date.now() + Math.random(), nutzer: userName, typ: type.logType, aktion: 'stop', zeitstempel: now, auto: true, dauer_ms: durMs });
-    saveLog(log);
+    addEntry({ nutzer: userName, typ: type.logType, aktion: 'stop', zeitstempel: now, auto: true, dauer_ms: durMs });
     state[type.key] = false;
     count++;
   });
@@ -2438,9 +2454,7 @@ function stopAllActiveSessions() {
     TYPES.forEach(type => {
       if (!state[type.key]) return;
       const durMs = calcDurationMs(user.name, type.logType, now);
-      const log   = getLog();
-      log.push({ id: Date.now() + Math.random(), nutzer: user.name, typ: type.logType, aktion: 'stop', zeitstempel: now, auto: true, dauer_ms: durMs });
-      saveLog(log);
+      addEntry({ nutzer: user.name, typ: type.logType, aktion: 'stop', zeitstempel: now, auto: true, dauer_ms: durMs });
       state[type.key] = false;
       count++;
     });
