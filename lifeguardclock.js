@@ -155,7 +155,7 @@ function getDeviceId() {
   return id;
 }
 const DEVICE_ID   = getDeviceId();
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.1.1';
 
 /* ── Proxy-Erkennung (admin-server.py auf localhost) ─────────
    Wenn die App über den lokalen Python-Proxy läuft, werden alle

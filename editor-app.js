@@ -424,6 +424,103 @@ function analyzeCrossMonthEntries(pifMap) {
   return { modifiedPifs, newPifs, totalMoved };
 }
 
+// Gibt Set der logType-Werte zurück, die autoStartKeys: ['anwesenheit'] haben.
+function getServiceTypes() {
+  let fullConfig = [];
+  try {
+    fullConfig = JSON.parse(localStorage.getItem('lgc_cloud_types') || '[]');
+    if (!fullConfig.length) fullConfig = JSON.parse(localStorage.getItem('lgc_type_config') || '[]');
+  } catch {}
+  return new Set(fullConfig.filter(t => t.autoStartKeys?.includes('anwesenheit')).map(t => t.logType));
+}
+
+// Prüft ob anwEntries-Array bereits [vonMs, bisMs] abdeckt.
+function _anwCovers(vonMs, bisMs, anwEntries) {
+  const starts = anwEntries.filter(e => e.aktion === 'start').sort((a, b) => new Date(a.zeitstempel) - new Date(b.zeitstempel));
+  const stops  = anwEntries.filter(e => e.aktion === 'stop') .sort((a, b) => new Date(a.zeitstempel) - new Date(b.zeitstempel));
+  for (const s of starts) {
+    const sMs = new Date(s.zeitstempel).getTime();
+    if (sMs > vonMs) break;
+    const paired = stops.find(e => new Date(e.zeitstempel).getTime() > sMs);
+    if (paired && new Date(paired.zeitstempel).getTime() >= bisMs) return true;
+  }
+  return false;
+}
+
+// Prüft alle Dienst-Paare in effectivePifMap auf Anwesenheits-Abdeckung.
+// Gibt { additions: { key → entries[] }, totalAdded } zurück.
+function analyzeAnwesenheitCoverage(effectivePifMap) {
+  const serviceTypes = getServiceTypes();
+  if (serviceTypes.size === 0) return { additions: {}, totalAdded: 0 };
+
+  const additions = {};
+  let totalAdded  = 0;
+
+  for (const [key, pif] of Object.entries(effectivePifMap)) {
+    const entries = pif.entries || [];
+    const userIds = [...new Set(entries.map(e => e.nutzer).filter(Boolean))];
+
+    for (const userId of userIds) {
+      const userEntries = entries.filter(e => e.nutzer === userId);
+      const anwEntries  = userEntries.filter(e => e.typ === 'anwesenheit');
+      const pendingAnw  = [];
+
+      const svcStarts = userEntries
+        .filter(e => serviceTypes.has(e.typ) && e.aktion === 'start')
+        .sort((a, b) => new Date(a.zeitstempel) - new Date(b.zeitstempel));
+
+      for (const svcStart of svcStarts) {
+        const svcStop = userEntries.find(
+          e => e.typ === svcStart.typ && e.aktion === 'stop' &&
+               new Date(e.zeitstempel) > new Date(svcStart.zeitstempel)
+        );
+        if (!svcStop) continue;
+
+        const vonMs = new Date(svcStart.zeitstempel).getTime();
+        const bisMs = new Date(svcStop.zeitstempel).getTime();
+
+        if (_anwCovers(vonMs, bisMs, [...anwEntries, ...pendingAnw])) continue;
+
+        const anwStart = { id: genId(), nutzer: userId, typ: 'anwesenheit', aktion: 'start', zeitstempel: svcStart.zeitstempel };
+        const anwStop  = { id: genId(), nutzer: userId, typ: 'anwesenheit', aktion: 'stop',  zeitstempel: svcStop.zeitstempel, dauer_ms: bisMs - vonMs };
+
+        if (!additions[key]) additions[key] = [];
+        additions[key].push(anwStart, anwStop);
+        pendingAnw.push(anwStart, anwStop);
+        totalAdded += 2;
+      }
+    }
+  }
+
+  return { additions, totalAdded };
+}
+
+// Ergänzt fehlende Anwesenheits-Paare in modifiedPifs/newPifs.
+// Gibt Anzahl hinzugefügter Einträge zurück (je Paar 2).
+function applyAnwesenheitCheck(pifMap, modifiedPifs, newPifs) {
+  const effectiveMap = { ...pifMap };
+  for (const [k, p] of Object.entries(modifiedPifs)) effectiveMap[k] = p;
+  for (const [filename, p] of Object.entries(newPifs)) {
+    const existingKey = Object.keys(pifMap).find(k => k === filename || k.endsWith('/' + filename));
+    if (existingKey) effectiveMap[existingKey] = p;
+    else effectiveMap[filename] = p;
+  }
+
+  const { additions, totalAdded } = analyzeAnwesenheitCoverage(effectiveMap);
+
+  for (const [key, addEntries] of Object.entries(additions)) {
+    if (modifiedPifs[key]) {
+      modifiedPifs[key] = { ...modifiedPifs[key], entries: [...(modifiedPifs[key].entries || []), ...addEntries] };
+    } else if (pifMap[key]) {
+      modifiedPifs[key] = { ...pifMap[key], entries: [...(pifMap[key].entries || []), ...addEntries] };
+    } else if (newPifs[key]) {
+      newPifs[key] = { ...newPifs[key], entries: [...(newPifs[key].entries || []), ...addEntries] };
+    }
+  }
+
+  return totalAdded;
+}
+
 async function runMonthCleanupCloud() {
   const creds = getCloudCreds();
   if (!creds) { showToast('Keine Cloud-Zugangsdaten gefunden.'); return; }
@@ -455,7 +552,8 @@ async function runMonthCleanupCloud() {
     }));
 
     const { modifiedPifs, newPifs, totalMoved } = analyzeCrossMonthEntries(pifMap);
-    if (totalMoved === 0) { showToast('Alle Einträge sind im richtigen Monats-File ✓'); return; }
+    const totalAdded = applyAnwesenheitCheck(pifMap, modifiedPifs, newPifs);
+    if (totalMoved === 0 && totalAdded === 0) { showToast('Alle Einträge sind im richtigen Monats-File ✓'); return; }
 
     const hdrs = { Authorization: auth, 'Content-Type': 'application/json' };
     await Promise.all([
@@ -470,8 +568,10 @@ async function runMonthCleanupCloud() {
       ),
     ]);
 
-    const n = totalMoved;
-    showToast(`${n} Eintrag${n !== 1 ? 'e' : ''} bereinigt ✓`);
+    const parts = [];
+    if (totalMoved) parts.push(`${totalMoved} Eintrag${totalMoved !== 1 ? 'e' : ''} verschoben`);
+    if (totalAdded) parts.push(`${totalAdded / 2} Anwesenheits-Block${totalAdded / 2 !== 1 ? 'e' : ''} ergänzt`);
+    showToast(parts.join(', ') + ' ✓');
   } catch (e) {
     showToast('Fehler: ' + e.message);
   } finally {
@@ -511,7 +611,8 @@ async function runMonthCleanupDirectory() {
     if (Object.keys(pifMap).length === 0) { showToast('Keine PIF-Dateien im Ordner gefunden.'); return; }
 
     const { modifiedPifs, newPifs, totalMoved } = analyzeCrossMonthEntries(pifMap);
-    if (totalMoved === 0) { showToast('Alle Einträge sind im richtigen Monats-File ✓'); return; }
+    const totalAdded = applyAnwesenheitCheck(pifMap, modifiedPifs, newPifs);
+    if (totalMoved === 0 && totalAdded === 0) { showToast('Alle Einträge sind im richtigen Monats-File ✓'); return; }
 
     for (const [filename, pif] of Object.entries(modifiedPifs)) {
       const handle = handleMap[filename];
@@ -527,8 +628,10 @@ async function runMonthCleanupDirectory() {
       await writable.close();
     }
 
-    const n = totalMoved;
-    showToast(`${n} Eintrag${n !== 1 ? 'e' : ''} bereinigt ✓`);
+    const parts = [];
+    if (totalMoved) parts.push(`${totalMoved} Eintrag${totalMoved !== 1 ? 'e' : ''} verschoben`);
+    if (totalAdded) parts.push(`${totalAdded / 2} Anwesenheits-Block${totalAdded / 2 !== 1 ? 'e' : ''} ergänzt`);
+    showToast(parts.join(', ') + ' ✓');
   } catch (e) {
     showToast('Fehler: ' + e.message);
   } finally {

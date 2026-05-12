@@ -4,6 +4,43 @@ Alle relevanten Änderungen pro Release. Format orientiert sich an [Keep a Chang
 
 ---
 
+## [1.1.1] – 2026-05-12
+
+### Behoben
+
+- **Toast verschwindet nicht auf Smartphones** (`LifeguardClock.html`): `translateY(90px)` war bei
+  mehrzeiligen Toasts auf schmalen Displays zu gering — der Toast blieb teilweise sichtbar.
+  Erhöht auf `translateY(150px)`. Zusätzlich `opacity 0/1`-Übergang ergänzt als Fallback für
+  iOS Safari, das `position: fixed`-Transitions beim Viewport-Resize abbricht.
+
+### Neu (Editor)
+
+- **Anwesenheit automatisch beim Paar-Hinzufügen** (`editor-app.js`): Wird über „Paar hinzufügen"
+  ein Dienst-Typ mit `autoStartKeys: ['anwesenheit']` (Wachdienst, San, Ausbildung, Helfer)
+  eingetragen, erzeugt der Editor im Hintergrund automatisch ein passendes Anwesenheits-Paar —
+  sofern kein abdeckendes Anwesenheits-Fenster bereits vorhanden ist. Gilt auch beim Schreiben
+  in einen anderen Monats-PIF.
+
+- **🗂 Monate-Button** (`editor.html`, `editor-app.js`): Neuer Button in der Editor-Werkzeugleiste.
+  Liest bei Cloud- oder Verzeichnis-Betrieb alle PIF-Dateien ein und führt zwei Prüfungen durch:
+  1. **Monats-Bereinigung**: Einträge, deren Zeitstempel nicht zum Dateimonat passen, werden in
+     die korrekte Monats-PIF verschoben (neue Datei wird erstellt falls nötig).
+  2. **Anwesenheits-Lücken**: Jedes vollständige Dienst-Paar (Wachdienst, San, Ausbildung, Helfer)
+     wird auf Anwesenheits-Abdeckung geprüft. Fehlt ein abdeckendes Anwesenheits-Fenster, wird
+     es automatisch ergänzt. Überlappende Dienst-Paare desselben Nutzers erhalten nur einen
+     gemeinsamen Block.
+  Toast-Meldung zeigt z. B. „3 Einträge verschoben, 2 Anwesenheits-Blöcke ergänzt ✓".
+
+### Service Worker
+
+- Cache-Version auf `lgc-shell-v20` erhöht (erzwingt Update auf allen installierten PWAs).
+
+### Version
+
+- `APP_VERSION` auf `'1.1.1'` gesetzt.
+
+---
+
 ## [1.1.0] – 2026-05-12
 
 ### Behoben (Datenkonsistenz – Sprint 1 & 2)
