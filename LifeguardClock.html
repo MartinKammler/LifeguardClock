@@ -958,7 +958,8 @@
       position: fixed;
       bottom: 28px;
       left: 50%;
-      transform: translateX(-50%) translateY(90px);
+      transform: translateX(-50%) translateY(150px);
+      opacity: 0;
       background: var(--surface-3);
       border: 1px solid var(--border-2);
       color: var(--text);
@@ -972,11 +973,13 @@
       max-width: min(92vw, 420px);
       text-align: center;
       line-height: 1.45;
-      transition: transform 0.32s cubic-bezier(0.34, 1.56, 0.64, 1);
+      transition: transform 0.32s cubic-bezier(0.34, 1.56, 0.64, 1),
+                  opacity 0.22s ease;
       box-shadow: 0 8px 32px rgba(0,0,0,0.5);
     }
     #toast.visible {
       transform: translateX(-50%) translateY(0);
+      opacity: 1;
     }
 
     /* ─── RESPONSIVE ─────────────────────────────────────────── */
