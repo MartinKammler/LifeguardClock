@@ -231,6 +231,12 @@
     .v-all-skipped { padding: 12px 16px; font-size: 13px; color: var(--text-2);
                      background: var(--bg2); border-radius: 10px; border: 1px solid var(--border);
                      display: flex; align-items: center; gap: 10px; }
+    #toast { position:fixed; bottom:28px; left:50%; transform:translateX(-50%) translateY(120px);
+             background:var(--bg3); color:var(--text); border:1px solid var(--border2);
+             padding:12px 20px; border-radius:12px; font-size:14px; font-weight:600;
+             pointer-events:none; z-index:9999; white-space:pre-line; text-align:center;
+             transition:transform 0.32s cubic-bezier(0.34,1.56,0.64,1); max-width:340px; }
+    #toast.visible { transform:translateX(-50%) translateY(0); }
   </style>
 </head>
 <body>
@@ -410,6 +416,7 @@
   <!-- Hidden inputs -->
   <input type="file" id="file-input" accept=".json" hidden>
   <datalist id="known-persons-list"></datalist>
+  <div id="toast"></div>
 
 <script src="editor-app.js"></script>
 </body>

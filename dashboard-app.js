@@ -2,6 +2,17 @@
 if (typeof CONFIG === 'undefined') window.CONFIG = undefined;
 if (typeof ADMIN_CONFIG === 'undefined') window.ADMIN_CONFIG = undefined;
 
+    // ─── Toast ───────────────────────────────────────────────────────────────
+    let _dashToastTimer = null;
+    function showToast(msg) {
+      const el = document.getElementById('toast');
+      if (!el) { console.warn('[dashboard]', msg); return; }
+      el.textContent = msg;
+      el.classList.add('visible');
+      if (_dashToastTimer) clearTimeout(_dashToastTimer);
+      _dashToastTimer = setTimeout(() => el.classList.remove('visible'), 3200);
+    }
+
     // ─── HTML-Escape ─────────────────────────────────────────────────────────
     function escHtml(s) {
       return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -218,7 +229,7 @@ if (typeof ADMIN_CONFIG === 'undefined') window.ADMIN_CONFIG = undefined;
         } catch { /* überspringe kaputte Datei */ }
       }
       if (entries.length === 0) {
-        alert('Keine gültigen lgc_*.json Dateien gefunden.');
+        showToast('Keine gültigen lgc_*.json Dateien gefunden.');
         return;
       }
       DB = buildDB(entries);
@@ -244,7 +255,7 @@ if (typeof ADMIN_CONFIG === 'undefined') window.ADMIN_CONFIG = undefined;
           }
           await processFiles(files);
         } catch (e) {
-          if (e.name !== 'AbortError') alert('Fehler: ' + e.message);
+          if (e.name !== 'AbortError') showToast('Fehler: ' + e.message);
         }
       } else {
         // Fallback: <input webkitdirectory> (file://, Firefox, …)
@@ -766,7 +777,7 @@ if (typeof ADMIN_CONFIG === 'undefined') window.ADMIN_CONFIG = undefined;
         });
         if (res.status === 404) {
           btn.disabled = false; btn.textContent = '☁️ Cloud laden';
-          alert('Kein LifeguardClock-Ordner in der Cloud gefunden.\nBitte erst die Hauptapp synchronisieren.');
+          showToast('Kein LifeguardClock-Ordner in der Cloud gefunden.\nBitte erst die Hauptapp synchronisieren.');
           return;
         }
         if (!res.ok) throw new Error(`PROPFIND: HTTP ${res.status}`);
@@ -779,7 +790,7 @@ if (typeof ADMIN_CONFIG === 'undefined') window.ADMIN_CONFIG = undefined;
 
         if (hrefs.length === 0) {
           btn.disabled = false; btn.textContent = '☁️ Cloud laden';
-          alert('Keine PIF-Dateien (lgc_pif_*) in der Cloud gefunden.\nBitte erst mit LifeguardClock stempeln und synchronisieren.');
+          showToast('Keine PIF-Dateien (lgc_pif_*) in der Cloud gefunden.\nBitte erst mit LifeguardClock stempeln und synchronisieren.');
           return;
         }
 
@@ -807,7 +818,7 @@ if (typeof ADMIN_CONFIG === 'undefined') window.ADMIN_CONFIG = undefined;
         }
 
         btn.disabled = false; btn.textContent = '☁️ Cloud laden';
-        if (entries.length === 0) { alert('Keine gültigen PIF-Dateien geladen.'); return; }
+        if (entries.length === 0) { showToast('Keine gültigen PIF-Dateien geladen.'); return; }
 
         DB = buildDB(entries);
         buildTypeList(DB.typeTotals);
@@ -821,7 +832,7 @@ if (typeof ADMIN_CONFIG === 'undefined') window.ADMIN_CONFIG = undefined;
         renderAll();
       } catch(e) {
         btn.disabled = false; btn.textContent = '☁️ Cloud laden';
-        alert('Cloud-Fehler: ' + e.message);
+        showToast('Cloud-Fehler: ' + e.message);
       }
     }
 

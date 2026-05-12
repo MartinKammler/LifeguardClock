@@ -126,7 +126,15 @@ function populateTypSelect() {
 
 // ─── Utils ────────────────────────────────────────────────────────────────────
 function genId() { return Date.now() + Math.random(); }
-function showToast(msg) { alert(msg); }
+let _editorToastTimer = null;
+function showToast(msg) {
+  const el = document.getElementById('toast');
+  if (!el) { console.warn('[editor]', msg); return; }
+  el.textContent = msg;
+  el.classList.add('visible');
+  if (_editorToastTimer) clearTimeout(_editorToastTimer);
+  _editorToastTimer = setTimeout(() => el.classList.remove('visible'), 3200);
+}
 function sameEntryId(a, b) { return String(a) === String(b); }
 function getEntryById(id) {
   return logData?.log?.find(e => sameEntryId(e.id, id));
@@ -233,7 +241,7 @@ function syncCloudSaveBtn() {
 async function openCloudPicker() {
   const creds = getCloudCreds();
   if (!creds) {
-    alert('Keine Cloud-Zugangsdaten gefunden.\nBitte zuerst in admin.html konfigurieren.');
+    showToast('Keine Cloud-Zugangsdaten gefunden.\nBitte zuerst in admin.html konfigurieren.');
     return;
   }
   const btn = document.getElementById('btn-cloud-load');
@@ -247,7 +255,7 @@ async function openCloudPicker() {
       headers: { Authorization: auth, Depth: '1' },
     });
     if (res.status === 404) {
-      alert('Kein LifeguardClock-Ordner in der Cloud.\nBitte erst die Hauptapp synchronisieren.');
+      showToast('Kein LifeguardClock-Ordner in der Cloud.\nBitte erst die Hauptapp synchronisieren.');
       return;
     }
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -257,7 +265,7 @@ async function openCloudPicker() {
       .filter(h => /lgc_pif_.+_\d{4}-\d{2}\.json$/.test(h))
       .sort((a, b) => b.localeCompare(a));
     if (hrefs.length === 0) {
-      alert('Keine PIF-Dateien in der Cloud gefunden.\nBitte erst mit LifeguardClock stempeln um Nutzerdaten zu erzeugen.\n\nLegacy-Gerätedateien können weiterhin über „Datei öffnen" geladen werden.');
+      showToast('Keine PIF-Dateien in der Cloud gefunden.\nBitte erst mit LifeguardClock stempeln um Nutzerdaten zu erzeugen.');
       return;
     }
     const sel = document.getElementById('cloud-file-select');
@@ -269,7 +277,7 @@ async function openCloudPicker() {
     }).join('');
     document.getElementById('modal-cloud').showModal();
   } catch(e) {
-    alert('Cloud-Fehler: ' + e.message);
+    showToast('Cloud-Fehler: ' + e.message);
   } finally {
     btn.disabled = false; btn.textContent = '\u2601 Cloud';
   }
@@ -319,7 +327,7 @@ async function loadFromCloud(href) {
     pushHistory();
     renderAll();
     syncCloudSaveBtn();
-  } catch(e) { alert('Fehler beim Laden: ' + e.message); }
+  } catch(e) { showToast('Fehler beim Laden: ' + e.message); }
 }
 
 // ─── Cloud: Speichern (PUT) ───────────────────────────────────────────────────
@@ -341,7 +349,7 @@ async function saveToCloud() {
     cloudDirty = false;
     syncCloudSaveBtn();
   } catch(e) {
-    alert('Speichern fehlgeschlagen: ' + e.message);
+    showToast('Speichern fehlgeschlagen: ' + e.message);
     btn.disabled = false;
     syncCloudSaveBtn();
   }
@@ -361,7 +369,7 @@ async function loadFile(file) {
     pushHistory();
     renderAll();
     syncCloudSaveBtn();
-  } catch(e) { alert('Ungültige JSON-Datei: ' + e.message); }
+  } catch(e) { showToast('Ungültige JSON-Datei: ' + e.message); }
 }
 
 function newFile() {
@@ -608,7 +616,7 @@ function setValidationTabBadge(state) {
 async function fetchAndValidate() {
   const creds = getCloudCreds();
   if (!creds) {
-    alert('Keine Cloud-Zugangsdaten gefunden.\nBitte zuerst in admin.html konfigurieren.');
+    showToast('Keine Cloud-Zugangsdaten gefunden.\nBitte zuerst in admin.html konfigurieren.');
     return;
   }
   const btn = document.getElementById('btn-validate-all');
@@ -692,7 +700,7 @@ async function fetchAndValidate() {
     buildTypeMaps();
     renderValidationPanel();
   } catch (e) {
-    alert('Fehler beim Prüfen: ' + e.message);
+    showToast('Fehler beim Prüfen: ' + e.message);
     setValidationTabBadge('error');
   } finally {
     btn.disabled = false;
@@ -826,7 +834,7 @@ async function performSave(hrefs, issuesToResolve) {
     validationIssues = validationIssues.filter(i => !resolved.has(i));
     renderValidationPanel();
   } catch (err) {
-    alert('Fehler beim Speichern: ' + err.message);
+    showToast('Fehler beim Speichern: ' + err.message);
   } finally {
     _validationSaving = false;
   }
@@ -1223,10 +1231,10 @@ document.getElementById('validation-cards').addEventListener('click', async e =>
 
   if (e.target.closest('.v-fix-open-start')) {
     const inp = document.getElementById(`v-stop-${idx}`);
-    if (!inp?.value) { alert('Bitte Stop-Zeit eingeben.'); return; }
+    if (!inp?.value) { showToast('Bitte Stop-Zeit eingeben.'); return; }
     const stopIso = localInputToIso(inp.value);
     if (new Date(stopIso) <= new Date(issue.mainEntry.zeitstempel)) {
-      alert('Stop-Zeit muss nach dem Start liegen.'); return;
+      showToast('Stop-Zeit muss nach dem Start liegen.'); return;
     }
     const checks = [...document.querySelectorAll(`.v-linked-check[data-issue-idx="${idx}"]`)];
     const linkedToFix = checks
@@ -1248,10 +1256,10 @@ document.getElementById('validation-cards').addEventListener('click', async e =>
 
   if (e.target.closest('.v-fix-orphan-stop')) {
     const inp = document.getElementById(`v-start-${idx}`);
-    if (!inp?.value) { alert('Bitte Start-Zeit eingeben.'); return; }
+    if (!inp?.value) { showToast('Bitte Start-Zeit eingeben.'); return; }
     const startIso = localInputToIso(inp.value);
     if (new Date(startIso) >= new Date(issue.mainEntry.zeitstempel)) {
-      alert('Start-Zeit muss vor dem Stop liegen.'); return;
+      showToast('Start-Zeit muss vor dem Stop liegen.'); return;
     }
     applyOrphanStopFix(issue, startIso);
     await performSave([issue.pifHref], [issue]);
@@ -1282,11 +1290,11 @@ document.getElementById('validation-cards').addEventListener('click', async e =>
   if (e.target.closest('.v-fix-short-pair')) {
     const inpS = document.getElementById(`v-sp-start-${idx}`);
     const inpE = document.getElementById(`v-sp-stop-${idx}`);
-    if (!inpS?.value || !inpE?.value) { alert('Bitte beide Zeiten eingeben.'); return; }
+    if (!inpS?.value || !inpE?.value) { showToast('Bitte beide Zeiten eingeben.'); return; }
     const newStartIso = localInputToIso(inpS.value);
     const newStopIso  = localInputToIso(inpE.value);
     if (new Date(newStopIso) <= new Date(newStartIso)) {
-      alert('Bis muss nach Von liegen.'); return;
+      showToast('Bis muss nach Von liegen.'); return;
     }
     applyShortPairFix(issue, newStartIso, newStopIso);
     const hrefs = [...new Set([issue.entries[0].pifHref, issue.entries[1].pifHref])];
@@ -1357,7 +1365,7 @@ document.getElementById('log-tbody').addEventListener('click', e => {
 document.getElementById('btn-clear-all').addEventListener('click', () => {
   if (!logData) return;
   const count = logData.log.length;
-  if (!count) { alert('Keine Einträge vorhanden.'); return; }
+  if (!count) { showToast('Keine Einträge vorhanden.'); return; }
   document.getElementById('clear-count').textContent =
     count + (count === 1 ? ' Eintrag' : ' Einträge');
   document.getElementById('modal-clear').showModal();
@@ -1380,19 +1388,19 @@ document.getElementById('add-cancel').addEventListener('click', () =>
 document.getElementById('add-confirm').addEventListener('click', () => {
   const nutzer = document.getElementById('add-nutzer').value.trim();
   const typ    = document.getElementById('add-typ').value;
-  if (!nutzer) { alert('Bitte Person eingeben.'); return; }
+  if (!nutzer) { showToast('Bitte Person eingeben.'); return; }
   if (addMode === 'single') {
     const aktion = document.getElementById('add-aktion').value;
     const ts     = document.getElementById('add-ts').value;
-    if (!ts) { alert('Bitte Zeitpunkt ausfüllen.'); return; }
+    if (!ts) { showToast('Bitte Zeitpunkt ausfüllen.'); return; }
     document.getElementById('modal-add').close();
     addSingle(nutzer, typ, aktion, localInputToIso(ts));
   } else {
     const von = document.getElementById('add-von').value;
     const bis = document.getElementById('add-bis').value;
-    if (!von || !bis) { alert('Bitte Von und Bis ausfüllen.'); return; }
+    if (!von || !bis) { showToast('Bitte Von und Bis ausfüllen.'); return; }
     const ms = new Date(bis) - new Date(von);
-    if (ms <= 0) { alert('Bis muss nach Von liegen.'); return; }
+    if (ms <= 0) { showToast('Bis muss nach Von liegen.'); return; }
     document.getElementById('modal-add').close();
     addPair(nutzer, typ, localInputToIso(von), localInputToIso(bis));
   }
@@ -1422,5 +1430,5 @@ document.addEventListener('drop', e => {
   document.getElementById('main-area').classList.remove('drop-active');
   const file = e.dataTransfer.files[0];
   if (file?.name.endsWith('.json')) loadFile(file);
-  else if (file) alert('Bitte eine .json Datei ablegen.');
+  else if (file) showToast('Bitte eine .json Datei ablegen.');
 });

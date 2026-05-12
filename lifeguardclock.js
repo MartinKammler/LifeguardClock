@@ -164,6 +164,8 @@ const APP_VERSION = '1.0.3';
 */
 const IS_PROXY = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
 const IS_DESKTOP = IS_PROXY || (!('ontouchstart' in window) && window.screen.width >= 1024);
+// Kiosk-Verhalten (Tastatur-Blocker, Kontextmenü, Popstate) nur im echten Kiosk-Betrieb
+const KIOSK_MODE = CONFIG.kioskMode !== false && !IS_PROXY;
 if (IS_DESKTOP) document.body.classList.add('proxy-layout');
 
 /* ── Cloud-Konfiguration aus config.js übernehmen (nur wenn noch leer)
@@ -1141,7 +1143,7 @@ function syncDashboard() {
       startBtn.disabled = false;
       startBtn.classList.add('extend-mode');
       if (icon) icon.textContent = '↺';
-      if (lbl)  lbl.textContent  = 'Verlängern';
+      if (lbl)  lbl.textContent  = 'Neue Schicht';
     } else if (inCooldown) {
       startBtn.disabled = true;
       startBtn.classList.remove('extend-mode');
@@ -1618,6 +1620,8 @@ async function fetchUserPif(userId) {
   if (!isCloudConfigured(cfg)) return;
   const user = getUsers().find(u => u.id === userId);
   if (!user) return;
+  // Zustand vor dem Merge merken um Neuaktivierungen zu erkennen
+  const prevState = { ...(getAllStates()[userId] || {}) };
   const month  = todayISO().slice(0, 7);
   const months = [month];
   // Vormonat laden falls wir noch vor der Tagesgrenze sind
@@ -1641,7 +1645,12 @@ async function fetchUserPif(userId) {
   }
   if (changed) {
     rebuildStateFromLog(userId);
-    if (currentUser?.id === userId) syncDashboard();
+    if (currentUser?.id === userId) {
+      const newState = getAllStates()[userId] || {};
+      if (TYPES.some(t => newState[t.key] && !prevState[t.key]))
+        showToast('Aktiver Stempelstand aus Cloud übernommen');
+      syncDashboard();
+    }
   }
 }
 
@@ -2507,12 +2516,28 @@ function stopAllActiveSessions() {
 }
 
 function safeShutdown() {
-  showConfirm('Alle aktiven Sitzungen werden jetzt beendet.\nDas Gerät kann danach sicher ausgeschaltet werden.', () => {
+  showConfirm('Alle aktiven Sitzungen werden jetzt beendet.\nDas Gerät kann danach sicher ausgeschaltet werden.', async () => {
+    // Aktive Nutzer merken bevor stopAllActiveSessions() den State löscht
+    const allStates = getAllStates();
+    const activeUserIds = new Set(
+      USERS.filter(u => TYPES.some(t => allStates[u.id]?.[t.key])).map(u => u.id)
+    );
+
     stopAllActiveSessions();
     document.getElementById('shutdown-time').textContent =
       'Heruntergefahren um ' + new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }) + ' Uhr';
     localStorage.removeItem('lgc_session');
     showScreen('screen-shutdown');
+
+    const syncEl = document.getElementById('shutdown-sync');
+    if (!syncEl) return;
+    if (activeUserIds.size === 0 || !isCloudConfigured(getCloudConfig())) {
+      syncEl.textContent = 'Stempeldaten lokal gespeichert';
+      return;
+    }
+    syncEl.textContent = 'Synchronisiere Stempeldaten …';
+    await Promise.allSettled([...activeUserIds].map(id => pushUserPif(id)));
+    syncEl.textContent = '✓ Cloud-Sync abgeschlossen';
   });
 }
 
@@ -3273,35 +3298,36 @@ document.addEventListener('visibilitychange', () => {
 });
 requestWakeLock();
 
-// ── Tastaturkürzel blockieren ──
-document.addEventListener('keydown', e => {
-  const blocked =
-    e.key === 'F5'  || e.key === 'F11' || e.key === 'F12' ||
-    e.key === 'F1'  || e.key === 'F2'  || e.key === 'F3'  ||
-    (e.altKey  && e.key === 'F4') ||
-    (e.ctrlKey && ['r','R','w','W','n','N','t','T','l','L','u','U','f','F','p','P','s','S'].includes(e.key)) ||
-    (e.metaKey && ['r','R','w','W','n','N','t','T','l','L'].includes(e.key));
-  if (blocked) { e.preventDefault(); e.stopPropagation(); }
-}, true); // capture-Phase: vor allem anderen
+if (KIOSK_MODE) {
+  // ── Tastaturkürzel blockieren ──
+  document.addEventListener('keydown', e => {
+    const blocked =
+      e.key === 'F5'  || e.key === 'F11' || e.key === 'F12' ||
+      e.key === 'F1'  || e.key === 'F2'  || e.key === 'F3'  ||
+      (e.altKey  && e.key === 'F4') ||
+      (e.ctrlKey && ['r','R','w','W','n','N','t','T','l','L','u','U','f','F','p','P','s','S'].includes(e.key)) ||
+      (e.metaKey && ['r','R','w','W','n','N','t','T','l','L'].includes(e.key));
+    if (blocked) { e.preventDefault(); e.stopPropagation(); }
+  }, true); // capture-Phase: vor allem anderen
 
-// ── Kontextmenü (Rechtsklick / Langes Drücken) blockieren ──
-document.addEventListener('contextmenu', e => e.preventDefault());
+  // ── Kontextmenü (Rechtsklick / Langes Drücken) blockieren ──
+  document.addEventListener('contextmenu', e => e.preventDefault());
 
-// ── Zurück-Geste / -Taste blockieren ──
-history.pushState(null, '', location.href);
-window.addEventListener('popstate', () => {
+  // ── Zurück-Geste / -Taste blockieren ──
   history.pushState(null, '', location.href);
-});
+  window.addEventListener('popstate', () => {
+    history.pushState(null, '', location.href);
+  });
 
-// ── Ziehen und Text-Selektion deaktivieren ──
-document.addEventListener('dragstart',       e => e.preventDefault());
-document.addEventListener('selectstart',     e => e.preventDefault());
-// Layout ist position:fixed – kein globales touchmove-preventDefault nötig
+  // ── Ziehen und Text-Selektion deaktivieren ──
+  document.addEventListener('dragstart',       e => e.preventDefault());
+  document.addEventListener('selectstart',     e => e.preventDefault());
 
-// ── Orientierung sperren (Portrait – konsistent mit Manifest und CSS-Fallback) ──
-try {
-  screen.orientation?.lock?.('portrait').catch(() => {});
-} catch {}
+  // ── Orientierung sperren (Portrait – konsistent mit Manifest und CSS-Fallback) ──
+  try {
+    screen.orientation?.lock?.('portrait').catch(() => {});
+  } catch {}
+}
 
 
 
