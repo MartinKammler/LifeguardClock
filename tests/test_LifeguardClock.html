@@ -77,12 +77,47 @@ let _pifPushCalls = [];
 async function pushUserPif(userId) { _pifPushCalls.push(userId); }
 function resetPifPushCalls() { _pifPushCalls = []; }
 
-function getPrevLog() { return []; } // vereinfacht: kein Vormonat im Test
-
-function addEntry(entry) {
-  const log = getLog();
+function prevLogKey() {
+  const d = new Date();
+  if (d.getHours() < (CONFIG.dayBoundaryHour ?? 4)) d.setDate(d.getDate() - 1);
+  const m = d.getMonth();
+  return m === 0
+    ? `lgc_log_${d.getFullYear() - 1}-12`
+    : `lgc_log_${d.getFullYear()}-${pad(m)}`;
+}
+function getPrevLog() {
+  try { return JSON.parse(localStorage.getItem(prevLogKey()) || '[]'); }
+  catch { return []; }
+}
+function saveLogForKey(key, log) {
+  localStorage.setItem(key, JSON.stringify(log));
+  markLocalChange();
+}
+function findLogKeyForOpenStart(userName, logType) {
+  for (const [key, log] of [[logKey(), getLog()], [prevLogKey(), getPrevLog()]]) {
+    for (let i = log.length - 1; i >= 0; i--) {
+      const e = log[i];
+      if (e.nutzer !== userName || e.typ !== logType) continue;
+      return e.aktion === 'start' ? key : null;
+    }
+  }
+  return null;
+}
+function zeitfensterEndTs(type) {
+  const zf = getZeitfensterForType(type);
+  if (!zf) return new Date().toISOString();
+  const [h, m] = zf.end.split(':').map(Number);
+  const d = new Date();
+  d.setHours(h, m, 0, 0);
+  if (d > new Date()) d.setDate(d.getDate() - 1);
+  return d.toISOString();
+}
+function addEntry(entry, { targetLogKey } = {}) {
+  const key = targetLogKey || logKey();
+  let log;
+  try { log = JSON.parse(localStorage.getItem(key) || '[]'); } catch { log = []; }
   log.push({ id: Date.now() + Math.random(), ...entry });
-  saveLog(log);
+  saveLogForKey(key, log);
   const u = getUsers().find(u => u.name === entry.nutzer);
   if (u) pushUserPif(u.id).catch(() => {});
 }
@@ -154,10 +189,7 @@ function getLog() {
   try { return JSON.parse(localStorage.getItem(logKey()) || '[]'); }
   catch { showToast('⚠ Logdaten beschädigt – bitte Admin informieren'); return []; }
 }
-function saveLog(log) {
-  localStorage.setItem(logKey(), JSON.stringify(log));
-  markLocalChange();
-}
+function saveLog(log) { saveLogForKey(logKey(), log); }
 function getAllStates() {
   try { return JSON.parse(localStorage.getItem('lgc_state') || '{}'); }
   catch { showToast('⚠ Zustandsdaten beschädigt – bitte Admin informieren'); return {}; }
@@ -223,21 +255,23 @@ function isWithinZeitfenster() {
 }
 function calcDurationMs(userName, logType, atTs) {
   const atTime = atTs ? new Date(atTs).getTime() : Date.now();
-  const log = getLog();
-  for (let i = log.length - 1; i >= 0; i--) {
-    const e = log[i];
-    if (e.nutzer !== userName || e.typ !== logType) continue;
-    if (e.aktion === 'stop')  return 0;  // stop vor start → keine offene Sitzung
-    if (e.aktion === 'start') return Math.max(0, atTime - new Date(e.zeitstempel).getTime());
+  for (const log of [getLog(), getPrevLog()]) {
+    for (let i = log.length - 1; i >= 0; i--) {
+      const e = log[i];
+      if (e.nutzer !== userName || e.typ !== logType) continue;
+      if (e.aktion === 'stop')  return 0;
+      if (e.aktion === 'start') return Math.max(0, atTime - new Date(e.zeitstempel).getTime());
+    }
   }
   return 0;
 }
 function getTypeStartMs(userName, logType) {
-  const log = getLog();
-  for (let i = log.length - 1; i >= 0; i--) {
-    const e = log[i];
-    if (e.nutzer === userName && e.typ === logType) {
-      return e.aktion === 'start' ? new Date(e.zeitstempel).getTime() : null;
+  for (const log of [getLog(), getPrevLog()]) {
+    for (let i = log.length - 1; i >= 0; i--) {
+      const e = log[i];
+      if (e.nutzer === userName && e.typ === logType) {
+        return e.aktion === 'start' ? new Date(e.zeitstempel).getTime() : null;
+      }
     }
   }
   return null;
@@ -366,7 +400,6 @@ function escHtml(s) {
 // Neue per-typ Version (wie in LifeguardClock.html)
 function checkZeitfensterEnd() {
   const allStates = getAllStates();
-  const now       = new Date().toISOString();
   let changed     = false;
   USERS.forEach(user => {
     const state = allStates[user.id];
@@ -374,9 +407,12 @@ function checkZeitfensterEnd() {
     TIME_KEYS.forEach(key => {
       if (!state[key]) return;
       const type = TYPES.find(t => t.key === key);
-      if (isWithinZeitfensterForType(type)) return;   // per-Typ-Prüfung
-      const durMs = calcDurationMs(user.name, type.logType, now);
-      addEntry({ nutzer: user.name, typ: type.logType, aktion: 'stop', zeitstempel: now, auto: true, dauer_ms: durMs });
+      if (isWithinZeitfensterForType(type)) return;
+      const startMs = getTypeStartMs(user.name, type.logType);
+      if (startMs === null) { state[key] = false; changed = true; return; }
+      const stopTs = zeitfensterEndTs(type);
+      const durMs  = calcDurationMs(user.name, type.logType, stopTs);
+      addEntry({ nutzer: user.name, typ: type.logType, aktion: 'stop', zeitstempel: stopTs, auto: true, dauer_ms: durMs });
       state[key] = false;
       changed = true;
       if (currentUser && currentUser.id === user.id) {
@@ -405,7 +441,7 @@ function checkTimeLimits() {
       state[type.key] = false;
       if (type.cooldownMs) {
         if (!state.cooldown) state.cooldown = {};
-        state.cooldown[type.key] = new Date(now.getTime() + type.cooldownMs).toISOString();
+        state.cooldown[type.key] = new Date(new Date(stopTs).getTime() + type.cooldownMs).toISOString();
       }
       allStates[user.id] = state;
       changed = true;
@@ -1371,8 +1407,13 @@ function checkDayBoundary(now = new Date()) {
     if (!state) return;
     TYPES.forEach(type => {
       if (!state[type.key]) return;
+      const startLogKey = findLogKeyForOpenStart(user.name, type.logType);
+      if (!startLogKey) { state[type.key] = false; changed = true; return; }
       const durMs = calcDurationMs(user.name, type.logType, stopTs);
-      addEntry({ nutzer: user.name, typ: type.logType, aktion: 'stop', zeitstempel: stopTs, auto: true, dauer_ms: durMs });
+      addEntry(
+        { nutzer: user.name, typ: type.logType, aktion: 'stop', zeitstempel: stopTs, auto: true, dauer_ms: durMs },
+        { targetLogKey: startLogKey }
+      );
       state[type.key] = false;
       changed = true;
     });
@@ -2836,6 +2877,156 @@ await test('checkTimeLimits ohne offenen Start → kein pushUserPif', () => {
   setStateActive('test_user', 'wachdienst', true);
   checkTimeLimits();
   assert(!_pifPushCalls.includes('test_user'), 'pushUserPif darf nicht aufgerufen werden ohne offenen Start');
+});
+
+/* ══════════════════════════════════════════════════════════════
+   Suite 32 – findLogKeyForOpenStart
+══════════════════════════════════════════════════════════════ */
+suite('findLogKeyForOpenStart – offenen Start im richtigen Log-Key finden');
+
+await test('offener Start im aktuellen Log → logKey()', () => {
+  resetStore(); resetConfig(); rebuildTypes(); resetUsers();
+  pushLog({ nutzer: 'Test User', typ: 'anwesenheit', aktion: 'start', zeitstempel: msAgo(3600000) });
+  const k = findLogKeyForOpenStart('Test User', 'anwesenheit');
+  assertEqual(k, logKey(), 'Muss aktuellen Log-Key zurückgeben');
+});
+
+await test('offener Start im Vormonat-Log → prevLogKey()', () => {
+  resetStore(); resetConfig(); rebuildTypes(); resetUsers();
+  const prevKey = prevLogKey();
+  const prevLog = [{ id: 1, nutzer: 'Test User', typ: 'anwesenheit', aktion: 'start', zeitstempel: msAgo(3600000) }];
+  localStorage.setItem(prevKey, JSON.stringify(prevLog));
+  const k = findLogKeyForOpenStart('Test User', 'anwesenheit');
+  assertEqual(k, prevKey, 'Muss prevLogKey zurückgeben wenn Start im Vormonat liegt');
+});
+
+await test('letzter Eintrag ist stop → null', () => {
+  resetStore(); resetConfig(); rebuildTypes(); resetUsers();
+  pushLog({ nutzer: 'Test User', typ: 'anwesenheit', aktion: 'start', zeitstempel: msAgo(7200000) });
+  pushLog({ nutzer: 'Test User', typ: 'anwesenheit', aktion: 'stop',  zeitstempel: msAgo(3600000) });
+  const k = findLogKeyForOpenStart('Test User', 'anwesenheit');
+  assertEqual(k, null, 'Muss null zurückgeben wenn letzter Eintrag ein stop ist');
+});
+
+await test('kein Eintrag → null', () => {
+  resetStore(); resetConfig(); rebuildTypes(); resetUsers();
+  const k = findLogKeyForOpenStart('Test User', 'anwesenheit');
+  assertEqual(k, null, 'Muss null zurückgeben wenn keine Einträge vorhanden');
+});
+
+/* ══════════════════════════════════════════════════════════════
+   Suite 33 – zeitfensterEndTs
+══════════════════════════════════════════════════════════════ */
+suite('zeitfensterEndTs – korrekter Zeitfenster-End-Zeitstempel');
+
+await test('Fenster-Ende liegt in der Vergangenheit → heutiges Datum mit dieser Uhrzeit', () => {
+  resetStore(); resetConfig(); rebuildTypes(); resetUsers();
+  const now = new Date();
+  // Setze Ende auf 1 Stunde vor jetzt → muss heute sein (in der Vergangenheit)
+  const endH = (now.getHours() - 1 + 24) % 24;
+  const endStr = `${String(endH).padStart(2,'0')}:00`;
+  saveZeitfensterForType('wachdienst', '00:00', endStr);
+  const type = TYPES.find(t => t.key === 'wachdienst');
+  const ts = zeitfensterEndTs(type);
+  const result = new Date(ts);
+  assertEqual(result.getHours(), endH, 'Stunde muss Fenster-Ende entsprechen');
+  assert(result <= now, 'Zeitstempel muss in der Vergangenheit liegen');
+});
+
+await test('Fenster-Ende liegt in der Zukunft → gestern mit dieser Uhrzeit', () => {
+  resetStore(); resetConfig(); rebuildTypes(); resetUsers();
+  const now = new Date();
+  // Setze Ende auf 1 Stunde nach jetzt → muss gestern sein (in der Vergangenheit)
+  const endH = (now.getHours() + 1) % 24;
+  const endStr = `${String(endH).padStart(2,'0')}:00`;
+  saveZeitfensterForType('wachdienst', '00:00', endStr);
+  const type = TYPES.find(t => t.key === 'wachdienst');
+  const ts = zeitfensterEndTs(type);
+  const result = new Date(ts);
+  assert(result <= now, 'Zeitstempel muss in der Vergangenheit liegen (gestern)');
+  assertEqual(result.getHours(), endH, 'Stunde muss Fenster-Ende entsprechen');
+  const yesterday = new Date(now); yesterday.setDate(now.getDate() - 1);
+  assertEqual(result.getDate(), yesterday.getDate(), 'Tag muss gestrig sein');
+});
+
+/* ══════════════════════════════════════════════════════════════
+   Suite 34 – checkDayBoundary Monatsgrenze
+══════════════════════════════════════════════════════════════ */
+suite('checkDayBoundary – Stop in korrekten Monats-Log schreiben');
+
+await test('Start im Vormonat-Log → Stop wird in prevLogKey geschrieben', () => {
+  resetStore(); resetConfig(); rebuildTypes(); resetUsers();
+  // Lege Start im Vormonat ab
+  const prevKey = prevLogKey();
+  const startTs = msAgo(3600000);
+  localStorage.setItem(prevKey, JSON.stringify([
+    { id: 1, nutzer: 'Test User', typ: 'anwesenheit', aktion: 'start', zeitstempel: startTs }
+  ]));
+  setStateActive('test_user', 'anwesenheit', true);
+  const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1);
+  _lastKnownDay = todayISO(yesterday);
+  checkDayBoundary(new Date());
+  const prevAfter = JSON.parse(localStorage.getItem(prevKey) || '[]');
+  const stops = prevAfter.filter(e => e.aktion === 'stop');
+  assert(stops.length === 1, 'Stop muss im Vormonat-Log landen');
+  const currentLog = getLog();
+  assert(currentLog.filter(e => e.aktion === 'stop').length === 0, 'Aktueller Log darf keinen Stop enthalten');
+});
+
+await test('staler State ohne offenen Start → State wird bereinigt, kein Stop-Eintrag', () => {
+  resetStore(); resetConfig(); rebuildTypes(); resetUsers();
+  // State sagt aktiv, aber kein Start-Eintrag in irgendeinem Log
+  setStateActive('test_user', 'anwesenheit', true);
+  const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1);
+  _lastKnownDay = todayISO(yesterday);
+  checkDayBoundary(new Date());
+  const state = getAllStates()['test_user'];
+  assert(state.anwesenheit === false, 'State muss bereinigt werden');
+  assertEqual(getLog().filter(e => e.aktion === 'stop').length, 0, 'Kein Stop-Eintrag ohne offenen Start');
+});
+
+/* ══════════════════════════════════════════════════════════════
+   Suite 35 – checkZeitfensterEnd staler State
+══════════════════════════════════════════════════════════════ */
+suite('checkZeitfensterEnd – staler State ohne offenen Start');
+
+await test('staler State → State wird auf false gesetzt, kein Stop-Eintrag', () => {
+  resetStore(); resetConfig(); rebuildTypes(); resetUsers();
+  saveZeitfensterForType('wachdienst', '00:00', '00:01'); // Fenster geschlossen
+  // Kein start-Eintrag im Log, State sagt trotzdem aktiv
+  setStateActive('test_user', 'wachdienst', true);
+  checkZeitfensterEnd();
+  const state = getAllStates()['test_user'];
+  assert(state.wachdienst === false, 'State muss bereinigt werden');
+  assertEqual(getLog().filter(e => e.aktion === 'stop').length, 0, 'Kein Stop-Eintrag ohne offenen Start');
+});
+
+/* ══════════════════════════════════════════════════════════════
+   Suite 36 – checkTimeLimits Cooldown-Timing
+══════════════════════════════════════════════════════════════ */
+suite('checkTimeLimits – Cooldown startet vom echten Stop-Zeitpunkt');
+
+await test('Cooldown-Ende basiert auf stopTs (startMs + maxDuration), nicht auf now', () => {
+  resetStore(); resetConfig(); rebuildTypes(); resetUsers();
+  const type = TYPES.find(t => t.key === 'wachdienst'); // maxDurationMs: 7200000, cooldownMs: 1800000
+  // Start genau maxDuration + 1 Minute vor jetzt → stopTs = jetzt - 1 Minute
+  const overMs = 60000;
+  const startTs = msAgo(type.maxDurationMs + overMs);
+  pushLog({ nutzer: 'Test User', typ: type.logType, aktion: 'start', zeitstempel: startTs });
+  setStateActive('test_user', type.key, true);
+  const beforeCheck = Date.now();
+  checkTimeLimits();
+  const state = getAllStates()['test_user'];
+  assert(state.cooldown?.[type.key] !== undefined, 'Cooldown muss gesetzt sein');
+  const cooldownEnd = new Date(state.cooldown[type.key]).getTime();
+  // stopTs = new Date(startMs + maxDurationMs); cooldownEnd = stopTs + cooldownMs
+  // Erwarteter Wert liegt ~1 Minute VOR (beforeCheck + cooldownMs)
+  const expectedStopTs = new Date(startTs).getTime() + type.maxDurationMs;
+  const expectedCooldown = expectedStopTs + type.cooldownMs;
+  assert(Math.abs(cooldownEnd - expectedCooldown) < 1000,
+    `Cooldown-Ende muss ~${new Date(expectedCooldown).toISOString()} sein, war ${state.cooldown[type.key]}`);
+  assert(cooldownEnd < beforeCheck + type.cooldownMs - overMs + 1000,
+    'Cooldown muss früher enden als wenn er von now berechnet würde');
 });
 
 /* ══════════════════════════════════════════════════════════════

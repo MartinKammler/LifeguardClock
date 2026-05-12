@@ -271,29 +271,58 @@ function getLog() {
   try { return JSON.parse(localStorage.getItem(logKey()) || '[]'); }
   catch { showToast('⚠ Logdaten beschädigt – bitte Admin informieren'); return []; }
 }
-// Vormonat-Log für Monatswechsel-Lookups (z. B. Auto-Stop an Monatsende)
-function getPrevLog() {
+// Vormonat-Log-Key (zum direkten Lesen/Schreiben an Monatsgrenzen)
+function prevLogKey() {
   const d = new Date();
   if (d.getHours() < (CONFIG.dayBoundaryHour ?? 4)) d.setDate(d.getDate() - 1);
   const m = d.getMonth(); // 0-indexed; 0 = Januar
-  const key = m === 0
+  return m === 0
     ? `lgc_log_${d.getFullYear() - 1}-12`
     : `lgc_log_${d.getFullYear()}-${pad(m)}`;
-  try { return JSON.parse(localStorage.getItem(key) || '[]'); }
+}
+// Vormonat-Log für Monatswechsel-Lookups (z. B. Auto-Stop an Monatsende)
+function getPrevLog() {
+  try { return JSON.parse(localStorage.getItem(prevLogKey()) || '[]'); }
   catch { return []; }
 }
-function saveLog(log) {
-  localStorage.setItem(logKey(), JSON.stringify(log));
+function saveLogForKey(key, log) {
+  localStorage.setItem(key, JSON.stringify(log));
   markLocalChange();
-  writeLocalBackup();    // Backup-Snapshot sofort
-  scheduleCloudSync();   // Cloud-Sync verzögert (60 s Debounce)
+  writeLocalBackup();
+  scheduleCloudSync();
 }
-function addEntry(entry) {
-  const log = getLog();
+function saveLog(log) { saveLogForKey(logKey(), log); }
+function addEntry(entry, { targetLogKey } = {}) {
+  const key = targetLogKey || logKey();
+  let log;
+  try { log = JSON.parse(localStorage.getItem(key) || '[]'); } catch { log = []; }
   log.push({ id: Date.now() + Math.random(), ...entry });
-  saveLog(log);
+  saveLogForKey(key, log);
   const u = getUsers().find(u => u.name === entry.nutzer);
   if (u) pushUserPif(u.id).catch(() => {});
+}
+// Gibt den Log-Key zurück, in dem der offene Start-Eintrag für den Nutzer liegt,
+// oder null wenn der letzte Eintrag ein Stop oder keiner vorhanden ist.
+function findLogKeyForOpenStart(userName, logType) {
+  for (const [key, log] of [[logKey(), getLog()], [prevLogKey(), getPrevLog()]]) {
+    for (let i = log.length - 1; i >= 0; i--) {
+      const e = log[i];
+      if (e.nutzer !== userName || e.typ !== logType) continue;
+      return e.aktion === 'start' ? key : null;
+    }
+  }
+  return null;
+}
+// Gibt den exakten Zeitstempel des Zeitfenster-Endes zurück (in der Vergangenheit liegend).
+// Falls das berechnete Ende in der Zukunft liegt, wird ein Tag subtrahiert.
+function zeitfensterEndTs(type) {
+  const zf = getZeitfensterForType(type);
+  if (!zf) return new Date().toISOString();
+  const [h, m] = zf.end.split(':').map(Number);
+  const d = new Date();
+  d.setHours(h, m, 0, 0);
+  if (d > new Date()) d.setDate(d.getDate() - 1);
+  return d.toISOString();
 }
 
 function importedEntryBaseKey(entry) {
@@ -447,7 +476,6 @@ writeLocalBackup(); // Sofort beim Laden
 // Runs every 10 s — stops sessions of types whose window has expired
 function checkZeitfensterEnd() {
   const allStates = getAllStates();
-  const now       = new Date().toISOString();
   let changed     = false;
 
   USERS.forEach(user => {
@@ -455,10 +483,13 @@ function checkZeitfensterEnd() {
     if (!state) return;
     TIME_KEYS.forEach(key => {
       if (!state[key]) return;
-      const type   = TYPES.find(t => t.key === key);
+      const type = TYPES.find(t => t.key === key);
       if (isWithinZeitfensterForType(type)) return;
-      const durMs  = calcDurationMs(user.name, type.logType, now);
-      addEntry({ nutzer: user.name, typ: type.logType, aktion: 'stop', zeitstempel: now, auto: true, dauer_ms: durMs });
+      const startMs = getTypeStartMs(user.name, type.logType);
+      if (startMs === null) { state[key] = false; changed = true; return; }
+      const stopTs = zeitfensterEndTs(type);
+      const durMs  = calcDurationMs(user.name, type.logType, stopTs);
+      addEntry({ nutzer: user.name, typ: type.logType, aktion: 'stop', zeitstempel: stopTs, auto: true, dauer_ms: durMs });
       state[key] = false;
       changed = true;
       if (currentUser && currentUser.id === user.id) {
@@ -493,10 +524,10 @@ function checkTimeLimits() {
       addEntry({ nutzer: user.name, typ: type.logType, aktion: 'stop', zeitstempel: stopTs, auto: true, dauer_ms: type.maxDurationMs });
       state[type.key] = false;
 
-      // Cooldown setzen
+      // Cooldown setzen (vom echten Stop, nicht Erkennungszeitpunkt – relevant bei schlafen)
       if (type.cooldownMs) {
         if (!state.cooldown) state.cooldown = {};
-        state.cooldown[type.key] = new Date(now.getTime() + type.cooldownMs).toISOString();
+        state.cooldown[type.key] = new Date(new Date(stopTs).getTime() + type.cooldownMs).toISOString();
       }
 
       allStates[user.id] = state;
@@ -535,8 +566,13 @@ function checkDayBoundary(now = new Date()) {
     if (!state) return;
     TYPES.forEach(type => {
       if (!state[type.key]) return;
+      const startLogKey = findLogKeyForOpenStart(user.name, type.logType);
+      if (!startLogKey) { state[type.key] = false; changed = true; return; }
       const durMs = calcDurationMs(user.name, type.logType, stopTs);
-      addEntry({ nutzer: user.name, typ: type.logType, aktion: 'stop', zeitstempel: stopTs, auto: true, dauer_ms: durMs });
+      addEntry(
+        { nutzer: user.name, typ: type.logType, aktion: 'stop', zeitstempel: stopTs, auto: true, dauer_ms: durMs },
+        { targetLogKey: startLogKey }
+      );
       state[type.key] = false;
       changed = true;
     });
