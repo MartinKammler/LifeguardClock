@@ -1572,11 +1572,16 @@ if (typeof ADMIN_CONFIG === 'undefined') window.ADMIN_CONFIG = undefined;
           }
           const logDay = _entryLogicalDay(entry.zeitstempel);
           if (!logDay) continue;
+          if (logDay < '2026-05-08') continue;  // vor erstem realem Stempeltag ignorieren
           const month = logDay.slice(0, 7);
           const grpKey = `${u.id}_${month}`;
-          if (!grouped[grpKey]) grouped[grpKey] = { userId: u.id, userName: u.name, month, entries: new Map() };
+          if (!grouped[grpKey]) grouped[grpKey] = { userId: u.id, userName: u.name, month, entries: new Map(), autoEntries: new Map() };
           const eKey = entry.id || `${entry.nutzer}|${entry.zeitstempel}|${entry.typ}`;
-          grouped[grpKey].entries.set(eKey, entry);
+          if (entry.auto) {
+            grouped[grpKey].autoEntries.set(eKey, entry);
+          } else {
+            grouped[grpKey].entries.set(eKey, entry);
+          }
         }
         logFn?.(`  ${href.split('/').pop()}: ${log.length} Eintr.`);
       }
@@ -1610,6 +1615,23 @@ if (typeof ADMIN_CONFIG === 'undefined') window.ADMIN_CONFIG = undefined;
         let newCount = 0;
         for (const [eKey, e] of grp.entries) {
           if (!existingKeys.has(eKey)) { existingEntries.push(e); newCount++; }
+        }
+
+        // Auto-Stops: nur einfügen wenn kein anderer Stop (echt oder auto) für die Session existiert
+        for (const [eKey, autoStop] of (grp.autoEntries || new Map())) {
+          if (existingKeys.has(eKey)) continue;
+          const stopTs = new Date(autoStop.zeitstempel).getTime();
+          const pairedStart = existingEntries
+            .filter(e => e.nutzer === autoStop.nutzer && e.typ === autoStop.typ &&
+                         e.aktion === 'start' && new Date(e.zeitstempel).getTime() < stopTs)
+            .sort((a, b) => new Date(b.zeitstempel) - new Date(a.zeitstempel))[0];
+          if (!pairedStart) continue;
+          const startTs = new Date(pairedStart.zeitstempel).getTime();
+          const hasStop = existingEntries.some(e =>
+            e.nutzer === autoStop.nutzer && e.typ === autoStop.typ && e.aktion === 'stop' &&
+            new Date(e.zeitstempel).getTime() > startTs && new Date(e.zeitstempel).getTime() <= stopTs
+          );
+          if (!hasStop) { existingEntries.push(autoStop); newCount++; }
         }
 
         const payload = JSON.stringify({

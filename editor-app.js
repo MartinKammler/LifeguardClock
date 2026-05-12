@@ -664,7 +664,9 @@ async function fetchAndValidate() {
       const r = await fetch(fileUrl, { headers: { Authorization: auth } });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const data = await r.json();
-      validationPifCache[fileUrl] = { ...data, entries: normalizeLogEntries(data.entries || []) };
+      // Auto-Stops vor Normalisierung entfernen – normalizeLogEntries verwirft die auto-Flag
+      const rawEntries = (data.entries || []).filter(e => !e?.auto);
+      validationPifCache[fileUrl] = { ...data, entries: normalizeLogEntries(rawEntries) };
       return fileUrl;
     }));
 

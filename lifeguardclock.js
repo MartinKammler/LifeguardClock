@@ -155,7 +155,7 @@ function getDeviceId() {
   return id;
 }
 const DEVICE_ID   = getDeviceId();
-const APP_VERSION = '1.0.2';
+const APP_VERSION = '1.0.3';
 
 /* ── Proxy-Erkennung (admin-server.py auf localhost) ─────────
    Wenn die App über den lokalen Python-Proxy läuft, werden alle
@@ -1507,21 +1507,57 @@ async function pushUserPif(userId) {
   if (!isCloudConfigured(cfg)) return;
   const user = getUsers().find(u => u.id === userId);
   if (!user) return;
-  const month   = todayISO().slice(0, 7);
-  const day     = todayISO();
-  const entries = getLog().filter(e => e.nutzer === user.name && e.zeitstempel?.startsWith(month));
+  const month = todayISO().slice(0, 7);
+  const pifUrl = `${cloudDavBase(cfg)}/lgc_pif_${userId}_${month}.json`;
+
+  // Bestehende PIF lesen – bewahrt Einträge die per Editor / anderes Gerät nachgetragen wurden
+  let cloudEntries = [];
+  try {
+    const resp = await fetch(pifUrl, { headers: cloudHeaders(cfg) });
+    if (resp.ok) {
+      const data = await resp.json();
+      cloudEntries = Array.isArray(data.entries) ? data.entries : [];
+    }
+  } catch {}
+
+  const localEntries = getLog().filter(e => e.nutzer === user.name && e.zeitstempel?.startsWith(month));
+
+  // Cloud-Einträge als Basis; lokale Nicht-Auto-Einträge ergänzen die noch nicht in Cloud sind
+  const cloudIds = new Set(cloudEntries.map(e => String(e.id)));
+  const merged = [...cloudEntries];
+  for (const e of localEntries) {
+    if (!e.auto && !cloudIds.has(String(e.id))) merged.push(e);
+  }
+
+  // Auto-Stops nur einfügen wenn kein echter Stop für dieselbe Session existiert
+  for (const autoStop of localEntries.filter(e => e.auto && e.aktion === 'stop')) {
+    if (cloudIds.has(String(autoStop.id))) continue;
+    const stopTs = new Date(autoStop.zeitstempel).getTime();
+    const pairedStart = merged
+      .filter(e => e.nutzer === autoStop.nutzer && e.typ === autoStop.typ &&
+                   e.aktion === 'start' && new Date(e.zeitstempel).getTime() < stopTs)
+      .sort((a, b) => new Date(b.zeitstempel) - new Date(a.zeitstempel))[0];
+    if (!pairedStart) continue;
+    const startTs = new Date(pairedStart.zeitstempel).getTime();
+    // Jeder vorhandene Stop (echt oder bereits gepushter Auto-Stop) blockiert diesen
+    const hasRealStop = merged.some(e =>
+      e.nutzer === autoStop.nutzer && e.typ === autoStop.typ && e.aktion === 'stop' &&
+      new Date(e.zeitstempel).getTime() > startTs && new Date(e.zeitstempel).getTime() <= stopTs
+    );
+    if (!hasRealStop) merged.push(autoStop);
+  }
+
   const payload = JSON.stringify({
     version:  1,
     userId,
     userName: user.name,
     month,
     exported: new Date().toISOString(),
-    entries,
+    entries:  merged.sort(compareLogEntries),
   });
   try {
     await ensureCloudFolder(cfg);
-    await fetch(`${cloudDavBase(cfg)}/lgc_pif_${userId}_${month}.json`,
-      { method: 'PUT', headers: cloudHeaders(cfg), body: payload });
+    await fetch(pifUrl, { method: 'PUT', headers: cloudHeaders(cfg), body: payload });
   } catch {}
 }
 

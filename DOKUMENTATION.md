@@ -302,6 +302,16 @@ Wurden Ziffern eingegeben, ohne die Eingabe abzuschließen, wird die PIN nach
 Nach `screensaverSeconds` Sekunden ohne Interaktion auf dem Login-Bildschirm erscheint
 ein Bildschirmschoner (animierter Stempeluhr-Schriftzug). Jede Berührung blendet ihn ab.
 
+### Cloud-Einrichtung per QR-Code
+
+Über den **„QR scannen"**-Button auf dem Login-Bildschirm lässt sich die Cloud-Konfiguration per QR-Code einrichten (erzeugt in `admin.html`):
+
+1. QR-Code vor die Kamera halten.
+2. Ein **Bestätigungsdialog** erscheint mit Server-URL und Benutzername — erst nach expliziter Bestätigung wird die Konfiguration übernommen.
+3. Bei Kameraproblemen oder fehlendem `jsqr.min.js` wechselt die Ansicht automatisch in den **manuellen Eingabemodus** (URL, Benutzername, Passwort per Tastatur).
+
+> **Sicherheitshinweis:** Der Bestätigungsdialog verhindert, dass ein gefälschter QR-Code das Gerät unbemerkt auf einen fremden Cloud-Endpunkt umleitet.
+
 ### Tastatureingabe (Desktop)
 
 Ziffern 0–9, Backspace und Enter werden direkt auf dem Login-Bildschirm ausgewertet.
@@ -444,7 +454,7 @@ der Benutzer automatisch abgemeldet. Laufende Sitzungen bleiben dabei **aktiv**.
 
 ## Admin-Bereich
 
-Erreichbar mit dem Admin-PIN aus `config.js`.
+Erreichbar mit dem Admin-PIN aus `config.js`. Nach **3 aufeinanderfolgenden Fehlversuchen** am Admin-Passwort-Dialog wird die Eingabe für **5 Minuten gesperrt** (Rate-Limit, identisch zur Nutzer-PIN-Sperre).
 
 ### Aktionsleiste
 
@@ -621,13 +631,18 @@ der Log-Sync nach Stempel-Ereignissen.
   "users": [
     { "id": "max_muster", "name": "Max Muster", "pin": "123456", "mustChangePIN": true },
     { "id": "erika_muster", "name": "Erika Muster", "pin": "a3f8c2...", "salt": "e91d04...", "mustChangePIN": false }
-  ]
+  ],
+  "removedIds": ["alter_nutzer_id"]
 }
 ```
 
 > Nutzer mit OTP (noch nicht geänderter PIN) erscheinen mit der PIN im Klartext.
 > Nutzer mit gesetzter PIN erscheinen mit Hash + Salt — der Klartext ist nicht rekonstruierbar,
 > aber die Wiederherstellung funktioniert nahtlos: Nutzer können ihre bisherige PIN weiter verwenden.
+
+**Tombstone (`removedIds`):** Wird ein Nutzer in `admin.html` gelöscht, wird seine ID in `removedIds` eingetragen. Beim nächsten Sync auf einem anderen Gerät werden Nutzer mit diesen IDs aus der lokalen Liste entfernt — gelöschte Nutzer tauchen damit nicht mehr auf anderen Geräten wieder auf. Ältere App-Versionen ignorieren das Feld.
+
+**Schema-Validierung:** Einträge ohne `id` oder `name` (Nutzer), ohne `key` oder `logType` (Typen) sowie Events ohne gültiges ISO-Datum werden beim Laden verworfen und per `console.warn` protokolliert.
 
 ---
 

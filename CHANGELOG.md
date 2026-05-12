@@ -4,6 +4,50 @@ Alle relevanten Änderungen pro Release. Format orientiert sich an [Keep a Chang
 
 ---
 
+## [1.0.3] – 2026-05-12
+
+### Geändert
+
+- **PIF als kanonische Datenquelle** (`dashboard-app.js`): Dashboard lädt nur noch
+  `lgc_pif_*`-Dateien aus der Cloud; Geräte-Logs sind reines Backup und werden nicht mehr
+  geladen. `buildDB` merged alle Tageseinträge aller Quellen bevor Start/Stop-Paare gebildet
+  werden (`allByDay`-Merge). Stop-Einträge ohne passenden Start auf demselben logischen Tag
+  werden ignoriert (verhindert fehlerhafte Dauern durch verwaiste Auto-Stops).
+
+- **`pushUserPif` – merge-basierter Push** (`lifeguardclock.js`): Statt blindem Überschreiben
+  liest `pushUserPif` die bestehende PIF zuerst aus der Cloud und merged: Cloud-Einträge
+  bleiben erhalten (schützt manuell nachgetragene Stopps), lokale Nicht-Auto-Einträge werden
+  ergänzt. Auto-Stops (Zeitfenster-Ende, `maxDurationMs`) werden nur eingefügt, wenn kein
+  anderer Stop für die Session vorhanden ist — weder echt noch bereits gepushter Auto-Stop.
+
+- **Konsolidierung** (`admin-app.js`): Auto-Stops aus Geräte-Logs werden nun bedingt
+  übernommen — nur wenn kein Stop für die betreffende Session in den gemergten PIF-Einträgen
+  existiert. Einträge vor dem 08.05.2026 (erster realer Stempeltag) werden übersprungen.
+
+- **Editor: Einzeleinträge** (`editor-app.js`, `editor.html`): Neuer Modus „Einzeleintrag"
+  im Add-Modal ermöglicht das Nachtragen eines einzelnen Start- oder Stop-Eintrags. Bei
+  Stop-Einträgen wird `dauer_ms` automatisch aus dem letzten passenden Start berechnet.
+
+- **Validierung: Auto-Stops ausgeblendet** (`editor-app.js`): `fetchAndValidate` filtert
+  Auto-Stop-Einträge vor der Normalisierung heraus — verwaiste Auto-Stops erzeugen keine
+  „Stop ohne Start"-Issues mehr.
+
+### Behoben
+
+- **Veraltete `dauer_ms` aus Auto-Stops** (`dashboard-app.js`): Ein Stop-Eintrag mit
+  `dauer_ms > 0` aber ohne gepaarten Start wurde gezählt. Fix: Duration wird ausschließlich
+  aus Timestamps berechnet, nur wenn `openStart` vorhanden ist.
+
+### Service Worker
+
+- Cache-Version auf `lgc-shell-v18` erhöht (erzwingt Update auf allen installierten PWAs).
+
+### Version
+
+- `APP_VERSION` auf `'1.0.3'` gesetzt.
+
+---
+
 ## [1.0.2] – 2026-05-11
 
 ### Hinzugefügt

@@ -364,8 +364,27 @@ if (typeof ADMIN_CONFIG === 'undefined') window.ADMIN_CONFIG = undefined;
         .sort((a,b) => b[1][typ] - a[1][typ])
         .slice(0, 5);
 
+      const vereinTop = Object.entries(ptotals)
+        .map(([name, d]) => [name, TYPES.filter(t => t !== 'anwesenheit').reduce((s, t) => s + (d[t] || 0), 0)])
+        .filter(([, h]) => h > 0)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5);
+      const vereinStyle = '--type-color:#c9a800;--type-dim:rgba(120,120,120,0.12)';
+
       const rankCls = ['rank-1','rank-2','rank-3','',''];
-      document.getElementById('top-grid').innerHTML = TYPES.map(typ => {
+      const vereinCard = `
+        <div class="top-list">
+          <div class="top-list-hdr" style="${vereinStyle}">&#x1F3C6; Top Verein</div>
+          ${vereinTop.length === 0
+            ? '<div class="top-item" style="color:var(--text-3)">Keine Daten</div>'
+            : vereinTop.map(([name, h], i) => `
+                <div class="top-item">
+                  <div class="top-rank ${rankCls[i]}">${i+1}</div>
+                  <div class="top-name">${escHtml(name)}</div>
+                  <div class="top-val" style="${vereinStyle}">${fmtH(h)} h</div>
+                </div>`).join('')}
+        </div>`;
+      document.getElementById('top-grid').innerHTML = vereinCard + TYPES.map(typ => {
         const top = topFor(typ);
         return `
           <div class="top-list">

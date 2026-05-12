@@ -26,3 +26,8 @@ desktop.ini
 
 #claude code commands
 CLAUDE.md
+.claude/
+
+AGENTS.md
+.agents/
+.tmp_edge
