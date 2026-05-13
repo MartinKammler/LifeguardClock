@@ -3315,7 +3315,15 @@ async function requestWakeLock() {
   } catch {}
 }
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') requestWakeLock();
+  if (document.visibilityState === 'visible') {
+    requestWakeLock();
+    // Nach OS-Wake: aufgeschobenen Screensaver-Timer canceln bevor er feuert,
+    // damit der erste Tap direkt zur PIN-Eingabe geht.
+    stopSsTimer();
+    if (document.getElementById('screen-login')?.classList.contains('active')) {
+      startSsTimer();
+    }
+  }
 });
 requestWakeLock();
 
