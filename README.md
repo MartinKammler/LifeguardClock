@@ -198,11 +198,11 @@ Kein Test-Runner nötig — direkt als HTML-Datei öffnen.
 ## Release
 
 ```powershell
-.\make-release.ps1 -Version "1.1.1"
+.\make-release.ps1 -Version "1.1.2"
 ```
 
-Erzeugt `LifeguardClock-v1.1.1.zip` ohne `config.js`.
-Vor dem Release `CACHE_NAME` in `sw.js` bumpen (`lgc-shell-v20` usw.).
+Erzeugt `LifeguardClock-v1.1.2.zip` ohne `config.js`.
+Vor dem Release `CACHE_NAME` in `sw.js` bumpen (`lgc-shell-v21` usw.).
 
 ---
 

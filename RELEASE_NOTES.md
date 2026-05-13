@@ -1,66 +1,79 @@
-# Release Notes – LifeguardClock v1.1.1
+# Release Notes – LifeguardClock v1.1.2
 
-## Editor-Verbesserungen & Bugfix Smartphone-Toast
+## Periodischer Hintergrund-PIF-Sync
 
-Dieser Release ergänzt den Editor um zwei neue Automatismen und behebt einen Darstellungsfehler
-auf Smartphones.
-
----
-
-## Bugfix
-
-### Toast verschwindet nicht auf Smartphones
-
-**Problem:** Auf schmalen Displays (z. B. iPhone SE) blieb der Toast-Hinweis am unteren Rand
-sichtbar, weil `translateY(90px)` für zwei- bis dreizeilige Meldungen nicht ausreichte.
-Zusätzlich bricht iOS Safari `position: fixed`-Transitions beim Viewport-Resize ab, sodass der
-Toast eingefroren wirkte.
-
-**Fix:** `translateY` auf `150px` erhöht. Ergänzend `opacity 0↔1`-Übergang hinzugefügt, der
-unabhängig von der Transform-Transition greift.
+Dieser Release löst das Cross-Device-Problem, bei dem das Tablet einen Nutzer als „Aktiv"
+anzeigt, obwohl er auf einem anderen Gerät (z. B. Smartphone) bereits ausgestempelt hat.
 
 ---
 
-## Neue Editor-Funktionen
+## Problem
 
-### Automatische Anwesenheit beim Paar-Hinzufügen
+In einem Mehr-Gerät-Betrieb (Tablet als Kiosk + Smartphone für Einstempeln unterwegs) war
+der State auf dem Tablet nur beim nächsten PIN-Login aktuell. Da Nutzer nach wenigen Sekunden
+auto-ausgeloggt werden, war das in der Praxis meist ausreichend — aber nicht in jedem Fall:
 
-Wird über „Paar hinzufügen" ein Dienst-Typ mit `autoStartKeys: ['anwesenheit']` eingetragen
-(Wachdienst, Sanitätsdienst, Ausbildung, Helfer), erzeugt der Editor automatisch ein passendes
-Anwesenheits-Paar — sofern kein abdeckendes Anwesenheits-Fenster bereits vorhanden ist.
-Funktioniert auch beim Eintragen in einen anderen Monats-PIF als den aktuell geladenen.
+- Nutzer stempelt auf dem Smartphone aus, betritt den Raum mit dem Tablet, loggt sich ein →
+  Tablet zeigt kurz „Aktiv" bevor der Login-Fetch abgeschlossen ist
+- In seltenen Fällen (keine Netzwerkverbindung beim Login, schlechte Latenz) blieb der
+  veraltete State länger erhalten
 
-### 🗂 Monate-Button: Monatsbereinigung + Anwesenheits-Lücken
+---
 
-Neuer Button in der Editor-Werkzeugleiste. Über „☁ Cloud" oder „📂 Ordner" werden alle
-PIF-Dateien eingelesen und zwei Prüfungen durchgeführt:
+## Lösung
 
-| Prüfung | Was wird korrigiert |
+Beim App-Start (nach 4 Sekunden, nach `silentConfigCheck`) startet ein 5-Minuten-Hintergrund-
+Timer, der die Cloud-PIFs aller Nutzer abruft und den lokalen State aktualisiert — ohne dass
+ein Login erforderlich ist.
+
+### Neue Funktionen
+
+| Funktion | Zweck |
 |---|---|
-| **Monats-Bereinigung** | Einträge, deren Zeitstempel nicht zum Dateimonat passt, werden in den richtigen Monats-PIF verschoben. Fehlt die Zieldatei, wird sie erstellt. |
-| **Anwesenheits-Lücken** | Jedes vollständige Dienst-Paar (Wachdienst, San, Ausbildung, Helfer) wird auf Anwesenheits-Abdeckung geprüft. Fehlt ein abdeckendes Fenster, wird es automatisch ergänzt. Überlappende Paare desselben Nutzers erhalten nur einen gemeinsamen Block. |
+| `startBackgroundPifSync()` | Startet den 5-Minuten-`setInterval`-Timer |
+| `_runBackgroundPifSync()` | Ruft `fetchUserPif()` sequentiell für alle Nutzer auf |
 
-Die Toast-Meldung zeigt beide Ergebnisse, z. B.:
-`„3 Einträge verschoben, 2 Anwesenheits-Blöcke ergänzt ✓"`
+### Ablauf
+
+```
+App-Start
+  ↓ nach 3 s: silentConfigCheck()
+  ↓ nach 4 s: startBackgroundPifSync()
+              └─ alle 5 min: _runBackgroundPifSync()
+                               ├─ isCloudConfigured()? → nein: return
+                               ├─ _bgPifSyncRunning?   → ja:  return (kein Overlap)
+                               └─ für jeden Nutzer: fetchUserPif(u.id)
+                                    └─ mergeUserEntries() + rebuildStateFromLog()
+                                         └─ lgc_state aktuell
+```
+
+### Ergebnis
+
+Ein auf dem Smartphone beendeter Stempel ist spätestens 5 Minuten später auf dem Tablet
+korrekt als „Inaktiv" registriert — auch ohne Login. Beim nächsten PIN-Login zeigt das
+Tablet sofort den richtigen Stand.
 
 ---
 
 ## Service Worker
 
-Cache-Version: **`lgc-shell-v20`** — alle installierten PWAs laden beim nächsten Start die neue
+Cache-Version: **`lgc-shell-v21`** — alle installierten PWAs laden beim nächsten Start die neue
 Version automatisch herunter.
 
 ---
 
 ## Migration / Update
 
-Keine Konfigurationsänderungen notwendig. Bestehende `config.js`-Dateien funktionieren
-unverändert weiter.
+Keine Konfigurationsänderungen notwendig. Der Hintergrund-Sync startet automatisch, sofern
+Cloud-Zugangsdaten in `config.js` konfiguriert sind. Ohne Cloud-Konfiguration ist die Funktion
+ein No-op.
 
 ---
 
 ## Bekannte Einschränkungen
 
-- Die Anwesenheits-Lücken-Prüfung im Monate-Button liest Typ-Konfiguration aus dem
-  localStorage (`lgc_cloud_types`). Auf Geräten, die noch keine Verbindung zur Cloud hatten,
-  kann die Prüfung keine Dienst-Typen erkennen und überspringt die Anwesenheits-Ergänzung.
+- Der Hintergrund-Sync läuft im selben Browser-Tab wie die App. Wird der Tab geschlossen oder
+  das Gerät in den Standby versetzt, pausieren die Fetches. Beim nächsten Aufwachen setzt der
+  Timer regulär fort.
+- Intervall fest auf 5 Minuten — nicht konfigurierbar (für die meisten Anwendungsfälle
+  ausreichend).

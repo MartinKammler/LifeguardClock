@@ -4,7 +4,7 @@ Alle relevanten Änderungen pro Release. Format orientiert sich an [Keep a Chang
 
 ---
 
-## [Unreleased]
+## [1.1.2] – 2026-05-13
 
 ### Neu
 
@@ -18,6 +18,14 @@ Alle relevanten Änderungen pro Release. Format orientiert sich an [Keep a Chang
 - **Suite 37** (`test_LifeguardClock.html`): 3 Tests für `_runBackgroundPifSync`
   (alle User aufgerufen wenn Cloud konfiguriert; kein Aufruf ohne Cloud; Flag blockiert
   gleichzeitige Ausführung).
+
+### Service Worker
+
+- Cache-Version auf `lgc-shell-v21` erhöht (erzwingt Update auf allen installierten PWAs).
+
+### Version
+
+- `APP_VERSION` auf `'1.1.2'` gesetzt.
 
 ---
 

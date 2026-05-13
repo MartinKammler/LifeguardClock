@@ -5,7 +5,7 @@
    - Alles andere → Network-First mit Cache-Fallback
 */
 
-const CACHE_NAME = 'lgc-shell-v20';
+const CACHE_NAME = 'lgc-shell-v21';
 const APP_SHELL = [
   './LifeguardClock.html',
   './manifest.json',
