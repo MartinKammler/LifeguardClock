@@ -4,6 +4,23 @@ Alle relevanten Änderungen pro Release. Format orientiert sich an [Keep a Chang
 
 ---
 
+## [Unreleased]
+
+### Neu
+
+- **Periodischer Hintergrund-PIF-Sync** (`lifeguardclock.js`): `startBackgroundPifSync()` startet
+  beim App-Start (nach 4 s) einen `setInterval`-Timer (5 Minuten). `_runBackgroundPifSync()` ruft
+  `fetchUserPif()` sequentiell für alle Nutzer auf und hält `lgc_state` aktuell, ohne dass ein
+  PIN-Login nötig ist. Ein Concurrency-Flag (`_bgPifSyncRunning`) verhindert parallele Läufe.
+  Ergebnis: Ein auf dem Smartphone beendeter Stempel wird spätestens nach 5 Minuten auf dem
+  Tablet registriert — auch wenn kein Nutzer eingeloggt ist.
+
+- **Suite 37** (`test_LifeguardClock.html`): 3 Tests für `_runBackgroundPifSync`
+  (alle User aufgerufen wenn Cloud konfiguriert; kein Aufruf ohne Cloud; Flag blockiert
+  gleichzeitige Ausführung).
+
+---
+
 ## [1.1.1] – 2026-05-12
 
 ### Behoben

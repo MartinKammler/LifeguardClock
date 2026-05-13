@@ -256,6 +256,8 @@ let pinBuffer    = '';
 let idleTimer    = null;
 let ACTIVE_EVENT = null;  // Event für heute aus lgc_events.json
 let idleCount   = CONFIG.autoLogoutSeconds ?? 20;
+let _bgPifSyncTimer   = null;
+let _bgPifSyncRunning = false;
 const IDLE_SECONDS = CONFIG.autoLogoutSeconds ?? 20;
 
 /* ── STORAGE HELPERS ────────────────────────────────────────── */
@@ -1652,6 +1654,25 @@ async function fetchUserPif(userId) {
       syncDashboard();
     }
   }
+}
+
+// ── Periodischer Hintergrund-PIF-Sync (alle 5 Minuten) ──────
+async function _runBackgroundPifSync() {
+  if (_bgPifSyncRunning) return;
+  if (!isCloudConfigured(getCloudConfig())) return;
+  _bgPifSyncRunning = true;
+  try {
+    for (const u of getUsers()) {
+      await fetchUserPif(u.id).catch(() => {});
+    }
+  } finally {
+    _bgPifSyncRunning = false;
+  }
+}
+
+function startBackgroundPifSync() {
+  if (_bgPifSyncTimer) clearInterval(_bgPifSyncTimer);
+  _bgPifSyncTimer = setInterval(_runBackgroundPifSync, 5 * 60 * 1000);
 }
 
 // ── Auto-Retry bei Netzwerkrückkehr ─────────────────────────
@@ -3491,6 +3512,7 @@ document.querySelector('.app-brand').addEventListener('click', openSplash);
 
 // Stille Konfigurationsprüfung beim Start
 setTimeout(() => silentConfigCheck(), 3000);
+setTimeout(() => startBackgroundPifSync(), 4000);
 
 
 // Session-Wiederherstellung ohne PIN wurde entfernt (Sicherheit: Shared-Tablet).

@@ -77,6 +77,14 @@ let _pifPushCalls = [];
 async function pushUserPif(userId) { _pifPushCalls.push(userId); }
 function resetPifPushCalls() { _pifPushCalls = []; }
 
+/* ── Cloud-Stubs ───────────────────────────────────────────── */
+let _testCloudCfg = {};
+function getCloudConfig() { return _testCloudCfg; }
+function isCloudConfigured(cfg) { return !!(cfg && cfg.url && cfg.user && cfg.pass); }
+let _fetchPifCalls = [];
+async function fetchUserPif(id) { _fetchPifCalls.push(id); }
+function resetFetchPifCalls() { _fetchPifCalls = []; }
+
 function prevLogKey() {
   const d = new Date();
   if (d.getHours() < (CONFIG.dayBoundaryHour ?? 4)) d.setDate(d.getDate() - 1);
@@ -138,6 +146,28 @@ function rebuildStateFromLog(userId) {
   });
   allStates[userId] = state;
   saveAllStates(allStates);
+}
+
+/* ── Background PIF Sync (1:1 aus lifeguardclock.js) ───────── */
+let _bgPifSyncTimer   = null;
+let _bgPifSyncRunning = false;
+
+async function _runBackgroundPifSync() {
+  if (_bgPifSyncRunning) return;
+  if (!isCloudConfigured(getCloudConfig())) return;
+  _bgPifSyncRunning = true;
+  try {
+    for (const u of getUsers()) {
+      await fetchUserPif(u.id).catch(() => {});
+    }
+  } finally {
+    _bgPifSyncRunning = false;
+  }
+}
+
+function startBackgroundPifSync() {
+  if (_bgPifSyncTimer) clearInterval(_bgPifSyncTimer);
+  _bgPifSyncTimer = setInterval(_runBackgroundPifSync, 5 * 60 * 1000);
 }
 
 /* ── CONFIG-Mock (für getUsers-Tests überschreibbar) ────────── */
@@ -3027,6 +3057,40 @@ await test('Cooldown-Ende basiert auf stopTs (startMs + maxDuration), nicht auf 
     `Cooldown-Ende muss ~${new Date(expectedCooldown).toISOString()} sein, war ${state.cooldown[type.key]}`);
   assert(cooldownEnd < beforeCheck + type.cooldownMs - overMs + 1000,
     'Cooldown muss früher enden als wenn er von now berechnet würde');
+});
+
+/* ══════════════════════════════════════════════════════════════
+   Suite 37 – Background PIF Sync
+══════════════════════════════════════════════════════════════ */
+suite('Background PIF Sync – _runBackgroundPifSync');
+
+await test('ruft fetchUserPif für alle User auf wenn Cloud konfiguriert', async () => {
+  resetStore(); resetConfig(); rebuildTypes(); resetUsers(); resetFetchPifCalls();
+  _testCloudCfg = { url: 'http://test', user: 'u', pass: 'p' };
+  _bgPifSyncRunning = false;
+  await _runBackgroundPifSync();
+  _testCloudCfg = {};
+  const userIds = getUsers().map(u => u.id);
+  assert(userIds.every(id => _fetchPifCalls.includes(id)),
+    `Alle User-IDs müssen aufgerufen werden, aufgerufen: ${JSON.stringify(_fetchPifCalls)}`);
+});
+
+await test('kein fetchUserPif-Aufruf wenn Cloud nicht konfiguriert', async () => {
+  resetStore(); resetConfig(); rebuildTypes(); resetUsers(); resetFetchPifCalls();
+  _testCloudCfg = {};
+  _bgPifSyncRunning = false;
+  await _runBackgroundPifSync();
+  assert(_fetchPifCalls.length === 0, 'fetchUserPif darf ohne Cloud-Konfiguration nicht aufgerufen werden');
+});
+
+await test('zweiter gleichzeitiger Aufruf wird durch Flag blockiert', async () => {
+  resetStore(); resetConfig(); rebuildTypes(); resetUsers(); resetFetchPifCalls();
+  _testCloudCfg = { url: 'http://test', user: 'u', pass: 'p' };
+  _bgPifSyncRunning = true;
+  await _runBackgroundPifSync();
+  _bgPifSyncRunning = false;
+  _testCloudCfg = {};
+  assert(_fetchPifCalls.length === 0, 'Laufender Sync muss durch _bgPifSyncRunning-Flag blockiert werden');
 });
 
 /* ══════════════════════════════════════════════════════════════
