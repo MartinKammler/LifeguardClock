@@ -3094,6 +3094,91 @@ await test('zweiter gleichzeitiger Aufruf wird durch Flag blockiert', async () =
 });
 
 /* ══════════════════════════════════════════════════════════════
+   Suite 38 – removeShortPairs: Phantom-Cleanup
+══════════════════════════════════════════════════════════════ */
+suite('38 – removeShortPairs');
+
+// 1:1 aus lifeguardclock.js
+function removeShortPairs(entries, maxMs) {
+  const idsToRemove = new Set();
+  const groups = {};
+  for (const e of entries) {
+    const k = `${e.nutzer}|||${e.typ}`;
+    (groups[k] = groups[k] || []).push(e);
+  }
+  for (const group of Object.values(groups)) {
+    const sorted = group.slice().sort((a, b) => new Date(a.zeitstempel) - new Date(b.zeitstempel));
+    let openStart = null;
+    for (const e of sorted) {
+      if (e.aktion === 'start') {
+        openStart = e;
+      } else if (openStart) {
+        const dur = new Date(e.zeitstempel) - new Date(openStart.zeitstempel);
+        if (dur >= 0 && dur <= maxMs) {
+          idsToRemove.add(String(openStart.id));
+          idsToRemove.add(String(e.id));
+        }
+        openStart = null;
+      }
+    }
+  }
+  if (!idsToRemove.size) return entries;
+  return entries.filter(e => !idsToRemove.has(String(e.id)));
+}
+
+await test('leere Eingabe → gleiches Array zurück', () => {
+  const result = removeShortPairs([], 120000);
+  assertEqual(result.length, 0, 'leeres Array bleibt leer');
+});
+
+await test('Paar ≤ 2 min wird entfernt', () => {
+  const t0 = '2025-05-01T10:00:00.000Z';
+  const t1 = '2025-05-01T10:01:00.000Z'; // 60s
+  const entries = [
+    { id: 1, nutzer: 'Max', typ: 'anwesenheit', aktion: 'start', zeitstempel: t0 },
+    { id: 2, nutzer: 'Max', typ: 'anwesenheit', aktion: 'stop',  zeitstempel: t1 },
+  ];
+  const result = removeShortPairs(entries, 120000);
+  assertEqual(result.length, 0, 'kurzes Paar muss entfernt werden');
+});
+
+await test('Paar > 2 min bleibt erhalten', () => {
+  const t0 = '2025-05-01T10:00:00.000Z';
+  const t1 = '2025-05-01T10:03:00.000Z'; // 3 min
+  const entries = [
+    { id: 1, nutzer: 'Max', typ: 'anwesenheit', aktion: 'start', zeitstempel: t0 },
+    { id: 2, nutzer: 'Max', typ: 'anwesenheit', aktion: 'stop',  zeitstempel: t1 },
+  ];
+  const result = removeShortPairs(entries, 120000);
+  assertEqual(result.length, 2, 'normales Paar muss erhalten bleiben');
+});
+
+await test('0-ms-Paar (identische Timestamps) wird entfernt', () => {
+  const t0 = '2025-05-01T10:00:00.000Z';
+  const entries = [
+    { id: 10, nutzer: 'Max', typ: 'wachdienst', aktion: 'start', zeitstempel: t0 },
+    { id: 11, nutzer: 'Max', typ: 'wachdienst', aktion: 'stop',  zeitstempel: t0 },
+  ];
+  const result = removeShortPairs(entries, 120000);
+  assertEqual(result.length, 0, '0-ms-Paar muss entfernt werden');
+});
+
+await test('zwei Nutzer: kurzes Paar nur beim richtigen Nutzer entfernt', () => {
+  const t0 = '2025-05-01T10:00:00.000Z';
+  const t1 = '2025-05-01T10:01:00.000Z';
+  const t2 = '2025-05-01T10:10:00.000Z';
+  const entries = [
+    { id: 1, nutzer: 'Anna', typ: 'anwesenheit', aktion: 'start', zeitstempel: t0 },
+    { id: 2, nutzer: 'Anna', typ: 'anwesenheit', aktion: 'stop',  zeitstempel: t1 }, // 60s → weg
+    { id: 3, nutzer: 'Max',  typ: 'anwesenheit', aktion: 'start', zeitstempel: t0 },
+    { id: 4, nutzer: 'Max',  typ: 'anwesenheit', aktion: 'stop',  zeitstempel: t2 }, // 10 min → bleibt
+  ];
+  const result = removeShortPairs(entries, 120000);
+  assertEqual(result.length, 2, 'nur Annas Paar entfernt, Max bleibt');
+  assert(result.every(e => e.nutzer === 'Max'), 'verbleibende Einträge gehören Max');
+});
+
+/* ══════════════════════════════════════════════════════════════
    Auswertung
 ══════════════════════════════════════════════════════════════ */
 const out = document.getElementById('output');

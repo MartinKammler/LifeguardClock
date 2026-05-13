@@ -551,9 +551,24 @@ async function runMonthCleanupCloud() {
       } catch {}
     }));
 
+    const cleanedByShortPair = {};
+    let totalRemoved = 0;
+    for (const [key, pif] of Object.entries(pifMap)) {
+      const orig = pif.entries || [];
+      const cleaned = removeShortPairs(orig, PHANTOM_PAIR_MS);
+      if (cleaned.length !== orig.length) {
+        totalRemoved += orig.length - cleaned.length;
+        cleanedByShortPair[key] = { ...pif, entries: cleaned };
+        pifMap[key] = cleanedByShortPair[key];
+      }
+    }
+
     const { modifiedPifs, newPifs, totalMoved } = analyzeCrossMonthEntries(pifMap);
+    for (const [key, pif] of Object.entries(cleanedByShortPair)) {
+      if (!modifiedPifs[key]) modifiedPifs[key] = pif;
+    }
     const totalAdded = applyAnwesenheitCheck(pifMap, modifiedPifs, newPifs);
-    if (totalMoved === 0 && totalAdded === 0) { showToast('Alle Einträge sind im richtigen Monats-File ✓'); return; }
+    if (totalMoved === 0 && totalAdded === 0 && totalRemoved === 0) { showToast('Alle Einträge sind im richtigen Monats-File ✓'); return; }
 
     const hdrs = { Authorization: auth, 'Content-Type': 'application/json' };
     await Promise.all([
@@ -569,6 +584,7 @@ async function runMonthCleanupCloud() {
     ]);
 
     const parts = [];
+    if (totalRemoved) parts.push(`${totalRemoved} Phantom-Eintrag${totalRemoved !== 1 ? 'e' : ''} entfernt`);
     if (totalMoved) parts.push(`${totalMoved} Eintrag${totalMoved !== 1 ? 'e' : ''} verschoben`);
     if (totalAdded) parts.push(`${totalAdded / 2} Anwesenheits-Block${totalAdded / 2 !== 1 ? 'e' : ''} ergänzt`);
     showToast(parts.join(', ') + ' ✓');
@@ -610,9 +626,24 @@ async function runMonthCleanupDirectory() {
 
     if (Object.keys(pifMap).length === 0) { showToast('Keine PIF-Dateien im Ordner gefunden.'); return; }
 
+    const cleanedByShortPair = {};
+    let totalRemoved = 0;
+    for (const [key, pif] of Object.entries(pifMap)) {
+      const orig = pif.entries || [];
+      const cleaned = removeShortPairs(orig, PHANTOM_PAIR_MS);
+      if (cleaned.length !== orig.length) {
+        totalRemoved += orig.length - cleaned.length;
+        cleanedByShortPair[key] = { ...pif, entries: cleaned };
+        pifMap[key] = cleanedByShortPair[key];
+      }
+    }
+
     const { modifiedPifs, newPifs, totalMoved } = analyzeCrossMonthEntries(pifMap);
+    for (const [key, pif] of Object.entries(cleanedByShortPair)) {
+      if (!modifiedPifs[key]) modifiedPifs[key] = pif;
+    }
     const totalAdded = applyAnwesenheitCheck(pifMap, modifiedPifs, newPifs);
-    if (totalMoved === 0 && totalAdded === 0) { showToast('Alle Einträge sind im richtigen Monats-File ✓'); return; }
+    if (totalMoved === 0 && totalAdded === 0 && totalRemoved === 0) { showToast('Alle Einträge sind im richtigen Monats-File ✓'); return; }
 
     for (const [filename, pif] of Object.entries(modifiedPifs)) {
       const handle = handleMap[filename];
@@ -629,6 +660,7 @@ async function runMonthCleanupDirectory() {
     }
 
     const parts = [];
+    if (totalRemoved) parts.push(`${totalRemoved} Phantom-Eintrag${totalRemoved !== 1 ? 'e' : ''} entfernt`);
     if (totalMoved) parts.push(`${totalMoved} Eintrag${totalMoved !== 1 ? 'e' : ''} verschoben`);
     if (totalAdded) parts.push(`${totalAdded / 2} Anwesenheits-Block${totalAdded / 2 !== 1 ? 'e' : ''} ergänzt`);
     showToast(parts.join(', ') + ' ✓');
@@ -726,6 +758,59 @@ function validatePairs(log) {
     if (openStart) issues.add(openStart.id); // unclosed
   }
   return issues;
+}
+
+// ─── Phantom-Cleanup-Helpers ─────────────────────────────────────────────────
+const PHANTOM_PAIR_MS = 2 * 60 * 1000; // Paare ≤ 2 min gelten als Phantome
+
+function removeShortPairs(entries, maxMs) {
+  const idsToRemove = new Set();
+  const groups = {};
+  for (const e of entries) {
+    const k = `${e.nutzer}|||${e.typ}`;
+    (groups[k] = groups[k] || []).push(e);
+  }
+  for (const group of Object.values(groups)) {
+    const sorted = group.slice().sort((a, b) => new Date(a.zeitstempel) - new Date(b.zeitstempel));
+    let openStart = null;
+    for (const e of sorted) {
+      if (e.aktion === 'start') {
+        openStart = e;
+      } else if (openStart) {
+        const dur = new Date(e.zeitstempel) - new Date(openStart.zeitstempel);
+        if (dur >= 0 && dur <= maxMs) {
+          idsToRemove.add(String(openStart.id));
+          idsToRemove.add(String(e.id));
+        }
+        openStart = null;
+      }
+    }
+  }
+  if (!idsToRemove.size) return entries;
+  return entries.filter(e => !idsToRemove.has(String(e.id)));
+}
+
+function removeOrphanStops(entries) {
+  const idsToRemove = new Set();
+  const groups = {};
+  for (const e of entries) {
+    const k = `${e.nutzer}|||${e.typ}`;
+    (groups[k] = groups[k] || []).push(e);
+  }
+  for (const group of Object.values(groups)) {
+    const sorted = group.slice().sort((a, b) => new Date(a.zeitstempel) - new Date(b.zeitstempel));
+    let openStart = null;
+    for (const e of sorted) {
+      if (e.aktion === 'start') {
+        openStart = e;
+      } else {
+        if (!openStart) idsToRemove.add(String(e.id));
+        else openStart = null;
+      }
+    }
+  }
+  if (!idsToRemove.size) return entries;
+  return entries.filter(e => !idsToRemove.has(String(e.id)));
 }
 
 // ─── Validation: Konstante ────────────────────────────────────────────────────
@@ -964,6 +1049,27 @@ async function fetchAndValidate() {
 
     const failed = results.filter(r => r.status === 'rejected').length;
     if (failed > 0) showToast(`${failed} Datei(en) konnten nicht geladen werden.`);
+
+    // Auto-Cleanup: Kurzpaare (≤ 2 min) und Orphan-Stops aus PIFs entfernen und speichern
+    const autoCleanedHrefs = {};
+    let autoRemovedCount = 0;
+    for (const [href, pif] of Object.entries(validationPifCache)) {
+      const orig = pif.entries;
+      let cleaned = removeShortPairs(orig, PHANTOM_PAIR_MS);
+      cleaned = removeOrphanStops(cleaned);
+      if (cleaned.length !== orig.length) {
+        autoRemovedCount += orig.length - cleaned.length;
+        validationPifCache[href] = { ...pif, entries: cleaned };
+        autoCleanedHrefs[href] = validationPifCache[href];
+      }
+    }
+    if (Object.keys(autoCleanedHrefs).length > 0) {
+      const hdrs = { Authorization: auth, 'Content-Type': 'application/json' };
+      await Promise.allSettled(Object.entries(autoCleanedHrefs).map(([href, pif]) =>
+        fetch(href, { method: 'PUT', headers: hdrs, body: JSON.stringify(buildPifOutput(pif), null, 2) })
+      ));
+      showToast(`${autoRemovedCount} Phantom-Eintrag${autoRemovedCount !== 1 ? 'e' : ''} automatisch entfernt ✓`);
+    }
 
     const enrichedEntries = [];
     for (const [href, pif] of Object.entries(validationPifCache)) {

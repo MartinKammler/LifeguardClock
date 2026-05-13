@@ -46,6 +46,12 @@ const CONFIG = {
   /* ── Admin-Zugang ─────────────────────────────────────────── */
   adminPin: '000000',   // <-- sicheren PIN setzen!
 
+  // Produktivstart-Datum (YYYY-MM-DD): Lokale Log-Einträge VOR diesem Datum
+  // werden beim App-Start aus localStorage gelöscht und beim Cloud-Sync ignoriert.
+  // Sinnvoll nach einer Test-Phase, um Phantomeinträge dauerhaft loszuwerden.
+  // Einmal gesetzt, kann es nur nach vorne verschoben werden (nie zurück).
+  // logStartDate: '2025-05-01',
+
   /* ── Stempel-Typen ────────────────────────────────────────── */
   //
   // Ab v0.6: Typen werden zentral in lgc_types.json in der Cloud verwaltet

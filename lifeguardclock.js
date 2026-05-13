@@ -80,7 +80,8 @@ function saveUsers(list) {
    cloud.* und deviceId werden nie überschrieben (Sicherheit / Bootstrapping). */
 ;(function applyCloudConfigOverlay() {
   const DEVICE_FIELDS = ['adminPin', 'dayBoundaryHour', 'pinClearSeconds',
-                         'autoLogoutSeconds', 'screensaverSeconds', 'zeitfensterDefaults'];
+                         'autoLogoutSeconds', 'screensaverSeconds', 'zeitfensterDefaults',
+                         'logStartDate'];
   // ── Gerätespezifische Felder aus lgc_config_cloud ────────────
   let typeOverrides = {};
   try {
@@ -155,7 +156,7 @@ function getDeviceId() {
   return id;
 }
 const DEVICE_ID   = getDeviceId();
-const APP_VERSION = '1.1.3';
+const APP_VERSION = '1.1.4';
 
 /* ── Proxy-Erkennung (admin-server.py auf localhost) ─────────
    Wenn die App über den lokalen Python-Proxy läuft, werden alle
@@ -176,6 +177,26 @@ if (CONFIG.cloud?.user && !localStorage.getItem('lgc_cloud')) {
     user: CONFIG.cloud.user,
     pass: CONFIG.cloud.pass || '',
   }));
+}
+
+/* ── Startup: lokales Log auf logStartDate-Cutoff bereinigen ──
+   Alle lgc_log_*-Einträge vor dem konfigurierten Datum werden beim
+   App-Start aus dem localStorage gelöscht (einmalig, kein Netzwerk).
+   Hat CONFIG.logStartDate keinen Wert, passiert nichts. */
+if (CONFIG.logStartDate) {
+  const _cutoff = CONFIG.logStartDate;
+  const _keys = [];
+  for (let _i = 0; _i < localStorage.length; _i++) {
+    const _k = localStorage.key(_i);
+    if (_k?.startsWith('lgc_log_')) _keys.push(_k);
+  }
+  for (const _key of _keys) {
+    try {
+      const _raw = JSON.parse(localStorage.getItem(_key) || '[]');
+      const _pruned = _raw.filter(e => !e.zeitstempel || e.zeitstempel >= _cutoff);
+      if (_pruned.length !== _raw.length) localStorage.setItem(_key, JSON.stringify(_pruned));
+    } catch {}
+  }
 }
 
 /* ── CRYPTO ──────────────────────────────────────────── */
@@ -1513,10 +1534,41 @@ async function syncToCloud(silent = false) {
 // Jeder Nutzer hat eine eigene Cloud-Datei: lgc_pif_<userId>_YYYY-MM.json
 // Dadurch ist der aktive Stempel-Status geräteübergreifend konsistent.
 
+// Entfernt Paare mit Dauer ≤ maxMs aus entries (self-healing für Phantom-Einträge).
+function removeShortPairs(entries, maxMs) {
+  const idsToRemove = new Set();
+  const groups = {};
+  for (const e of entries) {
+    const k = `${e.nutzer}|||${e.typ}`;
+    (groups[k] = groups[k] || []).push(e);
+  }
+  for (const group of Object.values(groups)) {
+    const sorted = group.slice().sort(compareLogEntries);
+    let openStart = null;
+    for (const e of sorted) {
+      if (e.aktion === 'start') {
+        openStart = e;
+      } else if (openStart) {
+        const dur = new Date(e.zeitstempel) - new Date(openStart.zeitstempel);
+        if (dur >= 0 && dur <= maxMs) {
+          idsToRemove.add(String(openStart.id));
+          idsToRemove.add(String(e.id));
+        }
+        openStart = null;
+      }
+    }
+  }
+  if (!idsToRemove.size) return entries;
+  return entries.filter(e => !idsToRemove.has(String(e.id)));
+}
+
 function mergeUserEntries(cloudEntries) {
   if (!Array.isArray(cloudEntries) || !cloudEntries.length) return false;
+  const _cutoff = CONFIG.logStartDate;
   const localLog = normalizeImportedEntries(getLog());
-  const importedLog = normalizeImportedEntries(cloudEntries);
+  const importedLog = normalizeImportedEntries(
+    _cutoff ? cloudEntries.filter(e => !e.zeitstempel || e.zeitstempel >= _cutoff) : cloudEntries
+  );
   if (localLog.normalizedCount) {
     console.warn(`Lokales Log normalisiert: ${localLog.normalizedCount} Einträge ohne id.`);
   }
@@ -1525,12 +1577,13 @@ function mergeUserEntries(cloudEntries) {
   }
   const existingIds = new Set(localLog.entries.map(e => String(e.id)));
   const newEntries = importedLog.entries.filter(e => !existingIds.has(String(e.id)));
-  const changed = localLog.normalizedCount > 0 || newEntries.length > 0;
-  if (!changed) return false;
-  const merged = newEntries.length
+  const base = newEntries.length
     ? [...localLog.entries, ...newEntries].sort(compareLogEntries)
     : localLog.entries;
-  saveLog(merged);
+  const cleaned = removeShortPairs(base, 2 * 60 * 1000);
+  const changed = localLog.normalizedCount > 0 || newEntries.length > 0 || cleaned.length !== base.length;
+  if (!changed) return false;
+  saveLog(cleaned);
   return true;
 }
 
@@ -1576,7 +1629,10 @@ async function pushUserPif(userId) {
     }
   } catch {}
 
-  const localEntries = getLog().filter(e => e.nutzer === user.name && e.zeitstempel?.startsWith(month));
+  const _cutoff = CONFIG.logStartDate;
+  const localEntries = getLog()
+    .filter(e => e.nutzer === user.name && e.zeitstempel?.startsWith(month))
+    .filter(e => !_cutoff || !e.zeitstempel || e.zeitstempel >= _cutoff);
 
   // Cloud-Einträge als Basis; lokale Nicht-Auto-Einträge ergänzen die noch nicht in Cloud sind
   const cloudIds = new Set(cloudEntries.map(e => String(e.id)));
@@ -1609,7 +1665,7 @@ async function pushUserPif(userId) {
     userName: user.name,
     month,
     exported: new Date().toISOString(),
-    entries:  merged.sort(compareLogEntries),
+    entries:  removeShortPairs(merged, 2 * 60 * 1000).sort(compareLogEntries),
   });
   try {
     await ensureCloudFolder(cfg);

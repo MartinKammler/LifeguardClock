@@ -1,53 +1,69 @@
-# Release Notes – LifeguardClock v1.1.3
+# Release Notes – LifeguardClock v1.1.4
 
-## Bugfix: Erster Tap nach Gerät-Wake
+## Phantom-Einträge dauerhaft entfernen
 
 ---
 
 ## Problem
 
-Nach dem Aufwachen eines Tablets oder Smartphones aus dem OS-Schlaf (Bildschirm aus)
-wurde der erste Tap auf eine PIN-Taste ignoriert. Erst der zweite Tap registrierte
-eine Eingabe.
-
-**Ursache:** Während des OS-Schlafs pausiert der Browser die JavaScript-Ausführung.
-Der Screensaver-`setTimeout` (Standard: 60 Sekunden Inaktivität) wurde dabei aufgeschoben.
-Beim Aufwachen feuerte dieser aufgeschobene Timer sofort und zeigte den Screensaver.
-Der erste Tap des Nutzers wurde dann in der Capture-Phase vom Screensaver-Handler abgefangen
-(`stopPropagation()`), um den Screensaver zu schließen — die PIN-Taste registrierte nichts.
+Einträge, die im Editor aus Cloud-PIFs gelöscht wurden, tauchten nach dem nächsten Stempelvorgang wieder auf. Ursache: `pushUserPif` liest das lokale Geräte-Log (`lgc_log_YYYY-MM` in localStorage) als Quelle und fügt alle lokalen Einträge, die nicht in der Cloud-PIF stehen, wieder hinzu. Eine Bereinigung der Cloud reichte also nicht — das Gerät schrieb die Artefakte bei jedem Stempel zurück.
 
 ---
 
-## Fix
+## Fix 1 – `logStartDate`-Cutoff
 
-Im `visibilitychange → visible`-Handler (der synchron vor allen deferred Timer-Callbacks
-läuft) wird `stopSsTimer()` aufgerufen. Das cancelt den aufgeschobenen Screensaver-Timer
-via `clearTimeout()` bevor er als Macrotask ausgeführt wird.
+Neues optionales Feld in `config.js` (und per Cloud-Device-Config verteilbar):
 
-```
-Gerät wacht auf
-  ↓ visibilitychange → visible (synchron)
-      ├─ requestWakeLock()
-      ├─ stopSsTimer()        ← cancelt deferred showScreensaver-Callback
-      └─ startSsTimer()       ← startet frischen 60s-Countdown
-  ↓ deferred Macrotasks
-      └─ showScreensaver()    ← wurde gecancelt, läuft nicht mehr
-  ↓ Nutzer tippt PIN-Taste
-      └─ Ziffer registriert ✓
+```js
+logStartDate: '2026-05-01'
 ```
 
-Das Verhalten des Screensavers bei normaler Inaktivität (ohne Wake-Event) bleibt
-unverändert — der erste Tap dismisst ihn wie bisher.
+**Beim App-Start** werden alle `lgc_log_*`-Einträge im localStorage, die vor diesem Datum liegen, sofort gelöscht — kein Netzwerk, keine Nutzerinteraktion nötig. Nach dem ersten Seitenaufruf auf jedem Gerät ist das lokale Log bereinigt.
+
+**Beim Cloud-Sync** (`pushUserPif`, `mergeUserEntries`) werden Einträge vor dem Cutoff herausgefiltert — sie können weder in die Cloud geschrieben noch aus ihr reimportiert werden.
+
+Das Feld ist jetzt in `DEVICE_FIELDS` aufgenommen und wird über `lgc_config_<deviceId>.json` auf alle Geräte verteilt.
+
+---
+
+## Fix 2 – Phantom-Paar-Cleanup (≤ 2 Minuten)
+
+Neue Funktion `removeShortPairs(entries, maxMs)` erkennt Start-Stop-Paare mit einer Dauer von 0 bis 120 Sekunden und entfernt beide Einträge. Diese entstehen typischerweise durch `autoStartKeys` (z. B. Anwesenheit startet automatisch mit Wachdienst) und sofortiges manuelles Stornieren.
+
+Angewendet in:
+- **`pushUserPif`** (vor PUT): Kurzpaare gelangen nicht in die Cloud-PIF
+- **`mergeUserEntries`** (vor `saveLog`): Kurzpaare werden aus dem lokalen Log bereinigt
+- **Editor „Monate"-Button**: Kurzpaare in allen PIF-Dateien werden vor der Monatsanalyse entfernt
+- **Editor „Alle prüfen"**: Kurzpaare und Orphan-Stops werden automatisch entfernt und gespeichert, bevor die Validierung läuft
+
+---
+
+## Zusammenspiel
+
+```
+Gerät startet
+  ↓ logStartDate-Check → löscht pre-cutoff Einträge aus localStorage
+  ↓ „Konfig aktualisieren" (Admin-Tab) → lädt neuen logStartDate aus Cloud-Config
+
+Nächster Stempel
+  ↓ pushUserPif → filterLocalEntries(≥ logStartDate) + removeShortPairs → PUT
+  → Cloud-PIF bleibt sauber
+
+Hintergrund-Sync (alle 5 min)
+  ↓ fetchUserPif → mergeUserEntries(filterCloud(≥ logStartDate)) → removeShortPairs
+  → lokales Log bleibt sauber
+```
 
 ---
 
 ## Service Worker
 
-Cache-Version: **`lgc-shell-v22`** — alle installierten PWAs laden beim nächsten Start
-die neue Version automatisch herunter.
+Cache-Version: **`lgc-shell-v23`** — alle installierten PWAs laden beim nächsten Start die neue Version automatisch herunter.
 
 ---
 
 ## Migration / Update
 
-Keine Konfigurationsänderungen notwendig.
+Die `logStartDate`-Einstellung wird automatisch über die Cloud-Device-Config (`lgc_config_<deviceId>.json`) verteilt. Wert für alle Geräte gesetzt auf **`2026-05-01`**.
+
+Keine weiteren Konfigurationsänderungen notwendig.

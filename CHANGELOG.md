@@ -4,6 +4,39 @@ Alle relevanten Änderungen pro Release. Format orientiert sich an [Keep a Chang
 
 ---
 
+## [1.1.4] – 2026-05-13
+
+### Neu
+
+- **`logStartDate`-Cutoff** (`lifeguardclock.js`, `config.example.js`): Optionales
+  Konfigurationsfeld `logStartDate: 'YYYY-MM-DD'`. Beim App-Start werden alle
+  `lgc_log_*`-Einträge vor diesem Datum aus dem localStorage gelöscht. In `pushUserPif`
+  und `mergeUserEntries` werden Einträge vor dem Cutoff ebenfalls herausgefiltert. Damit
+  verschwinden Test-Phase-Artefakte permanent von jedem Gerät nach dem nächsten Seitenaufruf.
+  Das Feld wird per Cloud-Device-Config (`lgc_config_<deviceId>.json`) verteilt und ist
+  jetzt in `DEVICE_FIELDS` aufgenommen.
+
+- **Phantom-Paar-Cleanup** (`lifeguardclock.js`, `editor-app.js`): Neue Funktion
+  `removeShortPairs(entries, maxMs)` entfernt Start-Stop-Paare mit einer Dauer ≤ 2 Minuten.
+  Wird in `pushUserPif` (vor PUT) und `mergeUserEntries` (vor `saveLog`) angewendet —
+  autoStart-getriggerte Phantom-Paare akkumulieren sich nicht mehr in Cloud-PIF oder
+  lokalem Log.
+  Im Editor: Monate-Button und „Alle prüfen" entfernen Kurzpaare und Orphan-Stops
+  automatisch aus allen PIFs und speichern die bereinigten Versionen.
+
+- **Suite 38** (`test_LifeguardClock.html`): 5 Tests für `removeShortPairs`
+  (leere Eingabe, Paar ≤ 2 min, Paar > 2 min, 0-ms-Paar, zwei Nutzer).
+
+### Service Worker
+
+- Cache-Version auf `lgc-shell-v23` erhöht.
+
+### Version
+
+- `APP_VERSION` auf `'1.1.4'` gesetzt.
+
+---
+
 ## [1.1.3] – 2026-05-13
 
 ### Behoben
