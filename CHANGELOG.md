@@ -4,6 +4,26 @@ Alle relevanten Änderungen pro Release. Format orientiert sich an [Keep a Chang
 
 ---
 
+## [1.1.3] – 2026-05-13
+
+### Behoben
+
+- **Erster Tap nach Gerät-Wake geht zur PIN-Eingabe** (`lifeguardclock.js`): Nach dem
+  Aufwachen aus dem OS-Schlaf feuerte der aufgeschobene Screensaver-`setTimeout` sofort,
+  zeigte den Screensaver und verbrauchte den ersten Tap zum Dismissal. `stopSsTimer()` wird
+  jetzt im `visibilitychange → visible`-Handler aufgerufen, der synchron vor den deferred
+  Timer-Callbacks läuft — der Tap landet direkt auf der PIN-Tastatur.
+
+### Service Worker
+
+- Cache-Version auf `lgc-shell-v22` erhöht.
+
+### Version
+
+- `APP_VERSION` auf `'1.1.3'` gesetzt.
+
+---
+
 ## [1.1.2] – 2026-05-13
 
 ### Neu
