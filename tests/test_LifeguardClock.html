@@ -74,7 +74,10 @@ function scheduleUsersCloudSync() {}
 
 /* ── PIF/addEntry-Stubs ────────────────────────────────────── */
 let _pifPushCalls = [];
-async function pushUserPif(userId) { _pifPushCalls.push(userId); }
+async function pushUserPif(userId, month = todayISO().slice(0, 7)) {
+  _pifPushCalls.push({ userId, month });
+  return true;
+}
 function resetPifPushCalls() { _pifPushCalls = []; }
 
 /* ── Cloud-Stubs ───────────────────────────────────────────── */
@@ -100,6 +103,14 @@ function getPrevLog() {
 function saveLogForKey(key, log) {
   localStorage.setItem(key, JSON.stringify(log));
   markLocalChange();
+}
+function monthFromLogKey(key) {
+  const m = /^lgc_log_(\d{4}-\d{2})$/.exec(String(key || ''));
+  return m ? m[1] : todayISO().slice(0, 7);
+}
+function getLogByMonth(month) {
+  try { return JSON.parse(localStorage.getItem(`lgc_log_${month}`) || '[]'); }
+  catch { return []; }
 }
 function findLogKeyForOpenStart(userName, logType) {
   for (const [key, log] of [[logKey(), getLog()], [prevLogKey(), getPrevLog()]]) {
@@ -127,7 +138,19 @@ function addEntry(entry, { targetLogKey } = {}) {
   log.push({ id: Date.now() + Math.random(), ...entry });
   saveLogForKey(key, log);
   const u = getUsers().find(u => u.name === entry.nutzer);
-  if (u) pushUserPif(u.id).catch(() => {});
+  if (u) pushUserPif(u.id, monthFromLogKey(key)).catch(() => {});
+}
+
+function compareLogEntries(a, b) {
+  const aTs = Date.parse(a?.zeitstempel || '');
+  const bTs = Date.parse(b?.zeitstempel || '');
+  if (Number.isFinite(aTs) && Number.isFinite(bTs) && aTs !== bTs) return aTs - bTs;
+
+  const aId = Number(a?.id);
+  const bId = Number(b?.id);
+  if (Number.isFinite(aId) && Number.isFinite(bId) && aId !== bId) return aId - bId;
+
+  return String(a?.id ?? '').localeCompare(String(b?.id ?? ''));
 }
 
 function rebuildStateFromLog(userId) {
@@ -136,7 +159,9 @@ function rebuildStateFromLog(userId) {
   const allStates = getAllStates();
   const state     = allStates[userId] || {};
   if (!state.cooldown) state.cooldown = {};
-  const allEntries = [...getPrevLog(), ...getLog()].filter(e => e.nutzer === user.name);
+  const allEntries = [...getPrevLog(), ...getLog()]
+    .filter(e => e.nutzer === user.name)
+    .sort(compareLogEntries);
   TYPES.forEach(type => {
     let lastAction = null;
     for (let i = allEntries.length - 1; i >= 0; i--) {
@@ -552,6 +577,7 @@ function pushLog(entry) {
 function resetUsers() {
   USERS.length = 0;
   USERS.push({ id: 'test_user', name: 'Test User' });
+  localStorage.setItem('lgc_users', JSON.stringify(USERS));
 }
 
 (async () => {
@@ -1392,7 +1418,8 @@ await test('zurückgegebene Objekte sind Kopien (keine Referenzen auf CONFIG)', 
 
 // Extrahierte Overlay-Logik (1:1 aus LifeguardClock.html)
 const OVERLAY_DEVICE_FIELDS = ['adminPin', 'dayBoundaryHour', 'pinClearSeconds',
-                               'autoLogoutSeconds', 'screensaverSeconds', 'zeitfensterDefaults'];
+                               'autoLogoutSeconds', 'screensaverSeconds', 'zeitfensterDefaults',
+                               'logStartDate'];
 function applyCloudConfigOverlay(targetCfg, cloudData) {
   if (!cloudData || typeof cloudData !== 'object') return;
   OVERLAY_DEVICE_FIELDS.forEach(k => { if (k in cloudData) targetCfg[k] = cloudData[k]; });
@@ -1404,7 +1431,8 @@ function applyCloudConfigOverlay(targetCfg, cloudData) {
 // Extrahierte Export-Logik (1:1 aus pushConfigToCloud, v0.6)
 // types werden NICHT mehr exportiert — sie liegen zentral in lgc_types.json
 const EXPORT_DEVICE_FIELDS = ['adminPin', 'dayBoundaryHour', 'pinClearSeconds',
-                              'autoLogoutSeconds', 'screensaverSeconds', 'zeitfensterDefaults'];
+                              'autoLogoutSeconds', 'screensaverSeconds', 'zeitfensterDefaults',
+                              'logStartDate'];
 function buildExportableConfig(cfg) {
   const out = {};
   EXPORT_DEVICE_FIELDS.forEach(k => { if (k in cfg) out[k] = cfg[k]; });
@@ -1462,6 +1490,12 @@ await test('gerätespezifische Felder werden übernommen', () => {
   assertEqual(cfg.screensaverSeconds, 120,    'screensaverSeconds soll übernommen werden');
 });
 
+await test('logStartDate wird als Gerätefeld übernommen', () => {
+  const cfg = { logStartDate: '2026-01-01' };
+  applyCloudConfigOverlay(cfg, { logStartDate: '2026-05-01' });
+  assertEqual(cfg.logStartDate, '2026-05-01', 'logStartDate soll aus Device-Config übernommen werden');
+});
+
 await test('defaultUsers wird NICHT übernommen', () => {
   const cfg = { defaultUsers: [{ id: 'lokal', name: 'Lokal' }] };
   applyCloudConfigOverlay(cfg, { defaultUsers: [{ id: 'cloud', name: 'Cloud' }] });
@@ -1517,6 +1551,12 @@ await test('enthält adminPin, dayBoundaryHour; types NICHT mehr (v0.6)', () => 
   assert(!('types' in exp), 'types darf NICHT mehr im Geräte-Export stehen (v0.6 → lgc_types.json)');
 });
 
+await test('enthält logStartDate für Cloud-Device-Config', () => {
+  const cfg = { adminPin: '112233', logStartDate: '2026-05-01' };
+  const exp = buildExportableConfig(cfg);
+  assertEqual(exp.logStartDate, '2026-05-01', 'logStartDate muss exportiert werden');
+});
+
 await test('enthält NICHT defaultUsers', () => {
   const cfg = { adminPin: '112233', defaultUsers: [{ id: 'geheim' }] };
   const exp = buildExportableConfig(cfg);
@@ -1544,6 +1584,7 @@ await test('fehlende Felder werden nicht als undefined exportiert', () => {
 
 await test('Roundtrip: Export → Overlay → gleiche Gerätewerte (ohne types)', () => {
   const original = { adminPin: '445566', dayBoundaryHour: 6, screensaverSeconds: 90,
+    logStartDate: '2026-05-01',
     types: [{ key: 'anwesenheit', label: 'A', logType: 'a', color: 'blue' }],
     cloud: { url: 'x' }, defaultUsers: [{ id: 'u' }] };
   const exported = buildExportableConfig(original);
@@ -1554,6 +1595,7 @@ await test('Roundtrip: Export → Overlay → gleiche Gerätewerte (ohne types)'
   assertEqual(restored.adminPin,           '445566', 'adminPin soll nach Roundtrip stimmen');
   assertEqual(restored.dayBoundaryHour,    6,        'dayBoundaryHour soll stimmen');
   assertEqual(restored.screensaverSeconds, 90,       'screensaverSeconds soll stimmen');
+  assertEqual(restored.logStartDate,       '2026-05-01', 'logStartDate soll stimmen');
   assertEqual(restored.cloud.url,         'y',       'cloud.url soll NICHT überschrieben worden sein');
   assert(restored.defaultUsers.length === 0,         'defaultUsers sollen NICHT überschrieben worden sein');
 });
@@ -2226,10 +2268,10 @@ suite('34 – mergeUserEntries');
 function mergeUserEntries(cloudEntries) {
   if (!Array.isArray(cloudEntries) || !cloudEntries.length) return false;
   const log = getLog();
-  const existingIds = new Set(log.map(e => e.id));
-  const newEntries = cloudEntries.filter(e => !existingIds.has(e.id));
+  const existingIds = new Set(log.map(e => String(e.id)));
+  const newEntries = cloudEntries.filter(e => !existingIds.has(String(e.id)));
   if (!newEntries.length) return false;
-  const merged = [...log, ...newEntries].sort((a, b) => a.id - b.id);
+  const merged = [...log, ...newEntries].sort(compareLogEntries);
   saveLog(merged);
   return true;
 }
@@ -2285,13 +2327,13 @@ await test('Mischung: neue + Duplikate → nur neue werden hinzugefügt', () => 
   resetStore();
 });
 
-await test('Einträge werden nach id sortiert gespeichert', () => {
+await test('Einträge werden nach Zeitstempel sortiert gespeichert', () => {
   resetStore();
-  saveLog([{ id: 30, nutzer: 'Max', typ: 'anwesenheit', aktion: 'stop' }]);
-  mergeUserEntries([{ id: 5, nutzer: 'Max', typ: 'anwesenheit', aktion: 'start' }]);
+  saveLog([{ id: 30, nutzer: 'Max', typ: 'anwesenheit', aktion: 'stop', zeitstempel: '2025-05-01T10:00:00.000Z' }]);
+  mergeUserEntries([{ id: 5, nutzer: 'Max', typ: 'anwesenheit', aktion: 'start', zeitstempel: '2025-05-01T09:00:00.000Z' }]);
   const log = getLog();
-  assertEqual(log[0].id, 5,  'erster Eintrag soll id=5 haben');
-  assertEqual(log[1].id, 30, 'zweiter Eintrag soll id=30 haben');
+  assertEqual(log[0].id, 5,  'erster Eintrag soll früheren Zeitstempel haben');
+  assertEqual(log[1].id, 30, 'zweiter Eintrag soll späteren Zeitstempel haben');
   resetStore();
 });
 
@@ -2863,6 +2905,17 @@ await test('unbekannte userId → kein Fehler, kein State erstellt', () => {
   assert(!getAllStates()['nobody'], 'kein State für unbekannte userId');
 });
 
+await test('nachträglich erstellte frühere Einträge verfälschen offenen Start nicht', () => {
+  resetStore(); resetConfig(); rebuildTypes(); resetUsers();
+  saveLog([
+    { id: 1000, nutzer: 'Test User', typ: 'anwesenheit', aktion: 'start', zeitstempel: '2026-05-01T10:00:00.000Z' },
+    { id: 2000, nutzer: 'Test User', typ: 'anwesenheit', aktion: 'start', zeitstempel: '2026-05-01T08:00:00.000Z' },
+    { id: 2001, nutzer: 'Test User', typ: 'anwesenheit', aktion: 'stop',  zeitstempel: '2026-05-01T09:00:00.000Z' },
+  ]);
+  rebuildStateFromLog('test_user');
+  assertEqual(getAllStates()['test_user'].anwesenheit, true, '10:00-Start muss trotz späterer IDs aktiv bleiben');
+});
+
 /* ══════════════════════════════════════════════════════════════
    Suite 31 – Auto-Stop PIF-Synchronisation
 ══════════════════════════════════════════════════════════════ */
@@ -2873,7 +2926,7 @@ await test('checkTimeLimits ruft pushUserPif für betroffenen Nutzer', () => {
   pushLog({ nutzer: 'Test User', typ: 'wachdienst', aktion: 'start', zeitstempel: msAgo(3 * 60 * 60 * 1000) });
   setStateActive('test_user', 'wachdienst', true);
   checkTimeLimits();
-  assert(_pifPushCalls.includes('test_user'), 'pushUserPif muss für test_user aufgerufen sein');
+  assert(_pifPushCalls.some(c => c.userId === 'test_user'), 'pushUserPif muss für test_user aufgerufen sein');
 });
 
 await test('checkZeitfensterEnd ruft pushUserPif für betroffenen Nutzer', () => {
@@ -2886,7 +2939,7 @@ await test('checkZeitfensterEnd ruft pushUserPif für betroffenen Nutzer', () =>
   // Falls der Test genau um 00:00 läuft schlägt er fehl — dann Zeitfenster anpassen
   const stopEntries = getLog().filter(e => e.aktion === 'stop' && e.auto);
   if (stopEntries.length > 0) {
-    assert(_pifPushCalls.includes('test_user'), 'pushUserPif muss für test_user aufgerufen sein');
+    assert(_pifPushCalls.some(c => c.userId === 'test_user'), 'pushUserPif muss für test_user aufgerufen sein');
   }
   // Kein stop erzeugt (Zeitfenster passt zufällig) → Test übersprungen, kein Fehler
 });
@@ -2898,7 +2951,7 @@ await test('checkDayBoundary ruft pushUserPif für betroffenen Nutzer', () => {
   pushLog({ nutzer: 'Test User', typ: 'anwesenheit', aktion: 'start', zeitstempel: msAgo(3600000) });
   setStateActive('test_user', 'anwesenheit', true);
   checkDayBoundary(new Date());
-  assert(_pifPushCalls.includes('test_user'), 'pushUserPif muss für test_user aufgerufen sein');
+  assert(_pifPushCalls.some(c => c.userId === 'test_user'), 'pushUserPif muss für test_user aufgerufen sein');
 });
 
 await test('checkTimeLimits ohne offenen Start → kein pushUserPif', () => {
@@ -2906,7 +2959,17 @@ await test('checkTimeLimits ohne offenen Start → kein pushUserPif', () => {
   // State sagt aktiv, aber kein start-Eintrag im Log (veralteter State)
   setStateActive('test_user', 'wachdienst', true);
   checkTimeLimits();
-  assert(!_pifPushCalls.includes('test_user'), 'pushUserPif darf nicht aufgerufen werden ohne offenen Start');
+  assert(!_pifPushCalls.some(c => c.userId === 'test_user'), 'pushUserPif darf nicht aufgerufen werden ohne offenen Start');
+});
+
+await test('addEntry pusht PIF für targetLogKey-Monat', async () => {
+  resetStore(); resetConfig(); rebuildTypes(); resetUsers(); resetPifPushCalls();
+  addEntry(
+    { nutzer: 'Test User', typ: 'anwesenheit', aktion: 'stop', zeitstempel: '2026-05-31T22:00:00.000Z', auto: true },
+    { targetLogKey: 'lgc_log_2026-05' }
+  );
+  assert(_pifPushCalls.some(c => c.userId === 'test_user' && c.month === '2026-05'),
+    'pushUserPif muss den Monat aus targetLogKey verwenden');
 });
 
 /* ══════════════════════════════════════════════════════════════
@@ -3094,7 +3157,7 @@ await test('zweiter gleichzeitiger Aufruf wird durch Flag blockiert', async () =
 });
 
 /* ══════════════════════════════════════════════════════════════
-   Suite 38 – removeShortPairs: Phantom-Cleanup
+   Suite 38 – removeShortPairs: Kurzstempel-Cleanup
 ══════════════════════════════════════════════════════════════ */
 suite('38 – removeShortPairs');
 
@@ -3114,7 +3177,7 @@ function removeShortPairs(entries, maxMs) {
         openStart = e;
       } else if (openStart) {
         const dur = new Date(e.zeitstempel) - new Date(openStart.zeitstempel);
-        if (dur >= 0 && dur <= maxMs) {
+        if (dur >= 0 && dur < maxMs) {
           idsToRemove.add(String(openStart.id));
           idsToRemove.add(String(e.id));
         }
@@ -3127,29 +3190,29 @@ function removeShortPairs(entries, maxMs) {
 }
 
 await test('leere Eingabe → gleiches Array zurück', () => {
-  const result = removeShortPairs([], 120000);
+  const result = removeShortPairs([], 15 * 60 * 1000);
   assertEqual(result.length, 0, 'leeres Array bleibt leer');
 });
 
-await test('Paar ≤ 2 min wird entfernt', () => {
+await test('Paar unter 15 min wird entfernt', () => {
   const t0 = '2025-05-01T10:00:00.000Z';
-  const t1 = '2025-05-01T10:01:00.000Z'; // 60s
+  const t1 = '2025-05-01T10:14:00.000Z'; // 14 min
   const entries = [
     { id: 1, nutzer: 'Max', typ: 'anwesenheit', aktion: 'start', zeitstempel: t0 },
     { id: 2, nutzer: 'Max', typ: 'anwesenheit', aktion: 'stop',  zeitstempel: t1 },
   ];
-  const result = removeShortPairs(entries, 120000);
+  const result = removeShortPairs(entries, 15 * 60 * 1000);
   assertEqual(result.length, 0, 'kurzes Paar muss entfernt werden');
 });
 
-await test('Paar > 2 min bleibt erhalten', () => {
+await test('Paar ab 15 min bleibt erhalten', () => {
   const t0 = '2025-05-01T10:00:00.000Z';
-  const t1 = '2025-05-01T10:03:00.000Z'; // 3 min
+  const t1 = '2025-05-01T10:15:00.000Z'; // 15 min
   const entries = [
     { id: 1, nutzer: 'Max', typ: 'anwesenheit', aktion: 'start', zeitstempel: t0 },
     { id: 2, nutzer: 'Max', typ: 'anwesenheit', aktion: 'stop',  zeitstempel: t1 },
   ];
-  const result = removeShortPairs(entries, 120000);
+  const result = removeShortPairs(entries, 15 * 60 * 1000);
   assertEqual(result.length, 2, 'normales Paar muss erhalten bleiben');
 });
 
@@ -3159,21 +3222,21 @@ await test('0-ms-Paar (identische Timestamps) wird entfernt', () => {
     { id: 10, nutzer: 'Max', typ: 'wachdienst', aktion: 'start', zeitstempel: t0 },
     { id: 11, nutzer: 'Max', typ: 'wachdienst', aktion: 'stop',  zeitstempel: t0 },
   ];
-  const result = removeShortPairs(entries, 120000);
+  const result = removeShortPairs(entries, 15 * 60 * 1000);
   assertEqual(result.length, 0, '0-ms-Paar muss entfernt werden');
 });
 
 await test('zwei Nutzer: kurzes Paar nur beim richtigen Nutzer entfernt', () => {
   const t0 = '2025-05-01T10:00:00.000Z';
   const t1 = '2025-05-01T10:01:00.000Z';
-  const t2 = '2025-05-01T10:10:00.000Z';
+  const t2 = '2025-05-01T10:20:00.000Z';
   const entries = [
     { id: 1, nutzer: 'Anna', typ: 'anwesenheit', aktion: 'start', zeitstempel: t0 },
     { id: 2, nutzer: 'Anna', typ: 'anwesenheit', aktion: 'stop',  zeitstempel: t1 }, // 60s → weg
     { id: 3, nutzer: 'Max',  typ: 'anwesenheit', aktion: 'start', zeitstempel: t0 },
-    { id: 4, nutzer: 'Max',  typ: 'anwesenheit', aktion: 'stop',  zeitstempel: t2 }, // 10 min → bleibt
+    { id: 4, nutzer: 'Max',  typ: 'anwesenheit', aktion: 'stop',  zeitstempel: t2 }, // 20 min → bleibt
   ];
-  const result = removeShortPairs(entries, 120000);
+  const result = removeShortPairs(entries, 15 * 60 * 1000);
   assertEqual(result.length, 2, 'nur Annas Paar entfernt, Max bleibt');
   assert(result.every(e => e.nutzer === 'Max'), 'verbleibende Einträge gehören Max');
 });

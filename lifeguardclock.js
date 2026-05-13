@@ -156,7 +156,7 @@ function getDeviceId() {
   return id;
 }
 const DEVICE_ID   = getDeviceId();
-const APP_VERSION = '1.1.4';
+const APP_VERSION = '1.1.5';
 
 /* ── Proxy-Erkennung (admin-server.py auf localhost) ─────────
    Wenn die App über den lokalen Python-Proxy läuft, werden alle
@@ -317,6 +317,14 @@ function saveLogForKey(key, log) {
   scheduleCloudSync();
 }
 function saveLog(log) { saveLogForKey(logKey(), log); }
+function monthFromLogKey(key) {
+  const m = /^lgc_log_(\d{4}-\d{2})$/.exec(String(key || ''));
+  return m ? m[1] : todayISO().slice(0, 7);
+}
+function getLogByMonth(month) {
+  try { return JSON.parse(localStorage.getItem(`lgc_log_${month}`) || '[]'); }
+  catch { return []; }
+}
 function addEntry(entry, { targetLogKey } = {}) {
   const key = targetLogKey || logKey();
   let log;
@@ -324,7 +332,7 @@ function addEntry(entry, { targetLogKey } = {}) {
   log.push({ id: Date.now() + Math.random(), ...entry });
   saveLogForKey(key, log);
   const u = getUsers().find(u => u.name === entry.nutzer);
-  if (u) pushUserPif(u.id).catch(() => {});
+  if (u) pushUserPif(u.id, monthFromLogKey(key)).catch(() => {});
 }
 // Gibt den Log-Key zurück, in dem der offene Start-Eintrag für den Nutzer liegt,
 // oder null wenn der letzte Eintrag ein Stop oder keiner vorhanden ist.
@@ -381,12 +389,14 @@ function normalizeImportedEntries(rawEntries) {
 }
 
 function compareLogEntries(a, b) {
-  const aId = Number(a?.id);
-  const bId = Number(b?.id);
-  if (Number.isFinite(aId) && Number.isFinite(bId) && aId !== bId) return aId - bId;
   const aTs = Date.parse(a?.zeitstempel || '');
   const bTs = Date.parse(b?.zeitstempel || '');
   if (Number.isFinite(aTs) && Number.isFinite(bTs) && aTs !== bTs) return aTs - bTs;
+
+  const aId = Number(a?.id);
+  const bId = Number(b?.id);
+  if (Number.isFinite(aId) && Number.isFinite(bId) && aId !== bId) return aId - bId;
+
   return String(a?.id ?? '').localeCompare(String(b?.id ?? ''));
 }
 
@@ -1534,7 +1544,7 @@ async function syncToCloud(silent = false) {
 // Jeder Nutzer hat eine eigene Cloud-Datei: lgc_pif_<userId>_YYYY-MM.json
 // Dadurch ist der aktive Stempel-Status geräteübergreifend konsistent.
 
-// Entfernt Paare mit Dauer ≤ maxMs aus entries (self-healing für Phantom-Einträge).
+// Entfernt Paare mit Dauer unter maxMs aus entries.
 function removeShortPairs(entries, maxMs) {
   const idsToRemove = new Set();
   const groups = {};
@@ -1550,7 +1560,7 @@ function removeShortPairs(entries, maxMs) {
         openStart = e;
       } else if (openStart) {
         const dur = new Date(e.zeitstempel) - new Date(openStart.zeitstempel);
-        if (dur >= 0 && dur <= maxMs) {
+        if (dur >= 0 && dur < maxMs) {
           idsToRemove.add(String(openStart.id));
           idsToRemove.add(String(e.id));
         }
@@ -1580,10 +1590,9 @@ function mergeUserEntries(cloudEntries) {
   const base = newEntries.length
     ? [...localLog.entries, ...newEntries].sort(compareLogEntries)
     : localLog.entries;
-  const cleaned = removeShortPairs(base, 2 * 60 * 1000);
-  const changed = localLog.normalizedCount > 0 || newEntries.length > 0 || cleaned.length !== base.length;
+  const changed = localLog.normalizedCount > 0 || newEntries.length > 0;
   if (!changed) return false;
-  saveLog(cleaned);
+  saveLog(base);
   return true;
 }
 
@@ -1597,7 +1606,8 @@ function rebuildStateFromLog(userId) {
   if (!state.cooldown) state.cooldown = {};
 
   const allEntries = [...getPrevLog(), ...getLog()]
-    .filter(e => e.nutzer === user.name);
+    .filter(e => e.nutzer === user.name)
+    .sort(compareLogEntries);
 
   TYPES.forEach(type => {
     let lastAction = null;
@@ -1611,12 +1621,11 @@ function rebuildStateFromLog(userId) {
   saveAllStates(allStates);
 }
 
-async function pushUserPif(userId) {
+async function pushUserPif(userId, month = todayISO().slice(0, 7)) {
   const cfg = getCloudConfig();
-  if (!isCloudConfigured(cfg)) return;
+  if (!isCloudConfigured(cfg)) return false;
   const user = getUsers().find(u => u.id === userId);
-  if (!user) return;
-  const month = todayISO().slice(0, 7);
+  if (!user) return false;
   const pifUrl = `${cloudDavBase(cfg)}/lgc_pif_${userId}_${month}.json`;
 
   // Bestehende PIF lesen – bewahrt Einträge die per Editor / anderes Gerät nachgetragen wurden
@@ -1630,7 +1639,7 @@ async function pushUserPif(userId) {
   } catch {}
 
   const _cutoff = CONFIG.logStartDate;
-  const localEntries = getLog()
+  const localEntries = getLogByMonth(month)
     .filter(e => e.nutzer === user.name && e.zeitstempel?.startsWith(month))
     .filter(e => !_cutoff || !e.zeitstempel || e.zeitstempel >= _cutoff);
 
@@ -1665,12 +1674,17 @@ async function pushUserPif(userId) {
     userName: user.name,
     month,
     exported: new Date().toISOString(),
-    entries:  removeShortPairs(merged, 2 * 60 * 1000).sort(compareLogEntries),
+    entries:  merged.sort(compareLogEntries),
   });
   try {
     await ensureCloudFolder(cfg);
-    await fetch(pifUrl, { method: 'PUT', headers: cloudHeaders(cfg), body: payload });
-  } catch {}
+    const resp = await fetch(pifUrl, { method: 'PUT', headers: cloudHeaders(cfg), body: payload });
+    if (!resp.ok) throw new Error(`PIF ${userId}/${month}: HTTP ${resp.status}`);
+    return true;
+  } catch (e) {
+    addCloudErr(e?.message || `PIF ${userId}/${month}: Sync fehlgeschlagen`);
+    return false;
+  }
 }
 
 async function fetchUserPif(userId) {
@@ -1875,7 +1889,8 @@ async function pushConfigToCloud(silent = false) {
     await ensureCloudFolder(cfg);
     // Nur gerätespezifische Felder hochladen — keine Nutzer, keine Cloud-Zugangsdaten
     const DEVICE_FIELDS = ['adminPin', 'dayBoundaryHour', 'pinClearSeconds',
-                           'autoLogoutSeconds', 'screensaverSeconds', 'zeitfensterDefaults'];
+                           'autoLogoutSeconds', 'screensaverSeconds', 'zeitfensterDefaults',
+                           'logStartDate'];
     const exportable = {};
     DEVICE_FIELDS.forEach(k => { if (k in CONFIG) exportable[k] = CONFIG[k]; });
     // Per-device Overrides: nur disabled + zeitfenster pro Typ
@@ -2613,8 +2628,10 @@ function safeShutdown() {
       return;
     }
     syncEl.textContent = 'Synchronisiere Stempeldaten …';
-    await Promise.allSettled([...activeUserIds].map(id => pushUserPif(id)));
-    syncEl.textContent = '✓ Cloud-Sync abgeschlossen';
+    const results = await Promise.all([...activeUserIds].map(id => pushUserPif(id)));
+    syncEl.textContent = results.every(Boolean)
+      ? '✓ Cloud-Sync abgeschlossen'
+      : '⚠ Lokal gespeichert - Cloud-Sync teilweise fehlgeschlagen';
   });
 }
 

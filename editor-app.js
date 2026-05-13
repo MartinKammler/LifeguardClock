@@ -555,7 +555,7 @@ async function runMonthCleanupCloud() {
     let totalRemoved = 0;
     for (const [key, pif] of Object.entries(pifMap)) {
       const orig = pif.entries || [];
-      const cleaned = removeShortPairs(orig, PHANTOM_PAIR_MS);
+      const cleaned = removeShortPairs(orig, MIN_PAIR_DURATION_MS);
       if (cleaned.length !== orig.length) {
         totalRemoved += orig.length - cleaned.length;
         cleanedByShortPair[key] = { ...pif, entries: cleaned };
@@ -584,7 +584,7 @@ async function runMonthCleanupCloud() {
     ]);
 
     const parts = [];
-    if (totalRemoved) parts.push(`${totalRemoved} Phantom-Eintrag${totalRemoved !== 1 ? 'e' : ''} entfernt`);
+    if (totalRemoved) parts.push(`${totalRemoved} Kurzstempel-Eintrag${totalRemoved !== 1 ? 'e' : ''} entfernt`);
     if (totalMoved) parts.push(`${totalMoved} Eintrag${totalMoved !== 1 ? 'e' : ''} verschoben`);
     if (totalAdded) parts.push(`${totalAdded / 2} Anwesenheits-Block${totalAdded / 2 !== 1 ? 'e' : ''} ergänzt`);
     showToast(parts.join(', ') + ' ✓');
@@ -630,7 +630,7 @@ async function runMonthCleanupDirectory() {
     let totalRemoved = 0;
     for (const [key, pif] of Object.entries(pifMap)) {
       const orig = pif.entries || [];
-      const cleaned = removeShortPairs(orig, PHANTOM_PAIR_MS);
+      const cleaned = removeShortPairs(orig, MIN_PAIR_DURATION_MS);
       if (cleaned.length !== orig.length) {
         totalRemoved += orig.length - cleaned.length;
         cleanedByShortPair[key] = { ...pif, entries: cleaned };
@@ -660,7 +660,7 @@ async function runMonthCleanupDirectory() {
     }
 
     const parts = [];
-    if (totalRemoved) parts.push(`${totalRemoved} Phantom-Eintrag${totalRemoved !== 1 ? 'e' : ''} entfernt`);
+    if (totalRemoved) parts.push(`${totalRemoved} Kurzstempel-Eintrag${totalRemoved !== 1 ? 'e' : ''} entfernt`);
     if (totalMoved) parts.push(`${totalMoved} Eintrag${totalMoved !== 1 ? 'e' : ''} verschoben`);
     if (totalAdded) parts.push(`${totalAdded / 2} Anwesenheits-Block${totalAdded / 2 !== 1 ? 'e' : ''} ergänzt`);
     showToast(parts.join(', ') + ' ✓');
@@ -760,8 +760,8 @@ function validatePairs(log) {
   return issues;
 }
 
-// ─── Phantom-Cleanup-Helpers ─────────────────────────────────────────────────
-const PHANTOM_PAIR_MS = 2 * 60 * 1000; // Paare ≤ 2 min gelten als Phantome
+// ─── Kurzstempel-Cleanup-Helpers ─────────────────────────────────────────────
+const MIN_PAIR_DURATION_MS = 15 * 60 * 1000; // Dienste unter 15 min gelten nicht als gültige Stempelung
 
 function removeShortPairs(entries, maxMs) {
   const idsToRemove = new Set();
@@ -778,7 +778,7 @@ function removeShortPairs(entries, maxMs) {
         openStart = e;
       } else if (openStart) {
         const dur = new Date(e.zeitstempel) - new Date(openStart.zeitstempel);
-        if (dur >= 0 && dur <= maxMs) {
+        if (dur >= 0 && dur < maxMs) {
           idsToRemove.add(String(openStart.id));
           idsToRemove.add(String(e.id));
         }
@@ -812,9 +812,6 @@ function removeOrphanStops(entries) {
   if (!idsToRemove.size) return entries;
   return entries.filter(e => !idsToRemove.has(String(e.id)));
 }
-
-// ─── Validation: Konstante ────────────────────────────────────────────────────
-const MIN_PAIR_DURATION_MS = 15 * 60 * 1000;
 
 // ─── buildValidationIssues ───────────────────────────────────────────────────
 function buildValidationIssues(enrichedEntries, typesConfig) {
@@ -1050,12 +1047,12 @@ async function fetchAndValidate() {
     const failed = results.filter(r => r.status === 'rejected').length;
     if (failed > 0) showToast(`${failed} Datei(en) konnten nicht geladen werden.`);
 
-    // Auto-Cleanup: Kurzpaare (≤ 2 min) und Orphan-Stops aus PIFs entfernen und speichern
+    // Auto-Cleanup: Kurzpaare (< 15 min) und Orphan-Stops aus PIFs entfernen und speichern
     const autoCleanedHrefs = {};
     let autoRemovedCount = 0;
     for (const [href, pif] of Object.entries(validationPifCache)) {
       const orig = pif.entries;
-      let cleaned = removeShortPairs(orig, PHANTOM_PAIR_MS);
+      let cleaned = removeShortPairs(orig, MIN_PAIR_DURATION_MS);
       cleaned = removeOrphanStops(cleaned);
       if (cleaned.length !== orig.length) {
         autoRemovedCount += orig.length - cleaned.length;
@@ -1068,7 +1065,7 @@ async function fetchAndValidate() {
       await Promise.allSettled(Object.entries(autoCleanedHrefs).map(([href, pif]) =>
         fetch(href, { method: 'PUT', headers: hdrs, body: JSON.stringify(buildPifOutput(pif), null, 2) })
       ));
-      showToast(`${autoRemovedCount} Phantom-Eintrag${autoRemovedCount !== 1 ? 'e' : ''} automatisch entfernt ✓`);
+      showToast(`${autoRemovedCount} Kurzstempel-Eintrag${autoRemovedCount !== 1 ? 'e' : ''} automatisch entfernt ✓`);
     }
 
     const enrichedEntries = [];

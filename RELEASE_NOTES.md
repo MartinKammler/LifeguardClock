@@ -1,69 +1,72 @@
-# Release Notes – LifeguardClock v1.1.4
+# Release Notes – LifeguardClock v1.1.5
 
-## Phantom-Einträge dauerhaft entfernen
-
----
-
-## Problem
-
-Einträge, die im Editor aus Cloud-PIFs gelöscht wurden, tauchten nach dem nächsten Stempelvorgang wieder auf. Ursache: `pushUserPif` liest das lokale Geräte-Log (`lgc_log_YYYY-MM` in localStorage) als Quelle und fügt alle lokalen Einträge, die nicht in der Cloud-PIF stehen, wieder hinzu. Eine Bereinigung der Cloud reichte also nicht — das Gerät schrieb die Artefakte bei jedem Stempel zurück.
+## Kurzstempel-Cleanup: Schwellwert auf 15 Minuten angehoben
 
 ---
 
-## Fix 1 – `logStartDate`-Cutoff
+## Überblick
 
-Neues optionales Feld in `config.js` (und per Cloud-Device-Config verteilbar):
-
-```js
-logStartDate: '2026-05-01'
-```
-
-**Beim App-Start** werden alle `lgc_log_*`-Einträge im localStorage, die vor diesem Datum liegen, sofort gelöscht — kein Netzwerk, keine Nutzerinteraktion nötig. Nach dem ersten Seitenaufruf auf jedem Gerät ist das lokale Log bereinigt.
-
-**Beim Cloud-Sync** (`pushUserPif`, `mergeUserEntries`) werden Einträge vor dem Cutoff herausgefiltert — sie können weder in die Cloud geschrieben noch aus ihr reimportiert werden.
-
-Das Feld ist jetzt in `DEVICE_FIELDS` aufgenommen und wird über `lgc_config_<deviceId>.json` auf alle Geräte verteilt.
+Dieses Release korrigiert mehrere Logik-Fehler rund um Stempel-Sortierung, PIF-Synchronisation
+und den automatischen Kurzstempel-Cleanup. Der wichtigste Verhaltensunterschied zu v1.1.4:
+Stempel-Paare gelten erst ab 15 Minuten Dauer als gültig (vorher: 2 Minuten).
 
 ---
 
-## Fix 2 – Phantom-Paar-Cleanup (≤ 2 Minuten)
+## Änderungen im Detail
 
-Neue Funktion `removeShortPairs(entries, maxMs)` erkennt Start-Stop-Paare mit einer Dauer von 0 bis 120 Sekunden und entfernt beide Einträge. Diese entstehen typischerweise durch `autoStartKeys` (z. B. Anwesenheit startet automatisch mit Wachdienst) und sofortiges manuelles Stornieren.
+### Kurzstempel-Schwellwert: 2 min → 15 min
 
-Angewendet in:
-- **`pushUserPif`** (vor PUT): Kurzpaare gelangen nicht in die Cloud-PIF
-- **`mergeUserEntries`** (vor `saveLog`): Kurzpaare werden aus dem lokalen Log bereinigt
-- **Editor „Monate"-Button**: Kurzpaare in allen PIF-Dateien werden vor der Monatsanalyse entfernt
-- **Editor „Alle prüfen"**: Kurzpaare und Orphan-Stops werden automatisch entfernt und gespeichert, bevor die Validierung läuft
+Stempel-Paare unter 15 Minuten Dauer werden beim manuellen Cleanup (Editor-Button „Monate"
+bzw. „Alle prüfen") entfernt. Exakt 15-minütige Dienste bleiben jetzt erhalten (Vergleich
+ist exklusiv: `< 15 min` wird entfernt, `≥ 15 min` bleibt).
 
----
+Umbenennung intern: `PHANTOM_PAIR_MS` → `MIN_PAIR_DURATION_MS`.
+Meldungen in Editor und App: „Phantom-Eintrag" → „Kurzstempel-Eintrag".
 
-## Zusammenspiel
+### Kein automatischer Kurzstempel-Cleanup mehr beim Cloud-Sync
 
-```
-Gerät startet
-  ↓ logStartDate-Check → löscht pre-cutoff Einträge aus localStorage
-  ↓ „Konfig aktualisieren" (Admin-Tab) → lädt neuen logStartDate aus Cloud-Config
+`pushUserPif` und `mergeUserEntries` entfernen Kurzpaare **nicht** mehr automatisch.
+Der Cleanup ist damit ausschließlich manuell über den Editor auslösbar. Damit wird
+vermieden, dass legitime kurze Dienste beim nächsten Sync unerwartet verschwinden.
 
-Nächster Stempel
-  ↓ pushUserPif → filterLocalEntries(≥ logStartDate) + removeShortPairs → PUT
-  → Cloud-PIF bleibt sauber
+### Sortierung nach Zeitstempel (Bugfix)
 
-Hintergrund-Sync (alle 5 min)
-  ↓ fetchUserPif → mergeUserEntries(filterCloud(≥ logStartDate)) → removeShortPairs
-  → lokales Log bleibt sauber
-```
+`compareLogEntries` sortiert jetzt primär nach `zeitstempel`, sekundär nach `id`.
+Bisher war die Reihenfolge id-zuerst, was bei nachträglich erstellten früheren Einträgen
+(z. B. aus Cloud-Importen) zu falschen State-Berechnungen führte.
+
+`rebuildStateFromLog` sortiert Einträge vor der Auswertung — der zuletzt **zeitlich**
+aktive Eintrag bestimmt den Status, nicht der mit der höchsten ID.
+
+### pushUserPif: monatsgenaue Synchronisation (Bugfix)
+
+`pushUserPif` nimmt jetzt einen `month`-Parameter an. `addEntry` übergibt den Monat
+aus dem `targetLogKey`, damit nachträglich in einen früheren Monat geschriebene Einträge
+in den richtigen PIF-Monat (`lgc_pif_<userId>_YYYY-MM.json`) synchronisiert werden.
+
+Rückgabewert: `true` (Erfolg) oder `false` (Fehler). Fehler erscheinen in der
+Cloud-Fehleranzeige der App.
+
+### logStartDate in Geräte-Config-Export
+
+Das Feld `logStartDate` wird jetzt beim Geräte-Config-Export (`pushConfigToCloud`)
+mitübertragen und über `lgc_config_<deviceId>.json` auf alle Geräte verteilt.
+
+### Shutdown-Feedback verbessert
+
+Bei `safeShutdown` zeigt die App `⚠ Lokal gespeichert - Cloud-Sync teilweise fehlgeschlagen`,
+wenn mindestens ein PIF-Push fehlschlägt.
 
 ---
 
 ## Service Worker
 
-Cache-Version: **`lgc-shell-v23`** — alle installierten PWAs laden beim nächsten Start die neue Version automatisch herunter.
+Cache-Version: **`lgc-shell-v24`** — alle installierten PWAs laden beim nächsten Start
+die neue Version automatisch herunter.
 
 ---
 
 ## Migration / Update
 
-Die `logStartDate`-Einstellung wird automatisch über die Cloud-Device-Config (`lgc_config_<deviceId>.json`) verteilt. Wert für alle Geräte gesetzt auf **`2026-05-01`**.
-
-Keine weiteren Konfigurationsänderungen notwendig.
+Keine Konfigurationsänderungen notwendig. Der neue 15-min-Schwellwert gilt erst beim
+nächsten manuellen Cleanup über den Editor.

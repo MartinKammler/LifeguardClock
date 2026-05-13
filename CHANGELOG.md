@@ -4,6 +4,65 @@ Alle relevanten Änderungen pro Release. Format orientiert sich an [Keep a Chang
 
 ---
 
+## [1.1.5] – 2026-05-13
+
+### Geändert
+
+- **Kurzstempel-Schwellwert** (`lifeguardclock.js`, `editor-app.js`): Schwellwert für
+  `removeShortPairs` von 2 Minuten auf 15 Minuten erhöht. Stempel-Paare unter 15 Minuten
+  Dauer werden beim manuellen Cleanup entfernt. Der Vergleich ist jetzt exklusiv (`< maxMs`
+  statt `<= maxMs`), d. h. exakt 15-minütige Dienste bleiben erhalten.
+  Konstante umbenannt: `PHANTOM_PAIR_MS` → `MIN_PAIR_DURATION_MS`.
+  Meldungen: „Phantom-Eintrag" → „Kurzstempel-Eintrag".
+
+- **`compareLogEntries`** (`lifeguardclock.js`): Sortierung primär nach Zeitstempel,
+  sekundär nach ID. Damit werden nachträglich erstellte frühere Einträge korrekt eingeordnet
+  und `rebuildStateFromLog` liefert den tatsächlich letzten Eintrag.
+
+- **`pushUserPif`** (`lifeguardclock.js`): Nimmt jetzt `month`-Parameter an (default:
+  aktueller Monat). Gibt Boolean zurück (`true` = Erfolg). Fehler werden per `addCloudErr`
+  sichtbar gemacht. PIF-Einträge werden nicht mehr vor dem PUT durch `removeShortPairs`
+  gefiltert — der Cleanup erfolgt ausschließlich manuell über den Editor.
+
+- **`addEntry`** (`lifeguardclock.js`): Übergibt den korrekten Monat aus `targetLogKey`
+  an `pushUserPif`, damit nachträgliche Einträge in den richtigen PIF-Monat gepusht werden.
+
+- **`mergeUserEntries`** (`lifeguardclock.js`): Entfernt Kurzpaare nicht mehr automatisch
+  beim Cloud-Merge. ID-Vergleich auf `String(e.id)` normalisiert. Sortierung per
+  `compareLogEntries`.
+
+- **`rebuildStateFromLog`** (`lifeguardclock.js`): Einträge werden vor der State-Auswertung
+  nach Zeitstempel sortiert.
+
+- **`safeShutdown`** (`lifeguardclock.js`): Zeigt `⚠ Lokal gespeichert - Cloud-Sync
+  teilweise fehlgeschlagen`, wenn mindestens ein PIF-Push fehlschlägt.
+
+- **`logStartDate` in Geräte-Config-Export** (`lifeguardclock.js`): Das Feld `logStartDate`
+  wird nun in `DEVICE_FIELDS` von `pushConfigToCloud` exportiert und per Cloud-Device-Config
+  verteilt.
+
+### Tests
+
+- **Suite 38** umbenannt: „Phantom-Cleanup" → „Kurzstempel-Cleanup". Zeitgrenzen auf
+  15 Minuten angepasst (Paar < 15 min wird entfernt, Paar ≥ 15 min bleibt).
+- **`_pifPushCalls`**: Stub speichert jetzt `{ userId, month }` statt plain userId.
+  Alle Assertions entsprechend auf `.some(c => c.userId === ...)` aktualisiert.
+- Neuer Test: `addEntry pusht PIF für targetLogKey-Monat` (Suite 31).
+- Neuer Test: `nachträglich erstellte frühere Einträge verfälschen offenen Start nicht`
+  (Suite 30).
+- Neue Tests für `logStartDate` in Cloud-Config-Overlay und -Export (Suite 27/28).
+- Roundtrip-Test um `logStartDate` erweitert.
+
+### Service Worker
+
+- Cache-Version auf `lgc-shell-v24` erhöht.
+
+### Version
+
+- `APP_VERSION` auf `'1.1.5'` gesetzt.
+
+---
+
 ## [1.1.4] – 2026-05-13
 
 ### Neu
